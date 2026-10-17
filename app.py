@@ -22,7 +22,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
                                QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGridLayout,
-                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QRadioButton,
+                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QProxyStyle, QRadioButton,
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle, QStyleOption, QTextBrowser, QVBoxLayout, QWidget)
 
 import applog
@@ -33,7 +33,7 @@ import metadata
 from scanner import Item, mp4_duration, raw_preview, scan
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -56,7 +56,7 @@ STYLE = """
 QMainWindow, QDialog { background: #1c1c1e; }
 QWidget { color: #f2f2f7; font-size: 13px; }
 QLabel, QRadioButton, QCheckBox { background: transparent; }
-QToolTip { background: #2c2c2e; color: #f2f2f7; border: 1px solid #48484a; border-radius: 6px; padding: 6px; }
+QToolTip { background: #2c2c2e; color: #f2f2f7; border: 1px solid #48484a; border-radius: 6px; padding: 4px 7px; font-size: 11px; }
 
 /* pulsanti normali: pillole grigie */
 QPushButton { background: #2c2c2e; border: 1px solid #545456; border-radius: 15px; padding: 6px 14px; }
@@ -279,6 +279,18 @@ def help_html(text: str) -> str:
 
 
 FILE_MANAGER = "Finder" if sys.platform == "darwin" else "Esplora file"
+
+
+class TipStyle(QProxyStyle):
+    """Suggerimenti meno frequenti: compaiono dopo un attimo più lungo e, passando da un pulsante
+    all'altro, non si riaprono subito (Qt li farebbe comparire senza attesa entro 2 secondi)."""
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.SH_ToolTip_WakeUpDelay:
+            return 1000  # ms prima della comparsa (default Qt: 700)
+        if hint == QStyle.SH_ToolTip_FallAsleepDelay:
+            return 0     # nessuna riapertura immediata passando da un pulsante a un altro
+        return super().styleHint(hint, option, widget, returnData)
 
 
 class ElidedLabel(QLabel):
@@ -2357,6 +2369,9 @@ class MainWindow(QMainWindow):
         self.frame = None
         self._yes_without_preview = None  # SÌ senza anteprima: solo per il DNG mostrato ora
         self.update_counter()
+        if self.return_idx is not None and self.idx == self.return_idx:
+            self.return_idx = None
+            self.btn_return.setVisible(False)
         item = self.current()
         if item is None:
             self.show_end()
@@ -3312,6 +3327,7 @@ class MainWindow(QMainWindow):
             return
         if self.return_idx is None:
             self.return_idx = self.idx   # la foto da cui si è tornati indietro
+            self.btn_return.setVisible(True)
         self.idx = i
         self.show_item()
 
@@ -3319,6 +3335,7 @@ class MainWindow(QMainWindow):
         """Torna alla prima foto ancora da decidere (la prossima da giudicare)."""
         if not self.session or not self.items:
             return
+        self.thumbs_strip.recenter()
         i = self.next_index(-1)
         if i >= len(self.items):
             # Tutte decise: resta dove sei
@@ -3777,6 +3794,7 @@ def main():
                           (QPalette.ToolTipText, "#f2f2f7")):
             pal.setColor(role, QColor(col))
         app.setPalette(pal)
+    app.setStyle(TipStyle(app.style()))  # stile di base invariato, solo i tempi dei suggerimenti
     app.setStyleSheet(STYLE.replace("__CHEVRON__", chevron_file()))
     w = MainWindow()
     avail = w.screen().availableGeometry()  # schermi piccoli o scalati al 125-150%

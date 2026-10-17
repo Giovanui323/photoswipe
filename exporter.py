@@ -252,8 +252,12 @@ def _same_root(a, b) -> bool:
     pa, pb = Path(a).parts, Path(b).parts
     if pa == pb:
         return True
-    tail = lambda p: p[3:] if len(p) > 3 and p[1] == "Volumes" else None
-    return tail(pa) is not None and tail(pa) == tail(pb)
+    import re
+    if len(pa) >= 3 and len(pb) >= 3 and pa[1] == "Volumes" and pb[1] == "Volumes":
+        clean_a = re.sub(r" \d+$", "", pa[2])
+        clean_b = re.sub(r" \d+$", "", pb[2])
+        return clean_a == clean_b and pa[3:] == pb[3:]
+    return False
 
 
 def _nearby_saves(root: Path) -> list[tuple[Path, Path]]:

@@ -73,7 +73,8 @@ def download(path: Path, timeout: float = 900) -> bool:
             log.warning("iCloud: lettura di %s non riuscita (%s), provo brctl", path.name, e)
     if sys.platform == "darwin":
         try:
-            subprocess.run(["brctl", "download", str(path)], capture_output=True, timeout=30)
+            target = path if path.exists() else stub_for(path)
+            subprocess.run(["brctl", "download", str(target)], capture_output=True, timeout=30)
         except (OSError, subprocess.SubprocessError):
             pass
         end = time.monotonic() + timeout

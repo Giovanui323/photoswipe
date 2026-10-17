@@ -91,6 +91,8 @@ def test_newest_save_wins_when_levels_overlap(tmp_path):
 
 def test_renamed_volume_matches_export_fallback(tmp_path, monkeypatch):
     assert exporter._same_root("/Volumes/Backup/TRIP/DJI/1", "/Volumes/Backup 1/TRIP/DJI/1")
+    assert exporter._same_root("/Volumes/Backup", "/Volumes/Backup 1")
+    assert not exporter._same_root("/Volumes/SanDisk/DCIM", "/Volumes/Seagate/DCIM")
     assert not exporter._same_root("/Volumes/Backup/A", "/Volumes/Backup/B")
     assert not exporter._same_root("/Users/a/x", "/Users/b/x")
 

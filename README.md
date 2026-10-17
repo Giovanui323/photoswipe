@@ -1,6 +1,6 @@
 # PhotoSwipe
 
-Versione **1.2.4** — il numero è nel titolo della finestra.
+Versione **1.2.5** — il numero è nel titolo della finestra.
 
 Sfogli foto, panorami, Live e video della DJI Osmo Pocket 4 e scegli con **Sì / No / Salta**.
 Quello che approvi viene **copiato** (mai spostato) nella cartella `export`, pronta da caricare
@@ -43,6 +43,11 @@ Ispirata a Foto di macOS, con la scelta "alla Tinder":
 | **X** | sposta l'originale in `cancellare` (dentro la cartella che guardi); non cancella, Z lo rimette a posto |
 | **S** | Salta (a fine giro puoi rivedere le saltate) |
 | **Z** | Annulla l'ultima scelta (toglie anche i file copiati) |
+| **↑** o **B** | torna all'elemento precedente |
+| **↓** | passa all'elemento successivo |
+| **.** (punto) | aggiungi / togli da Preferite (`export/Preferite`) |
+| **I** | mostra / nascondi il pannello Info |
+| **L** | vedi Live / vedi foto |
 | **C** | Cambia scena (Live e video) |
 | **← / →** (Maiusc = 10) | fotogramma precedente / successivo |
 | **P** | fotogramma più nitido vicino a quello scelto |
@@ -50,6 +55,7 @@ Ispirata a Foto di macOS, con la scelta "alla Tinder":
 | **F** | prendi foto: salva subito il fotogramma che vedi |
 | **V** | rivedi il video dall'inizio, con l'audio |
 | **Spazio** | pausa / riproduci |
+| **?** o **H** | guida e aiuto |
 | rotella / doppio clic | zoom / adatta (foto e panorami) |
 
 ## Cosa fa con ogni tipo di file

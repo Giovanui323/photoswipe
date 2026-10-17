@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 from logging.handlers import RotatingFileHandler
@@ -9,7 +10,10 @@ from pathlib import Path
 
 
 def log_path() -> Path:
-    if sys.platform == "darwin":
+    override = os.environ.get("PHOTOSWIPE_LOG_DIR")
+    if override:
+        base = Path(override)
+    elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Logs" / "PhotoSwipe"
     else:
         base = Path.home() / ".photoswipe"
@@ -22,9 +26,12 @@ def setup(version: str) -> logging.Logger:
     if log.handlers:
         return log
     log.setLevel(logging.INFO)
-    h = RotatingFileHandler(log_path(), maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)-5s [%(threadName)s] %(message)s"))
-    log.addHandler(h)
+    try:
+        h = RotatingFileHandler(log_path(), maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)-5s [%(threadName)s] %(message)s"))
+        log.addHandler(h)
+    except OSError:
+        pass
     log.info("==== avvio %s | Python %s | %s", version, sys.version.split()[0], sys.platform)
 
     def hook(exc_type, exc, tb):
