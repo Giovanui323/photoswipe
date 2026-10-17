@@ -32,9 +32,11 @@ def test_arrow_scrolls_smoothly_and_stops_at_the_end(qapp, win, sd, monkeypatch)
         win.scroll_thumbs(-1)
         settled(qapp, strip)
     assert abs(strip.pan) <= strip._limit() + 0.5
-    win.locate_thumb()                             # riporta alla selezionata
+    target = win.next_index(-1)                    # la prima foto ancora da giudicare
+    win.locate_thumb()                             # "Torna all'analisi"
     settled(qapp, strip)
-    assert abs(strip.pan) < 0.5
+    assert win.idx == target
+    assert abs(strip.pan) < 0.5                    # la striscia è centrata su di lei
 
 
 def test_wheel_trackpad_moves_with_the_fingers(qapp, win, sd, monkeypatch):

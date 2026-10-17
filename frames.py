@@ -151,6 +151,19 @@ def frame_preview(video: Path, info: VideoInfo, n: int, max_side: int = 1600) ->
     return Image.frombytes("RGB", (w, h), res.stdout[:w * h * 3])
 
 
+def proxy_window(video: Path, info: VideoInfo, start: int, count: int) -> list[bytes]:
+    """Fotogrammi start…start+count-1 dell'anteprima (.LRF, 720p), esatti, come JPEG in memoria.
+
+    Una sola lettura (≈0,2 s per una Live intera) e ~100 KB a fotogramma: si mostrano subito
+    mentre si sceglie, poi arriva quello a risoluzione piena."""
+    res = _run(["-ss", f"{info.time_of(start):.6f}", "-i", str(video), "-map", "0:v:0",
+                "-frames:v", str(count), "-c:v", "mjpeg", "-q:v", "4", "-f", "image2pipe", "-"],
+               timeout=60)
+    # nei dati JPEG un byte 0xFF è sempre seguito da 0x00: FF D8 compare solo a inizio immagine
+    parts = res.stdout.split(b"\xff\xd8")[1:]
+    return [b"\xff\xd8" + p for p in parts]
+
+
 def strip_thumbs(video: Path, info: VideoInfo, count: int = 16, height: int = 96) -> list[Image.Image]:
     """Miniature distribuite su tutto il video, per la striscia dei fotogrammi (come in Foto).
 

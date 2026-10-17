@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cloud
+import edits
 import frames
 from scanner import Item
 
@@ -79,17 +80,44 @@ def clean_partial(export_dir: Path) -> int:
     return n
 
 
+def _export_edited(item: Item, edit: dict, export_dir: Path) -> Path:
+    """Foto con Regola / Ritaglia: si salva la foto modificata (JPEG qualità massima, EXIF
+    conservato), a piena risoluzione. L'originale non si tocca."""
+    src = item.image or item.raw
+    cloud.download(src)
+    if item.image:
+        img, keep = edits.load_full(item.image)
+    else:   # solo DNG: si parte dall'immagine sviluppata
+        from scanner import raw_preview
+        img, keep = raw_preview(item.raw), {}
+        if img is None:
+            raise RuntimeError(f"Impossibile modificare {item.raw.name}: anteprima non disponibile")
+    ext = src.suffix if src.suffix.lower() in (".jpg", ".jpeg") else ".jpg"   # stesso nome se era JPEG
+    dst = unique_path(export_dir, src.stem + ext)
+    edits.save_edited(edits.render(img, edit), dst, keep)
+    st = src.stat()
+    os.utime(dst, (st.st_atime, st.st_mtime))   # stessa data dell'originale
+    return dst
+
+
 def export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
-                snapshot: bool = False) -> list[Path]:
+                snapshot: bool = False, edit: dict | None = None) -> list[Path]:
     """Esegue l'export di un elemento approvato. Ritorna i file creati.
 
     snapshot=True: "Prendi foto" da un video, salva solo quel fotogramma (nome con _fNNNN).
+    edit: modifiche di Regola / Ritaglia (foto, panorami e Live): si salva la foto modificata.
     """
     out: list[Path] = []
+    edit = None if edits.is_empty(edit) or snapshot else edits.clean(edit)
     if item.kind in ("photo", "pano"):
-        for src in (item.image, item.raw):
-            if src:
-                out.append(_copy(src, export_dir))
+        if edit:
+            out.append(_export_edited(item, edit, export_dir))
+            if item.image and item.raw:   # il DNG resta l'originale, identico
+                out.append(_copy(item.raw, export_dir))
+        else:
+            for src in (item.image, item.raw):
+                if src:
+                    out.append(_copy(src, export_dir))
         if item.video and s.copy_video:  # Live Photo iPhone (HEIC+MOV): anche il video
             out.append(_copy(item.video, export_dir / VIDEO_SUBDIR))
         return out
@@ -104,12 +132,17 @@ def export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
         when, offset = frames.capture_times(item.taken, info, s.tz_override_hours)
         when += timedelta(seconds=float(frame / info.fps))  # ora esatta del fotogramma
         stem = f"{video.stem}_f{frame + 1:04d}" if snapshot else video.stem
-        if s.fmt == "png16":
+        if s.fmt == "png16" and not edit:
             dst = unique_path(export_dir, stem + ".png")
             frames.save_png16(video, info, frame, dst)
+        elif s.fmt == "png16":   # modificata: PNG senza perdita (8 bit, dopo le regolazioni)
+            dst = unique_path(export_dir, stem + ".png")
+            tmp = dst.with_name(dst.name + ".part.png")
+            edits.render(frames.frame_rgb(video, info, frame), edit).save(tmp, "PNG")
+            os.replace(tmp, dst)
         else:
             dst = unique_path(export_dir, stem + ".jpg")
-            img = frames.frame_rgb(video, info, frame)
+            img = edits.render(frames.frame_rgb(video, info, frame), edit)
             frames.save_jpeg(img, dst, frames.FrameMeta(when, offset, video.name, frame))
         frames.set_file_time(dst, when)
         out.append(dst)
@@ -320,11 +353,15 @@ def gather_saved(root: Path, own: dict | None) -> dict | None:
     merged = dict(own or max((d for d, _ in sources), key=lambda d: d.get("updated") or ""))
     decisions: dict[str, dict] = {}
     favorites: set[str] = set()
+    edit_map: dict[str, dict] = {}
     for data, base in sorted(sources, key=lambda s: s[0].get("updated") or ""):
         decisions.update(_rebase(_normalize(data.get("decisions")), base, root))
+        ed = {_key(str(k)): v for k, v in (data.get("edits") or {}).items() if isinstance(v, dict)}
+        edit_map.update(_rebase(ed, base, root))
         favs = {_key(str(k)): {} for k in data.get("favorites") or []}
         favorites |= set(_rebase(favs, base, root))
     merged["decisions"], merged["favorites"] = decisions, sorted(favorites)
+    merged["edits"] = edit_map
     newest = max(sources, key=lambda s: s[0].get("updated") or "")[0]
     merged["updated"] = newest.get("updated")
     merged.setdefault("export", newest.get("export"))
@@ -350,6 +387,7 @@ class Session:
         self.total = len(self.ids) if self.ids is not None else total
         self.decisions: dict[str, dict] = {}
         self.favorites: set[str] = set()
+        self.edits: dict[str, dict] = {}   # Regola / Ritaglia per elemento (anche non ancora deciso)
         now = _now()
         self.created, self.updated, self.closed = now, now, None
         self.path = root / SESSION_FILE
@@ -362,6 +400,8 @@ class Session:
         if data:
             self.decisions = _normalize(data.get("decisions", {}))
             self.favorites = {_key(str(k)) for k in data.get("favorites", [])}
+            self.edits = {_key(str(k)): v for k, v in (data.get("edits") or {}).items()
+                          if isinstance(v, dict) and v}
             self.created = data.get("created", now)
             self.updated = data.get("updated", now)
         if not _writable(root):
@@ -474,6 +514,14 @@ class Session:
             self.decisions[item_id]["moved"] = moved
         self.save()
 
+    def set_edit(self, item_id: str, edit: dict | None) -> None:
+        edit = edits.clean(edit or {})
+        if edit:
+            self.edits[item_id] = edit
+        else:
+            self.edits.pop(item_id, None)
+        self.save()
+
     def clear(self, item_id: str) -> None:
         self.decisions.pop(item_id, None)
         self.save()
@@ -519,6 +567,7 @@ class Session:
             os.replace(path, path.with_name(f"{SESSION_FILE}.{stamp}.bak"))
         self.decisions = {}
         self.favorites = set()
+        self.edits = {}
         self.created = self.updated = _now()
         self.closed = None
         self.fresh = True
@@ -537,6 +586,7 @@ class Session:
                 "created": self.created, "updated": self.updated, "closed": self.closed,
                 "total": self.total, "decided": self.decided, "completed": self.completed,
                 "decisions": self.decisions, "favorites": sorted(self.favorites),
+                **({"edits": self.edits} if self.edits else {}),
                 **({"fresh": True} if self.fresh else {}),
             }, f, ensure_ascii=False, indent=1)
             f.flush()

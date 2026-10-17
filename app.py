@@ -10,6 +10,7 @@ import dataclasses
 import time
 import uuid
 import warnings
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from fractions import Fraction
 from pathlib import Path
@@ -22,18 +23,22 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
                                QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGridLayout,
-                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QProxyStyle, QRadioButton,
+                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QProxyStyle, QRadioButton,
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle, QStyleOption, QTextBrowser, QVBoxLayout, QWidget)
+
+from PIL import Image
 
 import applog
 import cloud
+import editpanel as EP
+import edits as E
 import exporter
 import frames
 import metadata
 from scanner import Item, mp4_duration, raw_preview, scan
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.8"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -42,6 +47,8 @@ PREFETCH = 10  # elementi successivi scaricati in anticipo da iCloud, in automat
 STRIP_FILTERS = (("Mostra: tutte", "all"), ("Mostra: da decidere", "todo"), ("Mostra: già decise", "done"),
                  ("Mostra: ✓ Sì", "yes"), ("Mostra: ✗ No", "no"), ("Mostra: ↪ saltate", "skip"),
                  ("Mostra: 🗑 “cancellare”", "trash"))
+# colore del bordo della miniatura attuale: quello del tipo scelto nel filtro a sinistra
+STRIP_FRAME_COLORS = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng", ".tif", ".tiff"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 KIND_LABEL = {"photo": "FOTO", "pano": "PANORAMA", "live": "LIVE", "video": "VIDEO"}
@@ -210,6 +217,11 @@ QPushButton#start, QPushButton#primary { background: #ffd60a; color: #1c1c1e; bo
 QPushButton#start:hover, QPushButton#primary:hover { background: #ffe14d; }
 QPushButton#start:disabled { background: #3a3a3c; color: #8e8e93; }
 """
+STYLE += EP.EDIT_STYLE + """
+QProgressBar#progress { background: #3a3a3c; border: none; border-radius: 3px; max-height: 6px; min-height: 6px; }
+QProgressBar#progress::chunk { background: #ffd60a; border-radius: 3px; }
+QLabel#editbadge { color: #ffd60a; font-size: 11px; font-weight: 700; }
+"""
 
 
 HELP_TEXT = """PULSANTI PRINCIPALI
@@ -248,6 +260,18 @@ Clic sulla striscia (o pausa, ← →) – ti fermi sul fotogramma esatto.
 ZOOM
 Cursore sopra la foto, in alto a sinistra; due dita su/giù sul trackpad (o pizzico) = zoom, trascina per spostarti,
 doppio clic = di nuovo intera. Ogni foto si apre sempre intera.
+
+INFO · REGOLA · RITAGLIA (in alto nel pannello a destra)
+Info – le informazioni di sempre; in evidenza quante foto hai già deciso.
+Regola – come in Foto: Luce, Colore, Bianco e nero (trascina sulle miniature o apri Opzioni),
+   Occhi rossi (clic sull'occhio), Bilanciamento del bianco, Curve, Livelli, Definizione,
+   Colore selettivo, Riduzione disturbo, Nitidezza, Vignettatura. AUTO = automatico,
+   ↶ = annulla quella regolazione, cerchio blu = accendi / spegni per confrontare.
+Ritaglia – trascina angoli e lati del riquadro sulla foto; Raddrizza, Verticale, Orizzontale,
+   Capovolgi, Proporzioni. Poi OK (Invio) per confermare o Annulla (Esc): finché il ritaglio
+   è aperto ✓ / ✕ e gli altri pulsanti aspettano.
+Con ✓ Sì si esporta la foto modificata o ritagliata (JPEG qualità massima, l'originale non si
+tocca). "Annulla le modifiche", in fondo al pannello, la riporta com'era.
 
 IMPOSTAZIONI (⚙ in alto a destra)
 Apri cartella – ① la cartella da guardare, ② la cartella export, poi Inizia.
@@ -463,6 +487,8 @@ class Bridge(QObject):
 class ImageView(QGraphicsView):
     zoom_changed = Signal(float)   # 0 = adattata, 1 = ingrandimento massimo (per il cursore in alto)
     view_changed = Signal()        # la foto ha cambiato posto/dimensione a schermo (per la data sopra)
+    crop_changed = Signal(list)    # Ritaglia: nuovo riquadro [x, y, l, a] (0..1 della foto)
+    picked = Signal(float, float)  # Occhi rossi: clic sulla foto (0..1)
 
     """Foto adattata alla finestra; due dita su/giù o pizzico = zoom, doppio clic = adatta.
 
@@ -489,6 +515,176 @@ class ImageView(QGraphicsView):
         self.setFocusPolicy(Qt.NoFocus)
         self.full = QImage()
         self.zoomed = False
+        # Ritaglia: riquadro sopra la foto con angoli e lati da trascinare
+        self.crop_mode = False
+        self.crop = [0.0, 0.0, 1.0, 1.0]
+        self.crop_ratio: float | None = None   # larghezza/altezza in pixel della foto (None = libero)
+        self._crop_drag: tuple[str, QPointF, list[float]] | None = None
+        self.pick_enabled = False              # Occhi rossi: un clic indica l'occhio
+        self._press_pos: QPointF | None = None
+
+    # ---- Ritaglia
+    def set_crop_mode(self, on: bool, crop: list[float] | None = None, ratio: float | None = None) -> None:
+        self.crop_mode = on
+        self.crop = list(crop or [0.0, 0.0, 1.0, 1.0])
+        self.crop_ratio = ratio
+        self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
+        # il riquadro e l'ombra intorno coprono tutta la vista: si ridisegna sempre tutta
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if on
+                                   else QGraphicsView.MinimalViewportUpdate)
+        if on:
+            self.fit()
+        self.viewport().update()
+
+    def _img_rect(self) -> QRectF:
+        """Dove sta la foto nel riquadro della vista (coordinate del viewport)."""
+        return QRectF(self.mapFromScene(self.item.sceneBoundingRect()).boundingRect())
+
+    def _crop_view_rect(self) -> QRectF:
+        r = self._img_rect()
+        x, y, w, h = self.crop
+        return QRectF(r.left() + x * r.width(), r.top() + y * r.height(), w * r.width(), h * r.height())
+
+    def _crop_hit(self, pos: QPointF) -> str | None:
+        c = self._crop_view_rect()
+        m = 12
+        near = lambda a, b: abs(a - b) <= m   # noqa: E731
+        inside_x = c.left() - m <= pos.x() <= c.right() + m
+        inside_y = c.top() - m <= pos.y() <= c.bottom() + m
+        if not (inside_x and inside_y):
+            return None
+        mode = ""
+        if near(pos.y(), c.top()):
+            mode += "t"
+        elif near(pos.y(), c.bottom()):
+            mode += "b"
+        if near(pos.x(), c.left()):
+            mode += "l"
+        elif near(pos.x(), c.right()):
+            mode += "r"
+        if mode:
+            return mode
+        return "move" if c.contains(pos) else None
+
+    def _aspect_n(self) -> float | None:
+        """Rapporto larghezza/altezza in coordinate 0..1 (la foto non è quadrata)."""
+        if not self.crop_ratio or self.full.isNull():
+            return None
+        return self.crop_ratio * self.full.height() / self.full.width()
+
+    def _drag_crop(self, mode: str, d: QPointF, start: list[float]) -> list[float]:
+        r = self._img_rect()
+        dx, dy = d.x() / max(1.0, r.width()), d.y() / max(1.0, r.height())
+        x, y, w, h = start
+        mn = 0.04
+        if mode == "move":
+            x = max(0.0, min(1 - w, x + dx))
+            y = max(0.0, min(1 - h, y + dy))
+            return [x, y, w, h]
+        x0, y0, x1, y1 = x, y, x + w, y + h
+        if "l" in mode:
+            x0 = max(0.0, min(x1 - mn, x0 + dx))
+        if "r" in mode:
+            x1 = min(1.0, max(x0 + mn, x1 + dx))
+        if "t" in mode:
+            y0 = max(0.0, min(y1 - mn, y0 + dy))
+        if "b" in mode:
+            y1 = min(1.0, max(y0 + mn, y1 + dy))
+        a = self._aspect_n()
+        if a:
+            nw, nh = x1 - x0, y1 - y0
+            if mode in ("t", "b"):          # lato orizzontale: la larghezza segue, centrata
+                nw = nh * a
+                cx = (start[0] + start[2] / 2)
+                x0, x1 = cx - nw / 2, cx + nw / 2
+            elif mode in ("l", "r"):        # lato verticale: l'altezza segue, centrata
+                nh = nw / a
+                cy = (start[1] + start[3] / 2)
+                y0, y1 = cy - nh / 2, cy + nh / 2
+            else:                           # angolo: l'angolo opposto resta fermo
+                if nw / max(nh, 1e-6) > a:
+                    nh = nw / a
+                else:
+                    nw = nh * a
+                if "l" in mode:
+                    x0 = x1 - nw
+                else:
+                    x1 = x0 + nw
+                if "t" in mode:
+                    y0 = y1 - nh
+                else:
+                    y1 = y0 + nh
+            # fuori dalla foto: si riduce mantenendo le proporzioni
+            if x0 < 0 or y0 < 0 or x1 > 1 or y1 > 1:
+                return list(start)
+        return [x0, y0, x1 - x0, y1 - y0]
+
+    def drawForeground(self, painter: QPainter, rect) -> None:
+        super().drawForeground(painter, rect)
+        if not self.crop_mode or self.full.isNull():
+            return
+        painter.save()
+        painter.resetTransform()
+        vr = QRectF(self.viewport().rect())
+        c = self._crop_view_rect()
+        outside = QPainterPath()
+        outside.addRect(vr)
+        hole = QPainterPath()
+        hole.addRect(c)
+        painter.fillPath(outside.subtracted(hole), QColor(0, 0, 0, 150))
+        painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        for i in (1, 2):   # regola dei terzi
+            painter.drawLine(QPointF(c.left() + c.width() * i / 3, c.top()),
+                             QPointF(c.left() + c.width() * i / 3, c.bottom()))
+            painter.drawLine(QPointF(c.left(), c.top() + c.height() * i / 3),
+                             QPointF(c.right(), c.top() + c.height() * i / 3))
+        painter.setPen(QPen(QColor("#ffffff"), 1.5))
+        painter.drawRect(c)
+        painter.setPen(QPen(QColor("#ffffff"), 4, Qt.SolidLine, Qt.SquareCap))
+        L = min(22.0, c.width() / 3, c.height() / 3)
+        for (px, py, sx, sy) in ((c.left(), c.top(), 1, 1), (c.right(), c.top(), -1, 1),
+                                 (c.left(), c.bottom(), 1, -1), (c.right(), c.bottom(), -1, -1)):
+            painter.drawLine(QPointF(px, py), QPointF(px + sx * L, py))
+            painter.drawLine(QPointF(px, py), QPointF(px, py + sy * L))
+        painter.restore()
+
+    def mousePressEvent(self, e):
+        self._press_pos = e.position()
+        if self.crop_mode and e.button() == Qt.LeftButton:
+            mode = self._crop_hit(e.position())
+            if mode:
+                self._crop_drag = (mode, e.position(), list(self.crop))
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self.crop_mode:
+            if self._crop_drag:
+                mode, p0, start = self._crop_drag
+                self.crop = self._drag_crop(mode, e.position() - p0, start)
+                self.viewport().update()
+            else:
+                hit = self._crop_hit(e.position())
+                cur = {"move": Qt.SizeAllCursor, "t": Qt.SizeVerCursor, "b": Qt.SizeVerCursor,
+                       "l": Qt.SizeHorCursor, "r": Qt.SizeHorCursor, "tl": Qt.SizeFDiagCursor,
+                       "br": Qt.SizeFDiagCursor, "tr": Qt.SizeBDiagCursor, "bl": Qt.SizeBDiagCursor}
+                self.viewport().setCursor(cur.get(hit, Qt.ArrowCursor))
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self.crop_mode:
+            if self._crop_drag:
+                self._crop_drag = None
+                self.crop_changed.emit(list(self.crop))
+            return
+        super().mouseReleaseEvent(e)
+        if self.pick_enabled and self._press_pos is not None and not self.full.isNull() \
+                and (e.position() - self._press_pos).manhattanLength() < 4:
+            sp = self.mapToScene(e.position().toPoint())
+            br = self.item.sceneBoundingRect()
+            if br.contains(sp):
+                self.picked.emit((sp.x() - br.left()) / br.width(), (sp.y() - br.top()) / br.height())
 
     def set_loading(self, text: str) -> None:
         self.full = QImage()
@@ -503,7 +699,9 @@ class ImageView(QGraphicsView):
         self.loading.setText("")
         self.full = img
         if keep_zoom and self.zoomed:
-            self._show_full(keep_view=True)
+            # stessa grandezza a schermo anche se cambia la risoluzione (anteprima -> 4K)
+            same = self.item.pixmap().size() == img.size()
+            self._show_full(keep_view=same)
         else:
             self.fit()
 
@@ -584,10 +782,14 @@ class ImageView(QGraphicsView):
     MAX_STEP = 1.08   # ogni evento (scatto di rotella, pezzo di pizzico) cambia al massimo l'8%
 
     def wheelEvent(self, e):
+        if self.crop_mode:
+            return
         self.zoom_by(1.0015 ** e.angleDelta().y())
 
     def event(self, e):
         if e.type() == QEvent.NativeGesture and e.gestureType() == Qt.ZoomNativeGesture:
+            if self.crop_mode:
+                return True
             self.zoom_by(1.0 + e.value() * 0.5)  # pizzico sul trackpad, più dolce
             return True
         return super().event(e)
@@ -611,7 +813,8 @@ class ImageView(QGraphicsView):
         self.view_changed.emit()
 
     def mouseDoubleClickEvent(self, e):
-        self.fit()
+        if not self.crop_mode:
+            self.fit()
 
 
 class FilmStrip(QWidget):
@@ -731,6 +934,29 @@ class FilmStrip(QWidget):
             p.drawRoundedRect(box, 5, 5)
 
 
+class LruCache(OrderedDict):
+    """Dizionario con un numero massimo di elementi: quando è pieno toglie quello usato meno di
+    recente. Per le miniature: si rifanno da sole se servono di nuovo, la memoria resta limitata."""
+
+    def __init__(self, maxsize: int):
+        super().__init__()
+        self.maxsize = maxsize
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def get(self, key, default=None):
+        return self[key] if key in self else default
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self.move_to_end(key)
+        while len(self) > self.maxsize:
+            self.popitem(last=False)
+
+
 class SnapGallery(QWidget):
     """Le foto prese dal video che stai guardando, in miniatura (pannello a destra, in basso).
     Clic = il video torna su quel fotogramma per rivederlo; doppio clic = apre il file salvato;
@@ -747,7 +973,7 @@ class SnapGallery(QWidget):
         self.entries: list[tuple[str, int, str | None]] = []   # (chiave, fotogramma, file)
         self.current: int | None = None
         self._hover: int | None = None
-        self._cache: dict[str, QImage] = {}
+        self._cache: LruCache = LruCache(40)   # ~0,5 MB l'una
         self.setFixedHeight(0)
 
     def set_entries(self, entries: list[tuple[str, int, str | None]], current: int | None) -> None:
@@ -863,6 +1089,7 @@ class ThumbStrip(QWidget):
     fatta. Clic = vai a quell'elemento."""
     picked = Signal(int)
     CELL_W, CELL_H, GAP = 74, 52, 6
+    THUMB_SIDE = 184   # lato corto delle miniature: copre la casella grande (×1,18) su Retina (×2)
     DOT = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff", "snap": "#2ad48e"}
 
     def __init__(self):
@@ -875,6 +1102,7 @@ class ThumbStrip(QWidget):
         self.entries: list[tuple[int, QImage | None, str | None, bool, str]] = []
         self.current: int | None = None
         self._rects: list[tuple[QRectF, int]] = []
+        self.frame_color = "#0a84ff"   # bordo della miniatura attuale (vedi update_thumb_strip)
         self.pan = 0.0            # spostamento attuale (pixel): la striscia si muove da qui
         self._target = 0.0        # dove deve arrivare: lo scorrimento è morbido, come in Foto
         self._vel = 0.0           # velocità del trascinamento, poi l'inerzia la fa decrescere
@@ -1028,8 +1256,8 @@ class ThumbStrip(QWidget):
                 p.setPen(QPen(QColor("#1c1c1e"), 1.5))
                 p.setBrush(QColor(self.DOT[choice]))
                 p.drawEllipse(QRectF(r.right() - 13, r.top() + 4, 9, 9))
-            if i == self.current:
-                p.setPen(QPen(QColor("#ffffff"), 2.5))
+            if i == self.current:   # miniatura attuale: bordo del colore del tipo scelto
+                p.setPen(QPen(QColor(self.frame_color), 2.5))
                 p.setBrush(Qt.NoBrush)
                 p.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 7, 7)
         # ai bordi le miniature sfumano nello sfondo invece di finire tagliate di netto
@@ -1050,6 +1278,24 @@ _MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "
 
 def fmt_datetime(d) -> str:
     return f"{_GIORNI[d.weekday()]} {d.day} {_MESI[d.month - 1]} {d.year}   {d:%H:%M:%S}"
+
+
+def qimage_to_pil(q: QImage) -> "Image.Image":
+    q = q.convertToFormat(QImage.Format_RGB888)
+    w, h, bpl = q.width(), q.height(), q.bytesPerLine()
+    buf = bytes(q.constBits())[:bpl * h]
+    return Image.frombuffer("RGB", (w, h), buf, "raw", "RGB", bpl, 1)
+
+
+EDIT_PROXY = 1600          # Regola / Ritaglia: anteprima veloce, poi la foto intera
+EDIT_FULL_MAX = 30_000_000  # oltre (panorami enormi) a schermo resta l'anteprima; l'export è sempre intero
+
+
+def render_edit_job(img, e: dict, crop_mode: bool):
+    """In Ritaglia si vede la foto intera (raddrizzata) con il riquadro sopra; altrimenti finita."""
+    if crop_mode:
+        return E.render_tone(E.geometry_base(img.convert("RGB"), e), e)
+    return E.render(img, e)
 
 
 def pil_to_qimage(img) -> QImage:
@@ -1083,6 +1329,8 @@ class MainWindow(QMainWindow):
         self.pre = ThreadPoolExecutor(max_workers=2)       # anticipo dei successivi (2 alla volta)
         self.waiters = ThreadPoolExecutor(max_workers=4)   # attese dei download correnti
         self.export_q = ThreadPoolExecutor(max_workers=1)  # export in ordine, uno alla volta
+        # fotogrammi da mostrare subito: coda tutta loro, non aspettano dietro le miniature
+        self.frames_q = ThreadPoolExecutor(max_workers=2)
         self.bridge = Bridge()
         self.bridge.done.connect(self.on_done)
 
@@ -1112,15 +1360,31 @@ class MainWindow(QMainWindow):
         self.shown_frame = 0
         self._player_item: str | None = None   # elemento caricato nel lettore video
         self._playing_proxy = False
-        self.exact_cache: dict[tuple[str, int], QImage] = {}  # ultimi fotogrammi esatti (4K)
+        self.exact_cache: LruCache = LruCache(4)   # ultimi fotogrammi esatti (4K)
+        # fotogrammi dall'anteprima .LRF (720p), JPEG in memoria: si vedono subito quando scegli
+        # un fotogramma, poi arriva quello esatto in 4K. ~18 MB per una Live intera, 2 elementi.
+        self.proxy_frames: LruCache = LruCache(2)  # id -> (primo fotogramma, [jpeg, …])
         self._preview_busy = False
         self._preview_again = False
         self.meta: dict[str, metadata.Meta] = {}    # metadati per il pannello Info
-        self.thumbs: dict[str, list[QImage]] = {}   # miniature della striscia, per elemento
-        self.next_thumbs: dict[str, QImage] = {}    # anteprima dell'elemento successivo
+        # miniature con un tetto, così la memoria non cresce scorrendo migliaia di foto
+        self.thumbs: LruCache = LruCache(12)        # striscia dei fotogrammi: ~1,4 MB per video
+        self.next_thumbs: LruCache = LruCache(120)  # striscia in basso (ne mostra 25): ≤0,7 MB l'una
         self._by_id: dict[str, Item] = {}
         self._trash_view: tuple[str, int, Item] | None = None
         self.photos_only = self.settings_store.value("filter", "all") == "photos"
+        # Regola / Ritaglia
+        self.edit_pool = ThreadPoolExecutor(max_workers=1)
+        self.edit_base: QImage | None = None   # foto a schermo, senza modifiche
+        self.edit_base_owner: str | None = None
+        self._edit_proxy = None
+        self._edit_tiny = None
+        self.edit_gen = 0
+        self._edit_busy = False
+        self._edit_again = False
+        self.crop_draft: dict | None = None    # Ritaglia aperto: bozza finché non si preme OK
+        self.side_tab = "info"
+        self._tab_before_crop = "info"
 
         self._build_ui()
         self._build_shortcuts()
@@ -1271,7 +1535,6 @@ class MainWindow(QMainWindow):
         tips = {
             self.btn_open: "Scegli la cartella con foto e video (vengono lette anche le sottocartelle).",
             self.btn_export: "Cartella dove vengono COPIATE le foto approvate. Gli originali non si toccano.",
-            self.btn_show_export: f"Apre la cartella export in {FILE_MANAGER}.",
             self.fmt: "Formato dei fotogrammi estratti da Live e video.\n"
                       "JPEG qualità massima: accettato da tutti i siti di stampa.\n"
                       "PNG 16-bit: senza perdita, file molto grandi (~40 MB).\n"
@@ -1280,7 +1543,6 @@ class MainWindow(QMainWindow):
                      "'Della fotocamera' usa l'ora registrata in ogni file.",
             self.view_filter: "Solo foto: nasconde i video (restano foto, Live e panorami).\n"
                               "I video nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'.",
-            btn_help2: self.btn_help.toolTip(),
         }
         for w, t in tips.items():
             w.setToolTip(t)
@@ -1325,7 +1587,55 @@ class MainWindow(QMainWindow):
         side_scroll.setWidget(side_body)
         side_outer = QVBoxLayout(self.side)
         side_outer.setContentsMargins(0, 0, 0, 0)
-        side_outer.addWidget(side_scroll)
+        side_outer.setSpacing(0)
+        # in alto la scelta, come Regola · Stili · Ritaglia di Foto: Info (il pannello di sempre),
+        # Regola (luce, colore, …) e Ritaglia
+        self.side_seg = EP.Segmented([("info", "Info"), ("regola", "Regola"), ("ritaglia", "Ritaglia")])
+        self.side_seg.set_current("info")
+        self.side_seg.changed.connect(self.on_side_tab)
+        self.side_seg.buttons["info"].setToolTip("Informazioni sulla foto e sulla selezione.")
+        self.side_seg.buttons["regola"].setToolTip("Luce, colore, bianco e nero, curve, nitidezza…\n"
+                                                   "✓ Sì esporta la foto modificata (l'originale non si tocca).")
+        self.side_seg.buttons["ritaglia"].setToolTip("Ritaglia, raddrizza e proporzioni. Conferma con OK,\n"
+                                                     "poi ✓ Sì esporta la foto ritagliata.")
+        seg_wrap = QHBoxLayout()
+        seg_wrap.setContentsMargins(14, 10, 14, 4)
+        seg_wrap.addWidget(self.side_seg)
+        side_outer.addLayout(seg_wrap)
+        self.side_pages = QStackedWidget()
+        self.side_pages.addWidget(side_scroll)
+        self.regola = EP.RegolaPanel()
+        self.regola.changed.connect(self.on_regola_changed)
+        self.regola.auto_requested.connect(self.on_auto)
+        self.regola.reset_all.connect(self.reset_regola)
+        self.regola.redeye_mode.connect(lambda on: self.update_pick_mode())
+        self.side_pages.addWidget(EP.scroll(self.regola, "regolabody"))
+        self.ritaglia = EP.RitagliaPanel()
+        self.ritaglia.changed.connect(self.on_crop_draft)
+        self.ritaglia.aspect_changed.connect(self.on_crop_aspect)
+        self.ritaglia.ok.connect(self.crop_ok)
+        self.ritaglia.cancel.connect(self.crop_cancel)
+        self.ritaglia.auto.connect(self.crop_auto)
+        self.side_pages.addWidget(EP.scroll(self.ritaglia, "ritagliabody"))
+        side_outer.addWidget(self.side_pages, 1)
+        # in fondo, sempre: le modifiche di questa foto e il pulsante per toglierle
+        foot = QWidget()
+        fl = QVBoxLayout(foot)
+        fl.setContentsMargins(18, 6, 18, 12)
+        fl.setSpacing(5)
+        self.edit_badge = QLabel("")
+        self.edit_badge.setObjectName("editbadge")
+        self.edit_badge.setWordWrap(True)
+        fl.addWidget(self.edit_badge)
+        self.btn_discard = QPushButton("Annulla le modifiche")
+        self.btn_discard.setObjectName("discard")
+        self.btn_discard.setFocusPolicy(Qt.NoFocus)
+        self.btn_discard.setToolTip("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n"
+                                    "(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)")
+        self.btn_discard.clicked.connect(self.discard_edits)
+        fl.addWidget(self.btn_discard)
+        self.side_foot = foot
+        side_outer.addWidget(foot)
         sv = QVBoxLayout(side_body)
         sv.setContentsMargins(18, 14, 18, 18)
         sv.setSpacing(8)
@@ -1343,6 +1653,14 @@ class MainWindow(QMainWindow):
         sel = QLabel("SELEZIONE")
         sel.setObjectName("section")
         sv.addWidget(sel)
+        # quante già fatte: in evidenza (numero grande e barra), poi il dettaglio
+        self.done_label = QLabel("")
+        self.done_label.setTextFormat(Qt.RichText)
+        sv.addWidget(self.done_label)
+        self.progress = QProgressBar()
+        self.progress.setObjectName("progress")
+        self.progress.setTextVisible(False)
+        sv.addWidget(self.progress)
         self.counter = QLabel("")
         self.counter.setObjectName("details")
         self.counter.setWordWrap(True)
@@ -1414,7 +1732,8 @@ class MainWindow(QMainWindow):
         self.msg_buttons.setSpacing(10)
         self.msg_btn1 = QPushButton()
         self.msg_btn2 = QPushButton()
-        for b in (self.msg_btn1, self.msg_btn2):
+        self.msg_btn3 = QPushButton("Nuova selezione…")   # a fine selezione: chiude e apre un'altra cartella
+        for b in (self.msg_btn1, self.msg_btn2, self.msg_btn3):
             b.setFocusPolicy(Qt.TabFocus)
             b.setMinimumHeight(36)
             self.msg_buttons.addWidget(b)
@@ -1489,10 +1808,8 @@ class MainWindow(QMainWindow):
         self.frame_label.setAlignment(Qt.AlignCenter)
         self.btn_live = QPushButton("▶  Vedi Live (L)")
         self.btn_live.setObjectName("live")
-        self.btn_live.setToolTip("Guarda il video della Live (L). Lì puoi anche cambiare fotogramma.")
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_replay = QPushButton("⟲  Rivedi (V)")
-        self.btn_replay.setToolTip("Riguarda il video dall'inizio, con l'audio (V).")
         self.btn_replay.clicked.connect(self.replay)
         self.btn_snap = QPushButton("📷  Prendi foto (F)")
         self.btn_snap.setToolTip("Salva SUBITO come foto il fotogramma che stai guardando (F)\n"
@@ -1510,8 +1827,6 @@ class MainWindow(QMainWindow):
                               "Live: quello scelto diventa la foto (SÌ salva questa).\n"
                               "Live: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\n"
                               "Video: si ferma lì, poi 📷 Prendi foto.  ← → un fotogramma alla volta.")
-        self.btn_sharp.setToolTip("Cerca il fotogramma più nitido (meno mosso) vicino a quello mostrato (P).")
-        self.btn_reset.setToolTip("Torna al fotogramma che la fotocamera aveva scelto come foto (R).")
         for w in (self.btn_play, self.btn_prev, self.strip, self.btn_next, self.time_label):
             w.setFocusPolicy(Qt.NoFocus)
             timeline.addWidget(w, 1 if w is self.strip else 0)
@@ -1534,40 +1849,27 @@ class MainWindow(QMainWindow):
         # ---- scelta, stile Tinder: pulsanti rotondi centrati, con il tasto scritto sotto
         self.choice_btns: list[QPushButton] = []
 
-        def round_btn(text, name, size, tip, slot, cls=QPushButton):
+        def round_btn(text, name, size, slot, cls=QPushButton):
             b = cls(text)
             b.setObjectName(name)
             b.setProperty("round", "true")
             b.setFixedSize(size, size)
             b.base_size = size   # misura a finestra normale; con lo schermo grande cresce (layout_choices)
             self.choice_btns.append(b)
-            b.setToolTip(tip)
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(slot)
             return b
 
         self.btn_trash = round_btn("", "trash", 48,
-                                   "Sposta in “cancellare” (X). Non cancella: SPOSTA l'originale\n"
-                                   "(e la sua anteprima .LRF) nella cartella “cancellare” dentro la\n"
-                                   "cartella che stai guardando, con le stesse sottocartelle.\n"
-                                   "Poi lo cancelli tu a mano, se vuoi. Z lo rimette al suo posto.",
                                    lambda: self.decide("trash"), TrashButton)
-        self.btn_no = round_btn("✕", "no", 66, "NO (N): scarta, non viene copiato niente.",
+        self.btn_no = round_btn("✕", "no", 66,
                                 lambda: self.decide("no"))
         self.btn_skip = round_btn("↪", "skip", 48,
-                                  "Salta (S): decidi dopo. A fine giro puoi rivedere tutte le saltate.",
                                   lambda: self.decide("skip"))
         self.btn_yes = round_btn("✓", "yes", 66,
-                                 "SÌ (Y o Invio): approva e copia in export.\n"
-                                 "Foto/panorami: copia identica.  Live: salva la foto.\n"
-                                 "Video: copia il video in export/Video (per le foto usa 📷 Prendi foto).",
                                  lambda: self.decide("yes"))
         self.btn_yes_video = round_btn("＋", "yesvideo", 48,
-                                       "SÌ e copia anche il video (Maiusc+Y).\n"
-                                       "Live: salva la foto E copia il video MP4 originale in export/Video.\n"
-                                       "Video: si attiva dopo aver preso almeno una foto con 📷;\n"
-                                       "tiene le foto e copia anche il video in export/Video.",
                                        lambda: self.decide("yes", with_video=True))
         choices = QHBoxLayout()
         choices.setSpacing(16)
@@ -1666,15 +1968,16 @@ class MainWindow(QMainWindow):
         _sfp_v = QVBoxLayout(_sfp_card)
         _sfp_v.setContentsMargins(8, 8, 8, 8)
         _sfp_v.setSpacing(3)
-        self._strip_filter_btns: list[tuple[QPushButton, str]] = []
+        self._strip_filter_btns: list[tuple[QPushButton, str, str]] = []
         for label, key in STRIP_FILTERS:
             fb = QPushButton(label)
             fb.setFocusPolicy(Qt.NoFocus)
-            fb.setStyleSheet("")  # stile dalla card
+            fb.setCursor(Qt.PointingHandCursor)
             fb.clicked.connect(lambda _=False, k=key, l=label: self._pick_strip_filter(k, l))
             _sfp_v.addWidget(fb)
-            self._strip_filter_btns.append((fb, key))
+            self._strip_filter_btns.append((fb, key, label))
         self._strip_filter_pop.setFixedWidth(240)
+        _sfp_v.setSpacing(2)
         self._update_strip_filter_highlight()
         # Oggetto finto per compatibilità: currentData() usato in update_thumb_strip
         class _StripFilterProxy:
@@ -1723,6 +2026,20 @@ class MainWindow(QMainWindow):
         self.dl_timer = QTimer(self)
         self.dl_timer.setInterval(500)
         self.dl_timer.timeout.connect(self.update_download_message)
+        self.full_edit_timer = QTimer(self)   # Regola: la foto intera quando la mano si ferma
+        self.full_edit_timer.setSingleShot(True)
+        self.full_edit_timer.setInterval(450)
+        self.full_edit_timer.timeout.connect(self.request_full_edit)
+        self.thumbs_timer = QTimer(self)
+        self.thumbs_timer.setSingleShot(True)
+        self.thumbs_timer.setInterval(220)
+        self.thumbs_timer.timeout.connect(self.make_thumbs)
+        self.edit_save_timer = QTimer(self)
+        self.edit_save_timer.setSingleShot(True)
+        self.edit_save_timer.setInterval(600)
+        self.edit_save_timer.timeout.connect(lambda: self.session and self.session.save())
+        self.image_view.crop_changed.connect(self.on_view_crop)
+        self.image_view.picked.connect(self.on_image_picked)
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.setInterval(90)
@@ -1768,6 +2085,395 @@ class MainWindow(QMainWindow):
         self.btn_info.setProperty("on", "true" if self.side_wanted else "false")
         self.btn_info.style().unpolish(self.btn_info)
         self.btn_info.style().polish(self.btn_info)
+
+    # ------------------------------------------------------------------ Regola e Ritaglia
+    def editable(self, item: Item | None = None) -> bool:
+        """Regola e Ritaglia: foto, panorami e Live (la foto della Live). I video no."""
+        item = item or self.current()
+        return item is not None and item.kind in ("photo", "pano", "live")
+
+    def item_edit(self, item_id: str | None = None) -> dict:
+        if not self.session:
+            return {}
+        item_id = item_id or (self.current().id if self.current() else None)
+        return dict(self.session.edits.get(item_id, {})) if item_id else {}
+
+    def store_edit(self, item_id: str, edit: dict) -> None:
+        self.session.set_edit(item_id, edit)
+        self.update_edit_ui()
+
+    def on_side_tab(self, key: str) -> None:
+        item = self.current()
+        if self.crop_draft is not None and key != "ritaglia":
+            self.side_seg.set_current("ritaglia")
+            self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+            return
+        if key != "info" and not (self.editable(item) and self.stack.currentWidget() is self.image_view
+                                  or self.editable(item) and item.kind == "live"):
+            self.side_seg.set_current(self.side_tab)
+            self.flash("Regola e Ritaglia: per foto, panorami e Live (non per i video)")
+            return
+        if key == "ritaglia" and item.kind == "live" and self.live_view:
+            self.show_live_still()
+            self.update_scene_controls()
+        if key == "ritaglia" and self.edit_base_owner != item.id:
+            self.side_seg.set_current(self.side_tab)
+            self.flash("Aspetta che la foto sia caricata")
+            return
+        self.side_seg.set_current(key)
+        if key == "ritaglia" and self.side_tab != "ritaglia":
+            self._tab_before_crop = self.side_tab
+        self.side_tab = key
+        self.side_pages.setCurrentIndex({"info": 0, "regola": 1, "ritaglia": 2}[key])
+        if not self.side.isVisible() and self.stack.currentWidget() is not self.setup_page:
+            self.toggle_side()
+        if key == "ritaglia" and self.crop_draft is None:
+            self.start_crop()
+        self.update_pick_mode()
+        if key == "regola":
+            self.update_thumbs()
+
+    def update_pick_mode(self) -> None:
+        on = self.side_tab == "regola" and self.regola.redeye_open() and self.editable()
+        self.image_view.pick_enabled = on
+        self.image_view.viewport().setCursor(Qt.CrossCursor if on else Qt.OpenHandCursor)
+
+    def on_image_picked(self, x: float, y: float) -> None:
+        if self.image_view.pick_enabled and self.crop_draft is None and self.editable():
+            self.regola.add_redeye(x, y)
+
+    def update_edit_ui(self) -> None:
+        """Pulsanti e avvisi che dipendono dalle modifiche della foto corrente."""
+        item = self.current()
+        ok = self.editable(item) and self.stack.currentWidget() is not self.setup_page
+        e = self.item_edit() if ok else {}
+        has = not E.is_empty(e)
+        for k in ("regola", "ritaglia"):
+            self.side_seg.buttons[k].setEnabled(ok and self.crop_draft is None or k == "ritaglia" and
+                                                self.crop_draft is not None)
+        self.side_seg.buttons["info"].setEnabled(self.crop_draft is None)
+        self.btn_discard.setEnabled(has or self.crop_draft is not None)
+        self.side_foot.setVisible(ok)
+        parts = []
+        if E.has_tone(e):
+            parts.append("regolata")
+        if E.has_geometry(e):
+            parts.append("ritagliata" if e.get("crop") else "raddrizzata")
+        d = self.session.get(item.id) if (has and self.session and item) else None
+        if self.crop_draft is not None:
+            self.edit_badge.setText("✂︎ Ritaglio aperto: OK per confermare, Annulla per lasciarla com'era")
+        elif has and d and d["choice"] == "yes" and E.clean(d.get("edit") or {}) != E.clean(e):
+            self.edit_badge.setText(f"✎ Foto {' e '.join(parts)} dopo il Sì: premi di nuovo ✓ Sì "
+                                    "per esportare questa versione")
+        elif has:
+            self.edit_badge.setText(f"✎ Foto {' e '.join(parts)}: ✓ Sì esporta questa versione")
+        else:
+            self.edit_badge.setText("")
+        self.edit_badge.setVisible(bool(self.edit_badge.text()))
+
+    def reset_edit_view(self) -> None:
+        """Nuovo elemento: pannelli aggiornati sulle sue modifiche."""
+        item = self.current()
+        if self.crop_draft is not None:
+            self.crop_draft = None
+            self.image_view.set_crop_mode(False)
+            self.set_crop_lock(False)
+        self.regola.set_edit(self.item_edit() if self.editable(item) else {})
+        if self.side_tab != "info" and not self.editable(item):
+            self.side_tab = "info"
+            self.side_seg.set_current("info")
+            self.side_pages.setCurrentIndex(0)
+        elif self.side_tab == "ritaglia":   # Ritaglia si riapre a mano: si torna a Regola
+            self.side_tab = "regola"
+            self.side_seg.set_current("regola")
+            self.side_pages.setCurrentIndex(1)
+        self.update_pick_mode()
+        self.update_edit_ui()
+
+    def set_still(self, img: QImage, item_id: str, keep_zoom: bool = False) -> None:
+        """Ogni foto mostrata passa da qui: se ha modifiche si vede già modificata."""
+        self.still_owner = item_id
+        if self.edit_base_owner != item_id or self.edit_base is None \
+                or self.edit_base.cacheKey() != img.cacheKey():
+            self.edit_base, self.edit_base_owner = img, item_id
+            self._edit_proxy = self._edit_tiny = None
+        item = self.item_by_id(item_id)
+        if self.crop_draft is None and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
+            self.edit_gen += 1   # niente da modificare: i calcoli in corso non valgono più
+            self.image_view.set_image(img, keep_zoom=keep_zoom)
+        else:
+            self.request_edit_render(sync=True, keep_zoom=keep_zoom)
+        if self.side_tab == "regola":
+            self.update_thumbs()
+        self.update_edit_ui()
+
+    def edit_proxy(self):
+        if self._edit_proxy is None and self.edit_base is not None:
+            b = self.edit_base
+            q = b.scaled(EDIT_PROXY, EDIT_PROXY, Qt.KeepAspectRatio, Qt.SmoothTransformation) \
+                if max(b.width(), b.height()) > EDIT_PROXY else b
+            self._edit_proxy = qimage_to_pil(q)
+        return self._edit_proxy
+
+    def view_edit(self) -> dict:
+        e = self.item_edit(self.edit_base_owner)
+        if self.crop_draft is not None:
+            for k in E.GEOMETRY_KEYS + ("aspect_custom", "aspect_portrait"):
+                e.pop(k, None)
+            e.update(self.crop_draft)
+        return e
+
+    def request_edit_render(self, sync: bool = False, keep_zoom: bool = True) -> None:
+        if self.edit_base is None:
+            return
+        self.edit_gen += 1
+        e, crop = self.view_edit(), self.crop_draft is not None
+        if sync:
+            try:
+                res = render_edit_job(self.edit_proxy(), e, crop)
+            except Exception as ex:  # noqa: BLE001
+                log.error("modifica: %r", ex, exc_info=ex)
+                self.image_view.set_image(self.edit_base, keep_zoom=keep_zoom)
+                return
+            self.image_view.set_image(pil_to_qimage(res), keep_zoom=keep_zoom)
+            self.full_edit_timer.start()
+            return
+        if self._edit_busy:
+            self._edit_again = True
+            return
+        self._edit_busy = True
+        self.submit("edit", (self.edit_base_owner, self.edit_gen, False), render_edit_job,
+                    self.edit_proxy(), e, crop, queue=self.edit_pool)
+
+    def request_full_edit(self) -> None:
+        """Ferma la mano sui cursori: la foto intera, nitida anche con lo zoom."""
+        b = self.edit_base
+        if b is None or self.crop_draft is not None or self._edit_busy:
+            return
+        e = self.view_edit()
+        if E.is_empty(e) or max(b.width(), b.height()) <= EDIT_PROXY or b.width() * b.height() > EDIT_FULL_MAX:
+            return
+        self.submit("edit", (self.edit_base_owner, self.edit_gen, True),
+                    lambda q, ed: E.render(qimage_to_pil(q), ed), b, e, queue=self.edit_pool)
+
+    def on_edit_rendered(self, key, res) -> None:
+        owner, gen, full = key
+        if not full:
+            self._edit_busy = False
+        if not isinstance(res, Exception) and owner == self.edit_base_owner == self.still_owner \
+                and (not full or gen == self.edit_gen) and self.stack.currentWidget() is self.image_view:
+            self.image_view.set_image(pil_to_qimage(res), keep_zoom=True)
+        if not full:
+            if self._edit_again:
+                self._edit_again = False
+                self.request_edit_render()
+            else:
+                self.full_edit_timer.start()
+
+    def update_thumbs(self) -> None:
+        self.thumbs_timer.start()
+
+    def make_thumbs(self) -> None:
+        """Le 5 miniature di Luce, Colore e Bianco e nero (come in Foto): dal più scuro al più chiaro."""
+        if self.side_tab != "regola" or self.edit_base is None or not self.editable():
+            return
+        if self._edit_tiny is None:
+            p = self.edit_proxy()
+            k = 72 / max(1, p.height)
+            self._edit_tiny = p.resize((max(1, round(p.width * k)), 72), Image.BILINEAR)
+        e = self.item_edit(self.edit_base_owner)
+        base = E.apply_crop(E.geometry_base(self._edit_tiny, e), e)
+        for sec in ("light", "color", "bw"):
+            thumbs = []
+            for v in (-1.0, -0.5, 0.0, 0.5, 1.0):
+                e2 = dict(e)
+                e2[sec] = v
+                e2["off"] = [x for x in e.get("off", []) if x != sec]
+                if sec == "bw":
+                    e2["bw_on"] = True
+                    e2["bw_neutrals"] = E.get(e, "bw_neutrals")
+                if sec == "light" and v == 0 and not E.section_modified(e2, "light"):
+                    e2["exposure"] = 1e-5   # stessa resa delle altre
+                thumbs.append(pil_to_qimage(E.render_tone(base, e2)))
+            self.regola.set_thumbs(sec, thumbs)
+
+    def on_regola_changed(self, e: dict) -> None:
+        item = self.current()
+        if not self.editable(item) or self.crop_draft is not None:
+            return
+        keep = {k: v for k, v in self.item_edit().items()
+                if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
+        new = {k: v for k, v in e.items() if k not in keep}
+        new.update(keep)
+        new = E.clean(new)
+        if new:
+            self.session.edits[item.id] = new
+        else:
+            self.session.edits.pop(item.id, None)
+        self.edit_save_timer.start()   # si salva quando la mano si ferma
+        self.request_edit_render()
+        self.update_thumbs()
+        self.update_edit_ui()
+
+    def on_auto(self, sec: str) -> None:
+        if self.edit_base is None or not self.editable():
+            return
+        e = self.item_edit()
+        img = E.apply_crop(E.geometry_base(self.edit_proxy().convert("RGB"), e), e)
+        if sec == "light":
+            vals = E.auto_light(img)
+        elif sec == "color":
+            vals = E.auto_color(img)
+        elif sec == "wb":
+            vals = E.auto_wb(img)
+        elif sec == "bw":
+            vals = {"bw_intensity": 0.2}
+        elif sec == "levels":
+            vals = E.auto_levels(img)
+        elif sec == "definition":
+            vals = E.auto_definition(img)
+        elif sec == "noise":
+            vals = E.auto_noise(self.edit_base_full_pil(e))
+        elif sec == "sharpen":
+            vals = E.auto_sharpen(self.edit_base_full_pil(e))
+        else:
+            return   # Occhi rossi, Curve, Colore selettivo, Vignettatura: si regolano a mano
+        self.regola.apply_auto(sec, vals)
+
+    def edit_base_full_pil(self, e: dict):
+        """Rumore e nitidezza si misurano sui pixel veri (al massimo 2400 px), non sull'anteprima."""
+        b = self.edit_base
+        q = b.scaled(2400, 2400, Qt.KeepAspectRatio, Qt.SmoothTransformation) \
+            if max(b.width(), b.height()) > 2400 else b
+        return qimage_to_pil(q)
+
+    def reset_regola(self) -> None:
+        e = self.item_edit()
+        keep = {k: v for k, v in e.items() if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
+        self.regola.set_edit(keep)
+        self.on_regola_changed(keep)
+
+    def discard_edits(self) -> None:
+        """Annulla le modifiche: regolazioni e ritaglio tolti, torna l'originale."""
+        item = self.current()
+        if not item or not self.session:
+            return
+        if self.crop_draft is not None:
+            self.crop_cancel()
+        if E.is_empty(self.item_edit()):
+            return
+        self.store_edit(item.id, {})
+        self.regola.set_edit({})
+        if self.edit_base is not None and self.edit_base_owner == item.id:
+            self.edit_gen += 1
+            self.image_view.set_image(self.edit_base)
+        self.update_thumbs()
+        self.update_edit_ui()
+        self.flash("Modifiche annullate: si vede (ed esporta) l'originale")
+
+    # ---- Ritaglia: la bozza vale solo con OK; finché è aperto non si sceglie né si cambia foto
+    def set_crop_lock(self, on: bool) -> None:
+        for w in (self.decision_bar, self.nav_pill, self.fav_pill, self.scene_bar, self.thumbs_strip,
+                  self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn, self.btn_locate,
+                  self.btn_return, self.zoom_pill):
+            w.setEnabled(not on)
+        self.update_edit_ui()
+
+    def crop_ratio(self) -> float | None:
+        f = self.image_view.full
+        if self.crop_draft is None or f.isNull():
+            return None
+        return E.aspect_ratio(self.crop_draft, f.width(), f.height())
+
+    def start_crop(self) -> None:
+        e = self.item_edit()
+        self.crop_draft = {k: v for k, v in e.items()
+                           if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
+        self.ritaglia.set_draft(self.crop_draft)
+        self.set_crop_lock(True)
+        self.request_edit_render(sync=True, keep_zoom=False)
+        self.image_view.set_crop_mode(True, self.crop_draft.get("crop"), self.crop_ratio())
+
+    def on_crop_draft(self, d: dict) -> None:
+        if self.crop_draft is None:
+            return
+        d["crop"] = self.image_view.crop if d else None
+        if not d:   # Reimposta
+            self.image_view.crop = [0.0, 0.0, 1.0, 1.0]
+        self.crop_draft = d
+        self.request_edit_render(sync=True, keep_zoom=False)
+        ratio = self.crop_ratio()
+        f = self.image_view.full
+        if ratio:
+            d["crop"] = E.fit_aspect(d.get("crop"), ratio, f.width(), f.height())
+        self.image_view.set_crop_mode(True, d.get("crop"), ratio)
+        self.ritaglia.set_crop(d.get("crop"))
+
+    def on_crop_aspect(self, d: dict) -> None:
+        if self.crop_draft is None:
+            return
+        d["crop"] = self.image_view.crop
+        self.crop_draft = d
+        f = self.image_view.full
+        ratio = self.crop_ratio()
+        if ratio:   # il riquadro più grande con quelle proporzioni, come in Foto
+            d["crop"] = E.fit_aspect(None, ratio, f.width(), f.height())
+        self.image_view.set_crop_mode(True, d["crop"], ratio)
+        self.ritaglia.set_crop(d["crop"])
+
+    def on_view_crop(self, crop: list) -> None:
+        if self.crop_draft is not None:
+            self.crop_draft["crop"] = crop
+            self.ritaglia.set_crop(crop)
+
+    def crop_auto(self) -> None:
+        if self.crop_draft is None or self.edit_base is None:
+            return
+        # come ShiftN / darktable: prima le linee che convergono (Verticale), poi l'orizzonte
+        d = dict(self.crop_draft)
+        for k in ("straighten", "vertical", "horizontal"):
+            d.pop(k, None)
+        src = self.edit_proxy().convert("RGB")
+        d.update(E.auto_perspective(E.geometry_base(src, d)))
+        d["straighten"] = E.auto_straighten(E.geometry_base(src, d))
+        self.ritaglia.set_draft(d)
+        self.on_crop_draft(dict(self.ritaglia.draft))
+        a, v = d["straighten"], E.get(d, "vertical")
+        parts = ([f"raddrizzata di {a:+.1f}°".replace(".", ",")] if a else []) + \
+                ([f"verticali corrette ({round(v * 30):+d}°)"] if v else [])
+        self.flash(("Automatico: " + ", ".join(parts)) if parts else "Automatico: è già dritta")
+
+    def _end_crop(self) -> None:
+        self.crop_draft = None
+        self.image_view.set_crop_mode(False)
+        self.set_crop_lock(False)
+        back = self._tab_before_crop if self._tab_before_crop != "ritaglia" else "info"
+        self.side_tab = back
+        self.side_seg.set_current(back)
+        self.side_pages.setCurrentIndex({"info": 0, "regola": 1}[back])
+        self.update_pick_mode()
+        if self.edit_base is not None:
+            self.set_still(self.edit_base, self.edit_base_owner)
+
+    def crop_ok(self) -> None:
+        item = self.current()
+        if self.crop_draft is None or not item:
+            return
+        d = dict(self.crop_draft)
+        d["crop"] = list(self.image_view.crop)
+        e = {k: v for k, v in self.item_edit().items()
+             if not (k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait"))}
+        e.update(d)
+        self.store_edit(item.id, e)
+        self.regola.set_edit(self.item_edit())
+        self._end_crop()
+        self.flash("Ritaglio confermato: ✓ Sì esporta la foto ritagliata")
+
+    def crop_cancel(self) -> None:
+        if self.crop_draft is None:
+            return
+        self._end_crop()
+        self.flash("Ritaglio annullato")
 
     def layout_choices(self) -> None:
         """Cerchi ✕ ✓ ↪ 🗑 ＋: più grandi quando lo schermo lo permette (finestra alta)."""
@@ -2078,7 +2784,20 @@ class MainWindow(QMainWindow):
                     fn()
             return run
 
+        def unless_cropping(k, fn):
+            # Ritaglia aperto: Invio = OK, il resto aspetta (si conferma o si annulla prima)
+            def run():
+                if self.crop_draft is None or k in ("?", "H", "I"):
+                    fn()
+                elif k in ("Return", "Enter"):
+                    self.crop_ok()
+                else:
+                    self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+            return run
+
+        QShortcut(QKeySequence("Escape"), self, activated=self.crop_cancel)
         for k, fn in keys.items():
+            fn = unless_cropping(k, fn)
             if k in ("Return", "Enter", "Space"):
                 fn = press_focused_or(fn)
             sc = QShortcut(QKeySequence(k), self, activated=fn)
@@ -2108,6 +2827,11 @@ class MainWindow(QMainWindow):
         return fut
 
     def on_done(self, kind: str, key, res):
+        if kind == "edit":
+            if isinstance(res, Exception):
+                log.error("modifica %s: %r", key, res, exc_info=res)
+            self.on_edit_rendered(key, res)
+            return
         # schermata iniziale aperta: i risultati si conservano ma non cambiano cosa si vede
         cur = self.current() if self.stack.currentWidget() is not self.setup_page else None
         if isinstance(res, Exception):
@@ -2148,6 +2872,8 @@ class MainWindow(QMainWindow):
                 self.update_scene_controls()
         elif kind == "preview":
             self.on_preview(key, res)
+        elif kind == "proxy":
+            self.on_proxy(key, res)
         elif kind == "meta":
             self.pending.discard(("meta", key))
             self.meta[key] = res if not isinstance(res, Exception) else metadata.Meta()
@@ -2168,7 +2894,18 @@ class MainWindow(QMainWindow):
                 if self.strip.owner == key:
                     self.strip.set_thumbs(res)
         elif kind == "sharpest":
-            if cur and cur.id == key and not isinstance(res, Exception):
+            item_id, start = key
+            # vale solo se sei ancora sul fotogramma da cui hai chiesto: se intanto ti sei
+            # spostato (→, striscia, altro elemento) il risultato non ti riporta indietro
+            if not cur or cur.id != item_id or self.current_frame() != start:
+                return
+            if isinstance(res, Exception):
+                self.status.setText("Non riesco a cercare il fotogramma più nitido", ms=3500)
+                self.update_scene_controls()   # l'etichetta non resta su "cerco…"
+            elif res == start:
+                self.update_scene_controls()
+                self.flash("Questo è già il fotogramma più nitido qui vicino")
+            else:
                 self.set_frame(res, manual=True)
         elif kind == "export":
             item_id, frame, token = key
@@ -2368,6 +3105,7 @@ class MainWindow(QMainWindow):
         self.scene_mode = False
         self.frame = None
         self._yes_without_preview = None  # SÌ senza anteprima: solo per il DNG mostrato ora
+        self.reset_edit_view()
         self.update_counter()
         if self.return_idx is not None and self.idx == self.return_idx:
             self.return_idx = None
@@ -2420,8 +3158,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.show_message(f"Impossibile aprire {item.main.name}")
                 return
-            self.image_view.set_image(img)
-            self.still_owner = item.id
+            self.set_still(img, item.id)
             self.stack.setCurrentWidget(self.image_view)
 
     @staticmethod
@@ -2937,9 +3674,20 @@ class MainWindow(QMainWindow):
         self.refresh_stamp()
         if not self.session or not self.items:
             self.counter.setText("")
+            self.done_label.setText("")
+            self.progress.setVisible(False)
             return
         c = self.session.counts()
         vis = [i for i, it in enumerate(self.items) if self.visible(it)]
+        done = sum(1 for i in vis if self.session.get(self.items[i].id) is not None)
+        self.done_label.setText(
+            f"<span style='font-size:30px; font-weight:800; color:#ffd60a;'>{done}</span>"
+            f"<span style='font-size:15px; font-weight:600; color:#d1d1d6;'> / {len(vis)} già fatte</span>"
+            + (f"<br><span style='font-size:12px; color:#98989f;'>ne mancano {len(vis) - done}</span>"
+               if done < len(vis) else "<br><span style='font-size:12px; color:#2ad48e;'>✓ tutte decise</span>"))
+        self.progress.setVisible(True)
+        self.progress.setRange(0, max(1, len(vis)))
+        self.progress.setValue(done)
         pos = sum(1 for i in vis if i <= self.idx)
         hidden = len(self.items) - len(vis)
         busy = sum(1 for f in self.export_futures.values() if not f.done())
@@ -2959,7 +3707,7 @@ class MainWindow(QMainWindow):
         self.message.setText(text)
         self.stack.setCurrentWidget(self.msg_page)
         self.scene_bar.setVisible(False)
-        for b in (self.msg_btn1, self.msg_btn2):
+        for b in (self.msg_btn1, self.msg_btn2, self.msg_btn3):
             b.setVisible(False)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
@@ -2971,6 +3719,8 @@ class MainWindow(QMainWindow):
             self.msg_btn1.setText("Mostra la cartella export")
             self.msg_btn1.clicked.connect(self.open_export)
             self.msg_btn1.setVisible(True)
+            self.msg_btn3.clicked.connect(self.choose_root)
+            self.msg_btn3.setVisible(True)
             if self.session and self.session.counts()["skip"]:
                 self.msg_btn2.setText("↪  Rivedi le saltate")
                 self.msg_btn2.clicked.connect(self.review_skips)
@@ -3108,6 +3858,8 @@ class MainWindow(QMainWindow):
             elif ("strip", item.id) not in self.pending:
                 self.pending.add(("strip", item.id))
                 self.submit("strip", item.id, self.make_strip, item, info)
+            # i fotogrammi dell'anteprima si preparano subito: il primo clic è già immediato
+            self.ensure_proxy(item, info, self.live_photo_frame(item) if item.kind == "live" else 0)
         if item.kind == "live":
             # durante il video della Live non c'è una foto "scelta" da evidenziare: la striscia
             # mostra la linea del punto in cui è il video (playhead), come in Foto
@@ -3151,10 +3903,14 @@ class MainWindow(QMainWindow):
         # il fotogramma a schermo resta della STESSA misura: se è già una foto di questo elemento,
         # non si passa al lettore video né si scrive "Carico": si aspetta quello esatto
         same_item_on_screen = self.still_owner == item.id and not self.image_view.full.isNull()
-        if img is not None:
-            self.image_view.set_image(img, keep_zoom=True)
-            self.still_owner = item.id
+        quick = None if img is not None or self.image_view.zoomed else self.proxy_image(item, n)
+        self.ensure_proxy(item, info, n)
+        if img is not None or quick is not None:
+            # quello esatto se c'è, se no subito quello dell'anteprima (poi arriva l'esatto)
+            self.set_still(img if img is not None else quick, item.id, keep_zoom=True)
             self.stack.setCurrentWidget(self.image_view)
+            if img is None:
+                self.preview_timer.start()
         elif scrub and not self.image_view.zoomed and not same_item_on_screen:
             self.ensure_player(item)
             self.player.pause()
@@ -3169,6 +3925,52 @@ class MainWindow(QMainWindow):
         self.update_scene_controls()
         self.refresh_stamp()
 
+    def proxy_image(self, item: Item, n: int) -> QImage | None:
+        win = self.proxy_frames.get(item.id)
+        if not win or not 0 <= n - win[0] < len(win[1]):
+            return None
+        img = QImage.fromData(win[1][n - win[0]], "JPEG")
+        return None if img.isNull() else img
+
+    def ensure_proxy(self, item: Item, info: frames.VideoInfo, n: int) -> None:
+        """Prepara i fotogrammi dell'anteprima .LRF attorno a n (una Live intera, ±1,5 s di un video)."""
+        if not item.proxy or not cloud.is_local(item.proxy) or ("proxy", item.id) in self.pending:
+            return
+        win = self.proxy_frames.get(item.id)
+        if win:   # già pronti qui intorno (con un margine, così le frecce restano immediate)
+            start, end = win[0], win[0] + len(win[1])
+            if (start == 0 or n >= start + 10) and (end >= info.frames or n < end - 10):
+                return
+        count = min(info.frames, self.PROXY_SPAN)
+        start = max(0, min(info.frames - count, n - count // 2))
+        self.pending.add(("proxy", item.id))
+        self.submit("proxy", (item.id, start), self.load_proxy, item.proxy, info, start, count,
+                    queue=self.frames_q)
+
+    PROXY_SPAN = 92   # fotogrammi letti in una volta: una Live intera (3 s)
+
+    @staticmethod
+    def load_proxy(proxy: Path, info: frames.VideoInfo, start: int, count: int) -> list[bytes] | None:
+        pi = frames.probe(proxy)
+        if pi.frames != info.frames or pi.fps != info.fps:
+            return None   # anteprima con fotogrammi diversi: non si usa, si aspetta l'esatto
+        return frames.proxy_window(proxy, pi, start, count)
+
+    def on_proxy(self, key, res) -> None:
+        item_id, start = key
+        self.pending.discard(("proxy", item_id))
+        if isinstance(res, Exception) or not res:
+            return
+        self.proxy_frames[item_id] = (start, res)
+        cur = self.current() if self.stack.currentWidget() is not self.setup_page else None
+        if not cur or cur.id != item_id or not (self.scene_mode or self.showing_still(cur)) \
+                or (item_id, self.shown_frame) in self.exact_cache or self.image_view.zoomed:
+            return
+        quick = self.proxy_image(cur, self.shown_frame)
+        if quick is not None and self.stack.currentWidget() in (self.image_view, self.video_widget):
+            self.set_still(quick, item_id, keep_zoom=True)
+            self.stack.setCurrentWidget(self.image_view)
+
     def request_preview(self):
         """Fotogramma esatto a risoluzione piena: uno alla volta, sempre l'ultimo richiesto."""
         item = self.current()
@@ -3182,21 +3984,19 @@ class MainWindow(QMainWindow):
             self._preview_again = True
             return
         self._preview_busy = True
-        self.submit("preview", key, frames.frame_rgb, info.source or item.video, info, self.shown_frame)
+        self.submit("preview", key, frames.frame_rgb, info.source or item.video, info, self.shown_frame,
+                    queue=self.frames_q)
 
     def on_preview(self, key, res):
         self._preview_busy = False
         cur = self.current() if self.stack.currentWidget() is not self.setup_page else None
         if not isinstance(res, Exception):
             img = pil_to_qimage(res)
-            self.exact_cache[key] = img
-            while len(self.exact_cache) > 4:  # 4K = ~25 MB l'una
-                self.exact_cache.pop(next(iter(self.exact_cache)))
+            self.exact_cache[key] = img   # 4K = ~25 MB l'una, al massimo 4
             item_id, n = key
             if cur and cur.id == item_id and n == self.shown_frame \
                     and (self.scene_mode or self.showing_still(cur)):
-                self.image_view.set_image(img, keep_zoom=True)
-                self.still_owner = item_id
+                self.set_still(img, item_id, keep_zoom=True)
                 self.stack.setCurrentWidget(self.image_view)
         if self._preview_again:
             self._preview_again = False
@@ -3302,7 +4102,7 @@ class MainWindow(QMainWindow):
         n = self.current_frame()
         if info and n is not None:
             self.frame_label.setText("cerco il fotogramma più nitido…")
-            self.submit("sharpest", item.id, frames.sharpest_near, info.source or item.video, info, n)
+            self.submit("sharpest", (item.id, n), frames.sharpest_near, info.source or item.video, info, n)
 
     # ------------------------------------------------------------------ filtro, indietro, preferite
     def on_filter_changed(self):
@@ -3335,10 +4135,13 @@ class MainWindow(QMainWindow):
         """Torna alla prima foto ancora da decidere (la prossima da giudicare)."""
         if not self.session or not self.items:
             return
-        self.thumbs_strip.recenter()
         i = self.next_index(-1)
         if i >= len(self.items):
-            # Tutte decise: resta dove sei
+            # Tutte decise: resta dove sei, ma riporta la striscia al centro
+            self.thumbs_strip.recenter()
+            return
+        if i == self.idx:
+            self.thumbs_strip.recenter()   # già lì: solo la striscia torna centrata
             return
         self.idx = i
         self.show_item()
@@ -3428,12 +4231,18 @@ class MainWindow(QMainWindow):
         self.on_strip_filter()
 
     def _update_strip_filter_highlight(self):
-        """Evidenzia la voce selezionata nel popup del filtro."""
-        for fb, key in self._strip_filter_btns:
-            if key == self._strip_filter_key:
-                fb.setStyleSheet("background: #0a84ff; color: #ffffff; font-weight: 600;")
+        """Evidenzia la voce selezionata nel popup del filtro: segno ✓ e testo in evidenza,
+        le altre voci restano piatte e si accendono al passaggio del mouse."""
+        base = ("QPushButton { border: none; border-radius: 8px; text-align: left; "
+                "padding: 8px 12px; font-size: 13px; }")
+        for fb, key, label in self._strip_filter_btns:
+            on = key == self._strip_filter_key
+            fb.setText(("✓   " if on else "      ") + label)
+            if on:
+                fb.setStyleSheet(base + "QPushButton { background: #3a3a3c; color: #64d2ff; font-weight: 600; }")
             else:
-                fb.setStyleSheet("")
+                fb.setStyleSheet(base + "QPushButton { background: transparent; color: #f2f2f7; }"
+                                 "QPushButton:hover { background: #48484a; }")
 
     def on_strip_filter(self):
         self.settings_store.setValue("strip_filter", self._strip_filter_key)
@@ -3468,6 +4277,7 @@ class MainWindow(QMainWindow):
                 self.pending.add(("thumb", it.id))
                 self.submit("thumb", it.id, self.make_thumb, it)
             entries.append((i, img, d["choice"] if d else None, it.is_clip, it.main.name))
+        self.thumbs_strip.frame_color = STRIP_FRAME_COLORS.get(self._strip_filter_key, "#0a84ff")
         self.thumbs_strip.set_entries(entries, self.idx if self.idx < len(self.items) else None)
 
     def update_next_preview(self):
@@ -3520,21 +4330,30 @@ class MainWindow(QMainWindow):
             src = item.proxy if item.proxy and cloud.is_local(item.proxy) else item.video
             ims = frames.strip_thumbs(src, frames.probe(src), count=1, height=208)
             return pil_to_qimage(ims[0]) if ims else QImage()
+        # la miniatura deve RIEMPIRE la casella (ritaglio centrale) senza essere ingrandita, anche
+        # su Retina: il lato corto arriva a THUMB_SIDE. Quadrato, così vale anche per le foto
+        # ruotate dall'EXIF (la misura si sceglie prima della rotazione) e per i panorami.
+        side = ThumbStrip.THUMB_SIDE
         r = QImageReader(str(item.image or item.raw))
         r.setAutoTransform(True)
         size = r.size()
-        if size.isValid():
-            r.setScaledSize(size.scaled(368, 208, Qt.KeepAspectRatio))
+        if size.isValid() and min(size.width(), size.height()) > side:
+            r.setScaledSize(size.scaled(side, side, Qt.KeepAspectRatioByExpanding))
         img = r.read()
         if img.isNull() and item.raw:
             pil = raw_preview(item.raw)
             if pil is not None:
-                pil.thumbnail((368, 208))
+                k = side / min(pil.size)
+                if k < 1:
+                    pil.thumbnail((max(1, round(pil.width * k)), max(1, round(pil.height * k))))
                 img = pil_to_qimage(pil)
         return img
 
     # ------------------------------------------------------------------ decisioni
     def decide(self, choice: str, with_video: bool = False):
+        if self.crop_draft is not None:   # Ritaglia aperto: prima OK o Annulla
+            self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+            return
         item = self.current()
         if item:
             log.info("scelta %s%s su %s", choice, " +video" if with_video else "", item.id)
@@ -3560,7 +4379,9 @@ class MainWindow(QMainWindow):
                 new_frame = self.frame
             same = prev["choice"] == choice and (
                 choice != "yes" or (prev.get("frame") == new_frame
-                                    and prev.get("with_video", False) == with_video))
+                                    and prev.get("with_video", False) == with_video
+                                    and E.clean(prev.get("edit") or {}) == E.clean(self.item_edit(item.id)
+                                                                                   if self.editable(item) else {})))
             if same:  # niente da cambiare: si va avanti
                 self.idx = self.next_index(self.idx)
                 self.show_item()
@@ -3587,6 +4408,10 @@ class MainWindow(QMainWindow):
             if frame is None and item.kind == "live":
                 frame = self.camera_frames.get(item.id)
             self.session.set(item.id, "yes", [], frame, with_video)
+            edit = E.clean(self.item_edit(item.id)) if self.editable(item) else {}
+            if edit:   # Regola / Ritaglia: si esporta la foto modificata
+                self.session.decisions[item.id]["edit"] = edit
+                self.session.save()
             self.queue_export(item, frame, with_video=with_video)
         elif choice == "trash":
             self.player.stop()
@@ -3617,8 +4442,9 @@ class MainWindow(QMainWindow):
         if key == item.id and item.id in self.session.favorites:
             dest = self.export_dir / exporter.FAV_SUBDIR
         self.export_q.submit(self.copy_paths.pop, key, None)   # copia nuova: posizioni vecchie non valgono
+        edit = None if snapshot else (self.session.decisions.get(key) or {}).get("edit")
         fut = self.submit("export", (key, frame, token), exporter.export_item, item, frame,
-                          dest, self.current_settings(with_video), snapshot,
+                          dest, self.current_settings(with_video), snapshot, edit,
                           queue=self.export_q)
         self.export_futures[key] = fut
 
@@ -3740,7 +4566,7 @@ class MainWindow(QMainWindow):
                                   "Le copie non finite verranno rifatte alla prossima apertura.")
                 QApplication.processEvents()
                 time.sleep(0.05)
-        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q):
+        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q):
             ex.shutdown(wait=False, cancel_futures=True)
         if self.session:
             self.session.close()
