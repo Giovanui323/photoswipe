@@ -12,6 +12,7 @@ from pathlib import Path
 from PIL import Image
 
 import frames
+from i18n import tr
 
 
 @dataclass
@@ -70,11 +71,11 @@ def read_image(path: Path) -> Meta:
         return meta
     make, model = (exif.get(271) or "").strip(), (exif.get(272) or "").strip()
     if model:
-        meta.rows.append(("Fotocamera", model if make and make.lower() in model.lower()
+        meta.rows.append((tr('Fotocamera'), model if make and make.lower() in model.lower()
                           else f"{make} {model}".strip()))
     lens = (sub.get(42036) or "").strip()
     if lens:
-        meta.rows.append(("Obiettivo", lens))
+        meta.rows.append((tr('Obiettivo'), lens))
     shot = []
     f = _ratio(sub.get(33437))
     if f:
@@ -94,10 +95,10 @@ def read_image(path: Path) -> Meta:
     if ev:
         shot.append(f"{ev:+.1f} EV")
     if shot:
-        meta.rows.append(("Scatto", "  ·  ".join(shot)))
+        meta.rows.append((tr('Scatto'), "  ·  ".join(shot)))
     offset = sub.get(36881) or sub.get(36880)
     if offset:
-        meta.rows.append(("Fuso orario", f"UTC{offset}"))
+        meta.rows.append((tr('Fuso orario'), f"UTC{offset}"))
     if gps:
         lat = _dms(gps.get(2), gps.get(1, "N")) if gps.get(2) else None
         lon = _dms(gps.get(4), gps.get(3, "E")) if gps.get(4) else None
@@ -106,7 +107,7 @@ def read_image(path: Path) -> Meta:
         alt = _ratio(gps.get(6))
         if alt is not None:
             meta.altitude = -alt if gps.get(5) == 1 else alt
-    meta.rows.append(("Dimensioni", f"{w} × {h}  ({w * h / 1e6:.1f} MP)"))
+    meta.rows.append((tr('Dimensioni'), f"{w} × {h}  ({w * h / 1e6:.1f} MP)"))
     return meta
 
 
@@ -128,7 +129,7 @@ def read_video(path: Path, info: frames.VideoInfo | None) -> Meta:
     make = tag("com.apple.quicktime.make", "make")
     model = tag("com.apple.quicktime.model", "model")
     if model or make:
-        meta.rows.append(("Fotocamera", f"{make} {model}".strip()))
+        meta.rows.append((tr('Fotocamera'), f"{make} {model}".strip()))
     loc = tag("com.apple.quicktime.location.ISO6709", "location", "location-eng")
     m = _ISO6709.match(loc) if loc else None
     if m:
@@ -140,19 +141,19 @@ def read_video(path: Path, info: frames.VideoInfo | None) -> Meta:
     v = re.search(r"Video: (\w+)[^\n]*", err)
     if info:
         fps = float(info.fps) if isinstance(info.fps, Fraction) else info.fps
-        meta.rows.append(("Video", f"{info.width} × {info.height}  ·  {fps:.3g} fps  ·  "
+        meta.rows.append((tr('Video'), f"{info.width} × {info.height}  ·  {fps:.3g} fps  ·  "
                                    f"{info.bits} bit" + (f"  ·  {v.group(1).upper()}" if v else "")))
         if info.is_flat_profile:
-            meta.rows.append(("Colore", "HLG" if "b67" in info.transfer else f"log ({info.transfer})"))
+            meta.rows.append((tr('Colore'), "HLG" if "b67" in info.transfer else f"log ({info.transfer})"))
         if info.duration:
             s = info.duration
-            meta.rows.append(("Durata", f"{int(s // 60)}:{s % 60:04.1f}"))
+            meta.rows.append((tr('Durata'), f"{int(s // 60)}:{s % 60:04.1f}"))
     br = re.search(r"bitrate: (\d+) kb/s", err)
     if br:
-        meta.rows.append(("Bitrate", f"{int(br.group(1)) / 1000:.1f} Mbit/s"))
-    if re.search(r"Audio: ", err):
+        meta.rows.append((tr('Bitrate'), f"{int(br.group(1)) / 1000:.1f} Mbit/s"))
+    if re.search(tr('Audio: '), err):
         a = re.search(r"Audio: (\w+)[^\n]*?(\d+) Hz[^\n]*?(mono|stereo|[\d.]+ channels)?", err)
-        meta.rows.append(("Audio", f"{a.group(1).upper()} · {a.group(3) or ''}".strip(" ·") if a else "sì"))
+        meta.rows.append((tr('Audio'), f"{a.group(1).upper()} · {a.group(3) or ''}".strip(" ·") if a else tr('sì')))
     return meta
 
 
@@ -161,10 +162,10 @@ def read(item, info: frames.VideoInfo | None = None) -> Meta:
     if item.is_clip:
         meta = read_video(item.video, info)
         if item.image:  # foto abbinata al video
-            meta.rows.extend(r for r in read_image(item.image).rows if r[0] != "Dimensioni")
+            meta.rows.extend(r for r in read_image(item.image).rows if r[0] != tr('Dimensioni'))
     else:
         meta = read_image(item.image or item.raw)
     files = [p for p in (item.image, item.raw, item.video) if p]
-    meta.rows.append(("File", "\n".join(f"{p.name}  ·  {_size(p)}" for p in files)))
-    meta.rows.append(("Cartella", str(item.main.parent)))
+    meta.rows.append((tr('File'), "\n".join(f"{p.name}  ·  {_size(p)}" for p in files)))
+    meta.rows.append((tr('Cartella'), str(item.main.parent)))
     return meta

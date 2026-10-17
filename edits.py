@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
+from i18n import tr
 
 # valore predefinito di ogni regolazione (tutte da -1 a 1 o da 0 a 1, salvo dove indicato)
 DEFAULTS: dict[str, float] = {
@@ -38,8 +39,8 @@ DEFAULTS: dict[str, float] = {
     "vertical": 0.0, "horizontal": 0.0,   # prospettiva, da -1 a 1
 }
 SEL_HUES = ("red", "yellow", "green", "cyan", "blue", "magenta")   # Colore selettivo
-SEL_NAMES = {"red": "Rosso", "yellow": "Giallo", "green": "Verde", "cyan": "Ciano", "blue": "Blu",
-             "magenta": "Magenta"}
+SEL_NAMES = {"red": tr('Rosso'), "yellow": tr('Giallo'), "green": tr('Verde'), "cyan": tr('Ciano'), "blue": tr('Blu'),
+             "magenta": tr('Magenta')}
 SEL_COLORS = {"red": "#ff453a", "yellow": "#ffd60a", "green": "#32d74b", "cyan": "#64d2ff",
               "blue": "#0a84ff", "magenta": "#bf5af2"}
 for _h in SEL_HUES:
@@ -66,9 +67,9 @@ GEOMETRY_KEYS = ("straighten", "vertical", "horizontal", "flip", "crop", "aspect
 
 # Proporzioni di Ritaglia: (nome, lato corto : lato lungo) — None = libera / originale
 ASPECTS: list[tuple[str, str, float | None]] = [
-    ("original", "Originale", None), ("free", "Forma libera", None), ("square", "Quadrato", 1.0),
+    ("original", tr('Originale'), None), ("free", tr('Forma libera'), None), ("square", tr('Quadrato'), 1.0),
     ("16:9", "16:9", 9 / 16), ("4:5", "4:5", 4 / 5), ("5:7", "5:7", 5 / 7), ("4:3", "4:3", 3 / 4),
-    ("3:5", "3:5", 3 / 5), ("3:2", "3:2", 2 / 3), ("custom", "Personalizzato", None),
+    ("3:5", "3:5", 3 / 5), ("3:2", "3:2", 2 / 3), ("custom", tr('Personalizzato'), None),
 ]
 
 
@@ -87,7 +88,7 @@ def clean(e: dict) -> dict:
         elif k == "off":
             if v:
                 out[k] = sorted(set(v))
-        elif k == "bw_on":
+        elif k in ("bw_on", "enhanced"):   # enhanced = bacchetta magica (Luce + Colore automatici)
             if v:
                 out[k] = True
         elif k == "flip":
@@ -545,7 +546,7 @@ def _lin(x):
     return np.clip(x, 0, 1) ** 2.2
 
 
-def auto_light(img: Image.Image) -> dict:
+def classic_auto_light(img: Image.Image) -> dict:
     """Luce automatica: punto di nero, luci e ombre secondo i pixel che si perdono, poi
     l'esposizione cercata (sulla foto già corretta) finché la media logaritmica è a 0,18."""
     x = _small(img, 260)
@@ -588,7 +589,7 @@ def auto_light(img: Image.Image) -> dict:
     return out
 
 
-def auto_color(img: Image.Image) -> dict:
+def classic_auto_color(img: Image.Image) -> dict:
     """Vividezza secondo quanto è già satura la foto (non tocca i colori già forti)."""
     x = _small(img, 200)
     mx, mn = x.max(-1), x.min(-1)
@@ -625,7 +626,7 @@ def _illuminant(x: np.ndarray) -> np.ndarray:
     return est / est.sum()
 
 
-def auto_wb(img: Image.Image, strength: float = 0.85) -> dict:
+def classic_auto_wb(img: Image.Image, strength: float = 0.85) -> dict:
     """Bilanciamento del bianco: si toglie la dominante della luce (lasciandone un filo, come
     Foto, perché un tramonto resti caldo)."""
     e = _illuminant(_small(img, 320))
@@ -899,3 +900,125 @@ def auto_deblur(img: Image.Image) -> dict:
         return {}
     return {"deblur": float(np.clip(0.5 + sigma * 0.1, 0.5, 0.9)),
             "deblur_radius": float(np.clip((sigma - 0.6) / 3.4, 0, 1))}
+
+
+# ----------------------------------------------------------------------------- AUTO imparato
+# Il modello (auto_model.py, generato da tools/train_auto.py) ha imparato da solo, su foto di
+# pubblico dominio / CC0 di Wikimedia Commons: le foto buone vengono rovinate apposta (luce,
+# contrasto, dominanti, saturazione) e il modello impara i cursori che le rimettono a posto.
+LEARNED_KEYS = ("exposure", "contrast", "highlights", "shadows", "blackpoint",
+                "saturation", "vibrance", "wb_temp", "wb_tint")
+LEARNED_SECTIONS = {"light": ("exposure", "contrast", "highlights", "shadows", "blackpoint"),
+                    "color": ("saturation", "vibrance"), "wb": ("wb_temp", "wb_tint")}
+FEATURE_SIDE = 160
+
+
+def feature_image(img: Image.Image) -> Image.Image:
+    """La foto piccola su cui si calcolano le caratteristiche (uguale in addestramento e nell'app)."""
+    im = img.convert("RGB")
+    k = FEATURE_SIDE / max(im.size)
+    if k < 1:
+        im = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.BILINEAR)
+    return im
+
+
+def auto_features(img: Image.Image) -> np.ndarray:
+    """Caratteristiche globali della foto: istogramma e percentili della luminanza, colore medio,
+    saturazione, luce stimata. ~50 numeri, veloci da calcolare."""
+    x = np.asarray(feature_image(img), np.float32) / 255
+    L = _lum(x)
+    f: list[float] = []
+    hist = np.histogram(L, bins=16, range=(0, 1))[0].astype(np.float32)
+    f += list(hist / max(hist.sum(), 1))
+    f += list(np.percentile(L, [1, 5, 10, 25, 50, 75, 90, 95, 99]))
+    f += [float(np.exp(np.log(_lin(L) + 1e-4).mean())), float(L.std()),
+          float((L > 0.97).mean()), float((L < 0.03).mean())]
+    for c in range(3):
+        ch = x[..., c]
+        f += [float(ch.mean()), float(np.percentile(ch, 2)), float(np.percentile(ch, 98))]
+    mx, mn = x.max(-1), x.min(-1)
+    s = (mx - mn) / np.maximum(mx, 1e-3)
+    f += [float(s.mean()), float(np.percentile(s, 90)), float((mx - mn).mean())]
+    mid = (L > 0.2) & (L < 0.8)
+    if mid.sum() > 10:
+        f += [float((x[..., 0] - x[..., 1])[mid].mean()), float((x[..., 2] - x[..., 1])[mid].mean())]
+    else:
+        f += [0.0, 0.0]
+    f += list(_illuminant(x))
+    gy, gx = np.gradient(L)
+    gm = np.hypot(gx, gy)
+    f += [float(gm.mean())]
+    # colore per fascia di luce (ombre, mezzitoni, luci) e sui bordi: dove si vede una dominante
+    rg, bg = x[..., 0] - x[..., 1], x[..., 2] - x[..., 1]
+    for lo, hi in ((0.0, 0.25), (0.25, 0.6), (0.6, 0.9), (0.9, 1.01)):
+        m = (L >= lo) & (L < hi)
+        f += [float(rg[m].mean()) if m.sum() > 10 else 0.0, float(bg[m].mean()) if m.sum() > 10 else 0.0,
+              float(m.mean())]
+    e = gm > np.percentile(gm, 85)
+    f += [float(rg[e].mean()), float(bg[e].mean())] if e.sum() > 10 else [0.0, 0.0]   # foto piatta
+    # distribuzione dei colori (istogramma 2D) e della saturazione
+    h2 = np.histogram2d(rg.ravel(), bg.ravel(), bins=6, range=((-0.3, 0.3), (-0.3, 0.3)))[0]
+    f += list((h2 / max(h2.sum(), 1)).ravel())
+    hs = np.histogram(s, bins=8, range=(0, 1))[0].astype(np.float32)
+    f += list(hs / max(hs.sum(), 1))
+    return np.array(f, np.float32)
+
+
+_MODEL = None
+
+
+def _load_model():
+    global _MODEL
+    if _MODEL is None:
+        try:
+            import auto_model   # generato da tools/train_auto.py
+            _MODEL = auto_model.load()
+        except Exception:  # noqa: BLE001 - senza modello resta l'automatico classico
+            _MODEL = False
+    return _MODEL or None
+
+
+def mlp_forward(params: dict, X: np.ndarray) -> np.ndarray:
+    """Media delle reti del modello (m0_, m1_, …), poi ×scale (prudenza)."""
+    x = (X - params["mu"]) / params["sd"]
+    prefixes = sorted({k.split("_")[0] + "_" for k in params if k.startswith("m") and "_W" in k}) or [""]
+    outs = []
+    for pre in prefixes:
+        h = x
+        n = len([k for k in params if k.startswith(pre + "W")])
+        for i in range(n):
+            h = np.tanh(h @ params[f"{pre}W{i}"] + params[f"{pre}b{i}"])
+        outs.append(h)
+    return np.mean(outs, 0) * params["scale"]
+
+
+def learned_auto(img: Image.Image) -> dict | None:
+    """I cursori che il modello imparato suggerisce (None se il modello non c'è)."""
+    m = _load_model()
+    if m is None:
+        return None
+    y = np.nan_to_num(mlp_forward(m, np.nan_to_num(auto_features(img))[None, :])[0])
+    return {k: float(v) for k, v in zip(LEARNED_KEYS, y)}
+
+
+def _learned_section(img: Image.Image, sec: str) -> dict | None:
+    pred = learned_auto(img)
+    if pred is None:
+        return None
+    return {k: pred[k] for k in LEARNED_SECTIONS[sec] if abs(pred[k]) >= 0.03}
+
+
+def auto_light(img: Image.Image) -> dict:
+    """Luce automatica: quella imparata (se c'è il modello), se no la classica."""
+    r = _learned_section(img, "light")
+    return classic_auto_light(img) if r is None else r
+
+
+def auto_color(img: Image.Image) -> dict:
+    r = _learned_section(img, "color")
+    return classic_auto_color(img) if r is None else r
+
+
+def auto_wb(img: Image.Image) -> dict:
+    r = _learned_section(img, "wb")
+    return classic_auto_wb(img) if r is None else r

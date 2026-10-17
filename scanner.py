@@ -11,12 +11,13 @@ from datetime import datetime
 from pathlib import Path
 
 import cloud
+from i18n import tr
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 RAW_EXT = {".dng"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v"}
 # MISC = file di sistema DJI; PANORAMA = singoli scatti già uniti dalla fotocamera
-SKIP_DIRS = {"MISC", "PANORAMA"}
+SKIP_DIRS = {"MISC", tr('PANORAMA')}
 
 RAW_PREVIEW_MIN_PX = 1000  # anteprima DNG incorporata più piccola: si sviluppa il RAW
 LIVE_MAX_SECONDS = 3.5  # le Live della Pocket 4 durano 3,04 s
@@ -216,7 +217,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     for dirpath, dirnames, filenames in os.walk(root):
         d = Path(dirpath)
         for n in dirnames:
-            if n.upper() == "PANORAMA":
+            if n.upper() == tr('PANORAMA'):
                 try:
                     subs = os.listdir(d / n)
                 except OSError:   # non leggibile: si salta, senza far fallire tutta la lettura

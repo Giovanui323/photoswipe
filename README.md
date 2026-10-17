@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.2.9-blue)
+![Version](https://img.shields.io/badge/version-1.3.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
@@ -37,8 +37,15 @@ an `export` folder. Your originals stay exactly where they are.
   up where you left off.
 - **Built-in editor** (inspired by macOS Photos): Light, Color, Black & White, White Balance,
   Curves, Levels, Definition, Selective Color, Noise Reduction, Sharpening, Vignette, Red-Eye,
-  plus **Crop / Straighten / Flip / Aspect ratio**. Edits are non-destructive and exported as
-  max-quality JPEG with EXIF kept.
+  Deblur, plus **Crop / Straighten / Perspective / Flip / Aspect ratio**, a one-click **magic wand**,
+  **compare with original** and **Revert to original**. Edits are confirmed with OK / Cancel,
+  are non-destructive and are exported as max-quality JPEG with EXIF kept. Video frames can be
+  edited too before grabbing them as stills.
+- **Self-taught AUTO**: the Light / Color / White Balance AUTO and the magic wand use a tiny model
+  (`auto_model.py`, numpy only) that taught itself on ~700 **public-domain / CC0** photos from
+  Wikimedia Commons: good photos are deliberately damaged and the model learns the sliders that fix
+  them, so it also learns to leave good photos alone. Rebuild it with `tools/fetch_training.py`
+  and `tools/train_auto.py`.
 - **Grab stills from videos**: scrub frame by frame, jump to the **sharpest nearby frame**, and
   save full-resolution stills (JPEG 4:4:4 q100 or **16-bit PNG** that keeps 10-bit color).
 - **Info panel**: date, GPS location (with "Open in Maps"), camera, aperture/shutter/ISO/focal

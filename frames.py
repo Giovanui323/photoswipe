@@ -21,6 +21,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageCms, ImageFilter, ImageOps, ImageStat
+from i18n import tr
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # niente finestre console su Windows
 
@@ -32,7 +33,7 @@ def ffmpeg_exe() -> str:
     except Exception:
         exe = shutil.which("ffmpeg")
         if not exe:
-            raise RuntimeError("ffmpeg non trovato")
+            raise RuntimeError(tr('ffmpeg non trovato'))
         return exe
 
 
@@ -81,7 +82,7 @@ def probe(path: Path) -> VideoInfo:
     err = _run(["-i", str(path)], timeout=60).stderr.decode(errors="replace")
     m = re.search(r"Stream #0:\d+[^\n]*Video: [^\n]*", err)
     if not m:
-        raise RuntimeError(f"Nessun video in {path.name}")
+        raise RuntimeError(tr('Nessun video in {v0}', v0=path.name))
     line = m.group(0)
     w, h = map(int, re.search(r", (\d{2,5})x(\d{2,5})", line).groups())
     fps_m = re.search(r", ([\d.]+) fps", line)
@@ -134,7 +135,7 @@ def frame_rgb(video: Path, info: VideoInfo, n: int) -> Image.Image:
                 "-f", "rawvideo", "-"])
     need = info.width * info.height * 3
     if len(res.stdout) < need:
-        raise RuntimeError(res.stderr.decode(errors="replace")[-400:] or "fotogramma non letto")
+        raise RuntimeError(res.stderr.decode(errors="replace")[-400:] or tr('fotogramma non letto'))
     return Image.frombytes("RGB", (info.width, info.height), res.stdout[:need])
 
 
@@ -147,7 +148,7 @@ def frame_preview(video: Path, info: VideoInfo, n: int, max_side: int = 1600) ->
                 "-frames:v", "1", "-vf", f"scale={w}:{h}:flags=bicubic,format=rgb24",
                 "-f", "rawvideo", "-"])
     if len(res.stdout) < w * h * 3:
-        raise RuntimeError("anteprima non letta")
+        raise RuntimeError(tr('anteprima non letta'))
     return Image.frombytes("RGB", (w, h), res.stdout[:w * h * 3])
 
 
@@ -321,4 +322,4 @@ def print_hint(width: int, height: int) -> str:
     for label, inches in (("30×45", 11.8), ("20×30", 7.87), ("13×18", 5.1), ("10×15", 3.9)):
         if short_in >= inches:
             return label
-    return "meno di 10×15"
+    return tr('meno di 10×15')

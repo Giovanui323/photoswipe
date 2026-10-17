@@ -36,24 +36,25 @@ import exporter
 import frames
 import metadata
 from scanner import Item, mp4_duration, raw_preview, scan
+from i18n import HELP, LANG, tr
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.2.9"
+APP_VERSION = "1.3.0"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
 
 PREFETCH = 10  # elementi successivi scaricati in anticipo da iCloud, in automatico
-STRIP_FILTERS = (("Mostra: tutte", "all"), ("Mostra: da decidere", "todo"), ("Mostra: già decise", "done"),
-                 ("Mostra: ✓ Sì", "yes"), ("Mostra: ✗ No", "no"), ("Mostra: ↪ saltate", "skip"),
-                 ("Mostra: 🗑 “cancellare”", "trash"))
+STRIP_FILTERS = ((tr('Mostra: tutte'), "all"), (tr('Mostra: da decidere'), "todo"), (tr('Mostra: già decise'), "done"),
+                 (tr('Mostra: ✓ Sì'), "yes"), (tr('Mostra: ✗ No'), "no"), (tr('Mostra: ↪ saltate'), "skip"),
+                 (tr('Mostra: 🗑 “cancellare”'), "trash"))
 # colore del bordo della miniatura attuale: quello del tipo scelto nel filtro a sinistra
 STRIP_FRAME_COLORS = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng", ".tif", ".tiff"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
-KIND_LABEL = {"photo": "FOTO", "pano": "PANORAMA", "live": "LIVE", "video": "VIDEO"}
+KIND_LABEL = {"photo": tr('FOTO'), "pano": tr('PANORAMA'), "live": tr('LIVE'), "video": tr('VIDEO')}
 # scelta già fatta su un elemento (tornando indietro): nome e colore dell'etichetta
-CHOICE_NAME = {"yes": "✓ SÌ", "no": "✗ NO", "skip": "↪ Salta", "trash": "🗑 In “cancellare”"}
+CHOICE_NAME = {"yes": tr('✓ SÌ'), "no": "✗ NO", "skip": tr('↪ Salta'), "trash": tr('🗑 In “cancellare”')}
 CHOICE_COLOR = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}  # = pulsanti
 KIND_COLOR = {"photo": "#5b8def", "pano": "#a46bf0", "live": "#f0b429", "video": "#4fb7a8"}
 
@@ -221,69 +222,16 @@ STYLE += EP.EDIT_STYLE + """
 QProgressBar#progress { background: #3a3a3c; border: none; border-radius: 3px; max-height: 6px; min-height: 6px; }
 QProgressBar#progress::chunk { background: #ffd60a; border-radius: 3px; }
 QLabel#editbadge { color: #ffd60a; font-size: 11px; font-weight: 700; }
+QPushButton#toolround { background: #2c2c2e; border: 1px solid #48484a; border-radius: 16px; padding: 0; }
+QPushButton#toolround:hover { background: #3a3a3c; }
+QPushButton#toolround:checked { background: #545456; }
+QPushButton#toolpill { background: #2c2c2e; border: 1px solid #48484a; border-radius: 15px;
+                       padding: 0 16px; font-size: 13px; min-height: 30px; max-height: 30px; }
+QPushButton#toolpill:hover { background: #3a3a3c; }
 """
 
 
-HELP_TEXT = """PULSANTI PRINCIPALI
-✓ SÌ (Y o Invio) – approva: copia in export.
-   • Foto e panorami: copia identica dell'originale.
-   • Live: salva come foto il fotogramma scelto sulla striscia
-     (all'inizio è quello della fotocamera), a risoluzione piena.
-   • Video: copia il video nella sottocartella "Video" dell'export.
-     Se hai preso delle foto con 📷, SÌ tiene solo le foto;
-     "＋ SÌ e copia anche il video" tiene le foto e copia anche il video.
-✗ NO (N) – scarta, non copia niente.
-🗑 Sposta in “cancellare” (X) – sposta l'originale nella cartella “cancellare”
-   (dentro la cartella che stai guardando). Non cancella: lo fai tu a mano.
-↪ Salta (S) – decidi dopo: a fine giro puoi rivedere le saltate.
-＋ SÌ e copia anche il video (Maiusc+Y) – Live: salva la foto e copia anche il video.
-↩ Annulla (Z) – torna all'ultima scelta (se era un Sì, toglie i file copiati).
-‹ Precedente (↑) / Successivo › (↓), in alto a sinistra – rivedi anche quelle già decise o in
-   “cancellare”: una nuova scelta sostituisce la vecchia (e rimette a posto i file).
-♡ Preferita (.), in alto a destra – le preferite approvate vanno in export/Preferite.
-In basso le miniature prima e dopo questa: clic per andarci, il pallino è la scelta fatta.
-A destra il pannello Info: giorno, luogo, fotocamera, scatto e file (ⓘ o I lo nasconde).
-
-LIVE
-La Live si apre come FOTO. Sotto c'è la striscia dei fotogrammi (come in Foto):
-clic o trascina per scegliere la foto, ← → un fotogramma alla volta.
-Il riquadro bianco è la foto che SÌ salverà.
-▶ Vedi Live (L) – guarda il video.   ↺ Foto della fotocamera (R) – torna a quella originale.
-✨ Più nitida (P) – cerca il fotogramma meno mosso lì vicino.
-
-VIDEO
-Clic sulla striscia (o pausa, ← →) – ti fermi sul fotogramma esatto.
-📷 Prendi foto (F) – lo salva come foto: diventa un segno verde sulla striscia
-   e l'etichetta dice “✓ già salvato”. Puoi prenderne quante vuoi (Z annulla l'ultima).
-⟲ Rivedi video (V) – dall'inizio, con l'audio.   ▶ / ⏸ (Spazio) – riproduci / pausa.
-
-ZOOM
-Cursore sopra la foto, in alto a sinistra; due dita su/giù sul trackpad (o pizzico) = zoom, trascina per spostarti,
-doppio clic = di nuovo intera. Ogni foto si apre sempre intera.
-
-INFO · REGOLA · RITAGLIA (in alto nel pannello a destra)
-Info – le informazioni di sempre; in evidenza quante foto hai già deciso.
-Regola – come in Foto: Luce, Colore, Bianco e nero (trascina sulle miniature o apri Opzioni),
-   Occhi rossi (clic sull'occhio), Bilanciamento del bianco, Curve, Livelli, Definizione,
-   Colore selettivo, Riduzione disturbo, Nitidezza, Vignettatura. AUTO = automatico,
-   ↶ = annulla quella regolazione, cerchio blu = accendi / spegni per confrontare.
-Ritaglia – trascina angoli e lati del riquadro sulla foto; Raddrizza, Verticale, Orizzontale,
-   Capovolgi, Proporzioni. Poi OK (Invio) per confermare o Annulla (Esc): finché il ritaglio
-   è aperto ✓ / ✕ e gli altri pulsanti aspettano.
-Con ✓ Sì si esporta la foto modificata o ritagliata (JPEG qualità massima, l'originale non si
-tocca). "Annulla le modifiche", in fondo al pannello, la riporta com'era.
-
-IMPOSTAZIONI (⚙ in alto a destra)
-Apri cartella – ① la cartella da guardare, ② la cartella export, poi Inizia.
-Mostra: tutto / solo foto – nasconde i video (restano foto, Live e panorami).
-Export – cambia la cartella dove copiare.   Mostra export – la apre nel Finder.
-JPEG / PNG 16-bit – formato dei fotogrammi estratti (JPEG va bene per la stampa).
-Ora – fuso orario da scrivere nella data delle foto esportate.
-
-Le scelte vengono salvate subito in un file nascosto dentro la cartella
-che apri (.photoswipe-session.json). Se riapri quella cartella, l'app ti dice
-se il lavoro è a metà o completato, quando l'avevi chiuso, e ti chiede se riprendere.
-I file su iCloud si scaricano da soli, e i 10 successivi in anticipo."""
+HELP_TEXT = HELP[LANG]
 
 
 def help_html(text: str) -> str:
@@ -302,7 +250,7 @@ def help_html(text: str) -> str:
     return "".join(out)
 
 
-FILE_MANAGER = "Finder" if sys.platform == "darwin" else "Esplora file"
+FILE_MANAGER = "Finder" if sys.platform == "darwin" else tr('Esplora file')
 
 
 class TipStyle(QProxyStyle):
@@ -490,11 +438,7 @@ class ImageView(QGraphicsView):
     crop_changed = Signal(list)    # Ritaglia: nuovo riquadro [x, y, l, a] (0..1 della foto)
     picked = Signal(float, float)  # Occhi rossi: clic sulla foto (0..1)
 
-    """Foto adattata alla finestra; due dita su/giù o pizzico = zoom, doppio clic = adatta.
-
-    Adattata: l'immagine viene ridotta UNA volta, con filtro di alta qualità, ai pixel reali dello
-    schermo (Retina compreso), invece di lasciarla ridurre al volo (più morbido/scalettato).
-    Con lo zoom si passa all'originale a piena risoluzione."""
+    tr("Foto adattata alla finestra; due dita su/giù o pizzico = zoom, doppio clic = adatta.\n\n    Adattata: l'immagine viene ridotta UNA volta, con filtro di alta qualità, ai pixel reali dello\n    schermo (Retina compreso), invece di lasciarla ridurre al volo (più morbido/scalettato).\n    Con lo zoom si passa all'originale a piena risoluzione.")
 
     def __init__(self):
         super().__init__()
@@ -1062,7 +1006,7 @@ class SnapGallery(QWidget):
                 p.restore()
             else:
                 p.setPen(QColor("#8e8e93"))
-                p.drawText(r, Qt.AlignCenter, "salvo…")
+                p.drawText(r, Qt.AlignCenter, tr('salvo…'))
             if frame == self.current:  # è il fotogramma che stai guardando
                 p.setPen(QPen(QColor("#ffffff"), 2.5))
                 p.setBrush(Qt.NoBrush)
@@ -1080,7 +1024,7 @@ class SnapGallery(QWidget):
             f.setPixelSize(11)
             p.setFont(f)
             p.drawText(QRectF(r.left(), r.bottom() + 2, r.width(), self.CAP - 2),
-                       Qt.AlignLeft | Qt.AlignVCenter, f"fotogramma {frame + 1}")
+                       Qt.AlignLeft | Qt.AlignVCenter, tr('fotogramma {v0}', v0=frame + 1))
 
 
 class ThumbStrip(QWidget):
@@ -1270,9 +1214,9 @@ class ThumbStrip(QWidget):
 
 
 _GIORNI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
-_GIORNI_LUNGHI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
-_MESI_LUNGHI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto",
-                "settembre", "ottobre", "novembre", "dicembre"]
+_GIORNI_LUNGHI = [tr('lunedì'), tr('martedì'), tr('mercoledì'), tr('giovedì'), tr('venerdì'), tr('sabato'), tr('domenica')]
+_MESI_LUNGHI = [tr('gennaio'), tr('febbraio'), tr('marzo'), tr('aprile'), tr('maggio'), tr('giugno'), tr('luglio'), tr('agosto'),
+                tr('settembre'), tr('ottobre'), tr('novembre'), tr('dicembre')]
 _MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"]
 
 
@@ -1423,16 +1367,14 @@ class MainWindow(QMainWindow):
 
         # ---- barra in alto
         self.btn_back = QPushButton("‹")
-        self.btn_back.setToolTip("Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n"
-                                 "(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.")
+        self.btn_back.setToolTip(tr("Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia."))
         self.btn_back.clicked.connect(self.go_back)
         self.btn_fwd = QPushButton("›")
-        self.btn_fwd.setToolTip("Successivo (↓): vai all'elemento dopo senza decidere.")
+        self.btn_fwd.setToolTip(tr("Successivo (↓): vai all'elemento dopo senza decidere."))
         self.btn_fwd.clicked.connect(self.go_forward)
         self.btn_undo = QPushButton("↩")
         self.btn_undo.setObjectName("undo")
-        self.btn_undo.setToolTip("Annulla l'ultima scelta e torna indietro (Z).\n"
-                                 "Se era un Sì, toglie anche i file copiati in export.")
+        self.btn_undo.setToolTip(tr("Annulla l'ultima scelta e torna indietro (Z).\nSe era un Sì, toglie anche i file copiati in export."))
         self.btn_undo.clicked.connect(self.undo)
         self.nav_pill = pill(self.btn_back, self.btn_fwd, self.btn_undo)
         left = QHBoxLayout()
@@ -1440,12 +1382,28 @@ class MainWindow(QMainWindow):
         if self.unified:
             left.addSpacing(62)   # spazio per i semafori (chiudi, riduci, schermo intero)
         left.addWidget(self.nav_pill)
+        # come in Foto mentre si modifica: □|□ confronta con l'originale, "Ripristina originale"
+        self.btn_compare = EP.CompareButton()
+        self.btn_compare.setObjectName("toolround")
+        self.btn_compare.setFixedSize(40, 32)
+        self.btn_compare.setFocusPolicy(Qt.NoFocus)
+        self.btn_compare.setToolTip(tr('Confronta: mostra la foto originale (di nuovo = torna alla modificata).'))
+        self.btn_compare.toggled.connect(self.set_compare)
+        self.btn_restore = QPushButton(tr('Ripristina originale'))
+        self.btn_restore.setObjectName("toolpill")
+        self.btn_restore.setFocusPolicy(Qt.NoFocus)
+        self.btn_restore.setToolTip(tr('Toglie tutte le modifiche (Regola e Ritaglia): torna la foto originale.'))
+        self.btn_restore.clicked.connect(self.discard_edits)
+        for b in (self.btn_compare, self.btn_restore):
+            b.setCursor(Qt.PointingHandCursor)
+            b.setVisible(False)
+            left.addWidget(b)
         minus, plus = QLabel("–"), QLabel("+")
         self.zoom_slider = QSlider(Qt.Horizontal)
         self.zoom_slider.setRange(0, 100)
         self.zoom_slider.setFixedWidth(110)
         self.zoom_slider.setFocusPolicy(Qt.NoFocus)
-        self.zoom_slider.setToolTip("Zoom (anche due dita sul trackpad o rotella; doppio clic = foto intera)")
+        self.zoom_slider.setToolTip(tr('Zoom (anche due dita sul trackpad o rotella; doppio clic = foto intera)'))
         self.zoom_pill = QFrame()   # sopra la foto, sotto la data (vedi place_zoom)
         self.zoom_pill.setObjectName("zoompill")
         zl = QHBoxLayout(self.zoom_pill)
@@ -1462,8 +1420,7 @@ class MainWindow(QMainWindow):
         self.heading.setObjectName("heading")
         self.chosen_tag = QLabel("")
         self.chosen_tag.setObjectName("chosen")
-        self.chosen_tag.setToolTip("Questo elemento è già stato deciso. Premi un'altra scelta per cambiarla:\n"
-                                   "la nuova sostituisce la vecchia e i file tornano a posto (Z annulla).")
+        self.chosen_tag.setToolTip(tr("Questo elemento è già stato deciso. Premi un'altra scelta per cambiarla:\nla nuova sostituisce la vecchia e i file tornano a posto (Z annulla)."))
         self.chosen_tag.hide()
         head_row = QHBoxLayout()
         head_row.setSpacing(8)
@@ -1482,21 +1439,23 @@ class MainWindow(QMainWindow):
 
         self.btn_fav = QPushButton("♡")
         self.btn_fav.setObjectName("fav")
-        self.btn_fav.setToolTip("Preferita (.): le preferite approvate vengono copiate in\n"
-                                "export/Preferite invece che in export.")
+        self.btn_fav.setToolTip(tr('Preferita (.): le preferite approvate vengono copiate in\nexport/Preferite invece che in export.'))
         self.btn_fav.clicked.connect(self.toggle_favorite)
         self.btn_help = QPushButton("?")
-        self.btn_help.setToolTip("Come funziona (? o H): spiega tutti i pulsanti e i tasti.\n"
-                                 "Da qui apri anche il file di log.")
+        self.btn_help.setToolTip(tr('Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.'))
         self.btn_help.clicked.connect(self.show_help)
         self.btn_info = QPushButton("ⓘ")
         self.btn_info.setObjectName("info")
-        self.btn_info.setToolTip("Mostra / nascondi il pannello delle informazioni (I).")
+        self.btn_info.setToolTip(tr('Mostra / nascondi il pannello delle informazioni (I).'))
         self.btn_info.clicked.connect(self.toggle_side)
         self.btn_settings = QPushButton("⚙︎")
-        self.btn_settings.setToolTip("Impostazioni: cartella, export, filtro, formato e ora.")
+        self.btn_settings.setToolTip(tr('Impostazioni: cartella, export, filtro, formato e ora.'))
         self.btn_settings.clicked.connect(self.show_settings)
-        self.fav_pill = pill(self.btn_fav)
+        self.btn_wand = EP.WandButton()
+        self.btn_wand.setObjectName("wand")
+        self.btn_wand.setToolTip(tr('Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi OK per confermare.'))
+        self.btn_wand.clicked.connect(self.auto_enhance)
+        self.fav_pill = pill(self.btn_fav, self.btn_wand)
         right = QHBoxLayout()
         right.setSpacing(8)
         right.addStretch(1)
@@ -1515,35 +1474,30 @@ class MainWindow(QMainWindow):
         lay.addLayout(top)
 
         # ---- impostazioni: finestrella che si apre dal pulsante ⚙ (come i menu di Foto)
-        self.btn_open = QPushButton("📂  Apri cartella…")
+        self.btn_open = QPushButton(tr('📂  Apri cartella…'))
         self.btn_open.clicked.connect(self.choose_root)
-        self.btn_export = QPushButton("Export: —")
+        self.btn_export = QPushButton(tr('Export: —'))
         self.btn_export.clicked.connect(self.choose_export)
-        self.btn_show_export = QPushButton(f"Mostra export in {FILE_MANAGER}")
+        self.btn_show_export = QPushButton(tr('Mostra export in {FILE_MANAGER}', FILE_MANAGER=FILE_MANAGER))
         self.btn_show_export.clicked.connect(self.open_export)
         self.fmt = QComboBox()
-        self.fmt.addItems(["JPEG qualità massima", "PNG 16-bit (senza perdita)"])
+        self.fmt.addItems([tr('JPEG qualità massima'), tr('PNG 16-bit (senza perdita)')])
         self.tz = QComboBox()
-        self.tz.addItem("Ora: della fotocamera", None)
+        self.tz.addItem(tr('Ora: della fotocamera'), None)
         for h in range(-12, 15):
             self.tz.addItem(f"Ora: UTC{h:+d}", float(h))
         self.view_filter = QComboBox()
-        self.view_filter.addItems(["Mostra: tutto", "Mostra: solo foto (anche Live e panorami)"])
+        self.view_filter.addItems([tr('Mostra: tutto'), tr('Mostra: solo foto (anche Live e panorami)')])
         self.view_filter.setCurrentIndex(1 if self.photos_only else 0)
         self.view_filter.currentIndexChanged.connect(self.on_filter_changed)
-        btn_help2 = QPushButton("?  Come funziona")
+        btn_help2 = QPushButton(tr('?  Come funziona'))
         btn_help2.clicked.connect(self.show_help)
         tips = {
-            self.btn_open: "Scegli la cartella con foto e video (vengono lette anche le sottocartelle).",
-            self.btn_export: "Cartella dove vengono COPIATE le foto approvate. Gli originali non si toccano.",
-            self.fmt: "Formato dei fotogrammi estratti da Live e video.\n"
-                      "JPEG qualità massima: accettato da tutti i siti di stampa.\n"
-                      "PNG 16-bit: senza perdita, file molto grandi (~40 MB).\n"
-                      "Foto e panorami vengono sempre copiati identici.",
-            self.tz: "Fuso orario scritto nella data delle foto esportate.\n"
-                     "'Della fotocamera' usa l'ora registrata in ogni file.",
-            self.view_filter: "Solo foto: nasconde i video (restano foto, Live e panorami).\n"
-                              "I video nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'.",
+            self.btn_open: tr('Scegli la cartella con foto e video (vengono lette anche le sottocartelle).'),
+            self.btn_export: tr('Cartella dove vengono COPIATE le foto approvate. Gli originali non si toccano.'),
+            self.fmt: tr('Formato dei fotogrammi estratti da Live e video.\nJPEG qualità massima: accettato da tutti i siti di stampa.\nPNG 16-bit: senza perdita, file molto grandi (~40 MB).\nFoto e panorami vengono sempre copiati identici.'),
+            self.tz: tr("Fuso orario scritto nella data delle foto esportate.\n'Della fotocamera' usa l'ora registrata in ogni file."),
+            self.view_filter: tr("Solo foto: nasconde i video (restano foto, Live e panorami).\nI video nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'."),
         }
         for w, t in tips.items():
             w.setToolTip(t)
@@ -1558,10 +1512,10 @@ class MainWindow(QMainWindow):
         cv = QVBoxLayout(card)
         cv.setContentsMargins(16, 8, 16, 16)
         cv.setSpacing(7)
-        for head, widgets in (("CARTELLE", (self.btn_open, self.btn_export, self.btn_show_export)),
-                              ("VISUALIZZA", (self.view_filter,)),
-                              ("FOTOGRAMMI ESPORTATI", (self.fmt, self.tz)),
-                              ("AIUTO", (btn_help2,))):
+        for head, widgets in ((tr('CARTELLE'), (self.btn_open, self.btn_export, self.btn_show_export)),
+                              (tr('VISUALIZZA'), (self.view_filter,)),
+                              (tr('FOTOGRAMMI ESPORTATI'), (self.fmt, self.tz)),
+                              (tr('AIUTO'), (btn_help2,))):
             lab = QLabel(head)
             lab.setObjectName("section")
             cv.addWidget(lab)
@@ -1591,14 +1545,12 @@ class MainWindow(QMainWindow):
         side_outer.setSpacing(0)
         # in alto la scelta, come Regola · Stili · Ritaglia di Foto: Info (il pannello di sempre),
         # Regola (luce, colore, …) e Ritaglia
-        self.side_seg = EP.Segmented([("info", "Info"), ("regola", "Regola"), ("ritaglia", "Ritaglia")])
+        self.side_seg = EP.Segmented([("info", tr('Info')), ("regola", tr('Regola')), ("ritaglia", tr('Ritaglia'))])
         self.side_seg.set_current("info")
         self.side_seg.changed.connect(self.on_side_tab)
-        self.side_seg.buttons["info"].setToolTip("Informazioni sulla foto e sulla selezione.")
-        self.side_seg.buttons["regola"].setToolTip("Luce, colore, bianco e nero, curve, nitidezza…\n"
-                                                   "✓ Sì esporta la foto modificata (l'originale non si tocca).")
-        self.side_seg.buttons["ritaglia"].setToolTip("Ritaglia, raddrizza e proporzioni. Conferma con OK,\n"
-                                                     "poi ✓ Sì esporta la foto ritagliata.")
+        self.side_seg.buttons["info"].setToolTip(tr('Informazioni sulla foto e sulla selezione.'))
+        self.side_seg.buttons["regola"].setToolTip(tr("Luce, colore, bianco e nero, curve, nitidezza…\n✓ Sì esporta la foto modificata (l'originale non si tocca)."))
+        self.side_seg.buttons["ritaglia"].setToolTip(tr('Ritaglia, raddrizza e proporzioni. Conferma con OK,\npoi ✓ Sì esporta la foto ritagliata.'))
         seg_wrap = QHBoxLayout()
         seg_wrap.setContentsMargins(14, 10, 14, 4)
         seg_wrap.addWidget(self.side_seg)
@@ -1630,23 +1582,22 @@ class MainWindow(QMainWindow):
         self.edit_badge.setObjectName("editbadge")
         self.edit_badge.setWordWrap(True)
         fl.addWidget(self.edit_badge)
-        self.btn_discard = QPushButton("Annulla le modifiche")
+        self.btn_discard = QPushButton(tr('Annulla le modifiche'))
         self.btn_discard.setObjectName("discard")
         self.btn_discard.setFocusPolicy(Qt.NoFocus)
-        self.btn_discard.setToolTip("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n"
-                                    "(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)")
+        self.btn_discard.setToolTip(tr("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)"))
         self.btn_discard.clicked.connect(self.discard_edits)
         # Regola e Ritaglia si confermano qui: OK (Invio) o Annulla (Esc), sempre in vista
         self.confirm_row = QWidget()
         cr = QHBoxLayout(self.confirm_row)
         cr.setContentsMargins(0, 0, 0, 2)
         cr.setSpacing(8)
-        self.btn_edit_cancel = QPushButton("Annulla")
+        self.btn_edit_cancel = QPushButton(tr('Annulla'))
         self.btn_edit_cancel.setObjectName("cropbtn")
-        self.btn_edit_cancel.setToolTip("Lascia la foto com'era prima di queste modifiche (Esc).")
+        self.btn_edit_cancel.setToolTip(tr("Lascia la foto com'era prima di queste modifiche (Esc)."))
         self.btn_edit_ok = QPushButton("OK")
         self.btn_edit_ok.setObjectName("cropok")
-        self.btn_edit_ok.setToolTip("Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.")
+        self.btn_edit_ok.setToolTip(tr('Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.'))
         for b in (self.btn_edit_cancel, self.btn_edit_ok):
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
@@ -1662,7 +1613,7 @@ class MainWindow(QMainWindow):
         sv.setContentsMargins(18, 14, 18, 18)
         sv.setSpacing(8)
         self.side_layout = sv
-        self.side_info = QLabel("INFO")
+        self.side_info = QLabel(tr('INFO'))
         self.side_info.setObjectName("section")
         sv.addWidget(self.side_info)
         self.side_details = QLabel("")
@@ -1672,7 +1623,7 @@ class MainWindow(QMainWindow):
         self.side_details.setOpenExternalLinks(True)   # solo il link "Apri nella mappa", se cliccato
         sv.addWidget(self.side_details)
         self.side_slot = sv.count()   # qui arrivano le foto prese da un video
-        sel = QLabel("SELEZIONE")
+        sel = QLabel(tr('SELEZIONE'))
         sel.setObjectName("section")
         sv.addWidget(sel)
         # quante già fatte: in evidenza (numero grande e barra), poi il dettaglio
@@ -1689,7 +1640,7 @@ class MainWindow(QMainWindow):
         sv.addWidget(self.counter)
         self.side_sel = sel
         # salvataggio: deve essere chiaro che è automatico, quando è avvenuto e dove sta
-        self.save_head = QLabel("SALVATAGGIO")
+        self.save_head = QLabel(tr('SALVATAGGIO'))
         self.save_head.setObjectName("section")
         sv.addWidget(self.save_head)
         self.save_info = QLabel("")
@@ -1697,15 +1648,14 @@ class MainWindow(QMainWindow):
         self.save_info.setWordWrap(True)
         self.save_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         sv.addWidget(self.save_info)
-        self.btn_save_now = QPushButton("Salva ora")
-        self.btn_save_now.setToolTip("Non serve: si salva da solo a ogni scelta.\n"
-                                     "Se vuoi esserne sicuro, questo salva subito.")
+        self.btn_save_now = QPushButton(tr('Salva ora'))
+        self.btn_save_now.setToolTip(tr('Non serve: si salva da solo a ogni scelta.\nSe vuoi esserne sicuro, questo salva subito.'))
         self.btn_save_now.clicked.connect(self.save_now)
-        self.btn_show_save = QPushButton("Mostra")
-        self.btn_show_save.setToolTip(f"Mostra in {FILE_MANAGER} il file con i progressi.")
+        self.btn_show_save = QPushButton(tr('Mostra'))
+        self.btn_show_save.setToolTip(tr('Mostra in {FILE_MANAGER} il file con i progressi.', FILE_MANAGER=FILE_MANAGER))
         self.btn_show_save.clicked.connect(self.reveal_session)
-        self.btn_side_export = QPushButton("Export")
-        self.btn_side_export.setToolTip(f"Apre in {FILE_MANAGER} la cartella con le foto approvate.")
+        self.btn_side_export = QPushButton(tr('Export'))
+        self.btn_side_export.setToolTip(tr('Apre in {FILE_MANAGER} la cartella con le foto approvate.', FILE_MANAGER=FILE_MANAGER))
         self.btn_side_export.clicked.connect(self.open_export)
         self.save_row = QWidget()
         srow = QHBoxLayout(self.save_row)
@@ -1754,7 +1704,7 @@ class MainWindow(QMainWindow):
         self.msg_buttons.setSpacing(10)
         self.msg_btn1 = QPushButton()
         self.msg_btn2 = QPushButton()
-        self.msg_btn3 = QPushButton("Nuova selezione…")   # a fine selezione: chiude e apre un'altra cartella
+        self.msg_btn3 = QPushButton(tr('Nuova selezione…'))   # a fine selezione: chiude e apre un'altra cartella
         for b in (self.msg_btn1, self.msg_btn2, self.msg_btn3):
             b.setFocusPolicy(Qt.TabFocus)
             b.setMinimumHeight(36)
@@ -1806,7 +1756,7 @@ class MainWindow(QMainWindow):
         sl.setSpacing(8)
         self.btn_play = QPushButton("⏸")
         self.btn_play.setObjectName("play")
-        self.btn_play.setToolTip("Play / Pausa (barra spaziatrice)")
+        self.btn_play.setToolTip(tr('Play / Pausa (barra spaziatrice)'))
         self.btn_play.clicked.connect(self.play_pause)
         self.btn_prev = QPushButton("‹")
         self.btn_prev.setObjectName("arrow")
@@ -1828,27 +1778,21 @@ class MainWindow(QMainWindow):
         self.btn_next.clicked.connect(lambda: self.step(1))
         self.frame_label = ElidedLabel()
         self.frame_label.setAlignment(Qt.AlignCenter)
-        self.btn_live = QPushButton("▶  Vedi Live (L)")
+        self.btn_live = QPushButton(tr('▶  Vedi Live (L)'))
         self.btn_live.setObjectName("live")
         self.btn_live.clicked.connect(self.toggle_live)
-        self.btn_replay = QPushButton("⟲  Rivedi (V)")
+        self.btn_replay = QPushButton(tr('⟲  Rivedi (V)'))
         self.btn_replay.clicked.connect(self.replay)
-        self.btn_snap = QPushButton("📷  Prendi foto (F)")
-        self.btn_snap.setToolTip("Salva SUBITO come foto il fotogramma che stai guardando (F)\n"
-                                 "e resta su questo video: puoi prenderne quante vuoi.\n"
-                                 "Le foto salvate sono i segni verdi sulla striscia.\n"
-                                 "Poi con SÌ / NO decidi se tenere anche il video.")
+        self.btn_snap = QPushButton(tr('📷  Prendi foto (F)'))
+        self.btn_snap.setToolTip(tr('Salva SUBITO come foto il fotogramma che stai guardando (F)\ne resta su questo video: puoi prenderne quante vuoi.\nLe foto salvate sono i segni verdi sulla striscia.\nPoi con SÌ / NO decidi se tenere anche il video.'))
         self.btn_snap.clicked.connect(self.take_photo)
-        self.btn_sharp = QPushButton("✨  Più nitida (P)")
+        self.btn_sharp = QPushButton(tr('✨  Più nitida (P)'))
         self.btn_sharp.clicked.connect(self.pick_sharpest)
-        self.btn_reset = QPushButton("↺  Originale (R)")
+        self.btn_reset = QPushButton(tr('↺  Originale (R)'))
         self.btn_reset.clicked.connect(self.reset_frame)
-        self.btn_prev.setToolTip("Fotogramma precedente (←, Maiusc+← = 10 indietro)")
-        self.btn_next.setToolTip("Fotogramma successivo (→, Maiusc+→ = 10 avanti)")
-        self.strip.setToolTip("Clic o trascina sulla striscia per scegliere il fotogramma.\n"
-                              "Live: quello scelto diventa la foto (SÌ salva questa).\n"
-                              "Live: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\n"
-                              "Video: si ferma lì, poi 📷 Prendi foto.  ← → un fotogramma alla volta.")
+        self.btn_prev.setToolTip(tr('Fotogramma precedente (←, Maiusc+← = 10 indietro)'))
+        self.btn_next.setToolTip(tr('Fotogramma successivo (→, Maiusc+→ = 10 avanti)'))
+        self.strip.setToolTip(tr('Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ← → un fotogramma alla volta.'))
         for w in (self.btn_play, self.btn_prev, self.strip, self.btn_next, self.time_label):
             w.setFocusPolicy(Qt.NoFocus)
             timeline.addWidget(w, 1 if w is self.strip else 0)
@@ -1897,9 +1841,9 @@ class MainWindow(QMainWindow):
         choices.setSpacing(16)
         self.choice_caps: dict[str, QLabel] = {}
         self.cap_of: dict[QPushButton, QLabel] = {}
-        for b, cap in ((self.btn_trash, "No e cancella (X)"),
-                       (self.btn_no, "No (N)"), (self.btn_skip, "Salta (S)"),
-                       (self.btn_yes, "Sì (Y)"), (self.btn_yes_video, "Sì + video (⇧Y)")):
+        for b, cap in ((self.btn_trash, tr('No e cancella (X)')),
+                       (self.btn_no, "No (N)"), (self.btn_skip, tr('Salta (S)')),
+                       (self.btn_yes, tr('Sì (Y)')), (self.btn_yes_video, tr('Sì + video (⇧Y)'))):
             col = QVBoxLayout()
             col.setSpacing(4)
             col.addStretch(1)
@@ -1920,9 +1864,7 @@ class MainWindow(QMainWindow):
         self.snaps_label.setObjectName("snaps")
         self.snaps_label.setWordWrap(True)
         self.snaps_label.setProperty("empty", "true")
-        self.snaps_label.setToolTip("Foto prese da questo video con 📷 Prendi foto.\n"
-                                    "Restano salvate in export anche se premi NO.\n"
-                                    "Z annulla l'ultima presa.")
+        self.snaps_label.setToolTip(tr("Foto prese da questo video con 📷 Prendi foto.\nRestano salvate in export anche se premi NO.\nZ annulla l'ultima presa."))
         self.next_box = QFrame()
         self.next_box.setObjectName("next")
         nb = QVBoxLayout(self.next_box)
@@ -1935,16 +1877,14 @@ class MainWindow(QMainWindow):
         self.next_img.setAlignment(Qt.AlignCenter)
         nb.addWidget(self.next_txt)
         nb.addWidget(self.next_img)
-        self.next_box.setToolTip("Anteprima dell'elemento che arriva dopo questa scelta.")
+        self.next_box.setToolTip(tr("Anteprima dell'elemento che arriva dopo questa scelta."))
         self.next_box.hide()
         self.next_img.setFixedSize(234, 132)
         self.snap_gallery = SnapGallery()
         self.snap_gallery.picked.connect(self.review_snap)
         self.snap_gallery.opened.connect(lambda f: QDesktopServices.openUrl(QUrl.fromLocalFile(f)))
         self.snap_gallery.removed.connect(self.remove_snap)
-        self.snap_gallery.setToolTip("Foto prese da questo video.\nClic: il video torna su quel "
-                                     "fotogramma per rivederlo.\nDoppio clic: apre il file salvato.\n"
-                                     "✕: toglie la foto da export (puoi riprenderla con F).")
+        self.snap_gallery.setToolTip(tr('Foto prese da questo video.\nClic: il video torna su quel fotogramma per rivederlo.\nDoppio clic: apre il file salvato.\n✕: toglie la foto da export (puoi riprenderla con F).'))
         # in basso a destra, sopra il numero di versione
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snaps_label)
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snap_gallery)
@@ -1959,8 +1899,7 @@ class MainWindow(QMainWindow):
         bottom.addStretch(1)
         lay.addWidget(self.decision_bar)
         self.thumbs_strip = ThumbStrip()
-        self.thumbs_strip.setToolTip("Le foto prima e dopo questa. Clic per andarci.\n"
-                                     "Il pallino colorato è la scelta già fatta.")
+        self.thumbs_strip.setToolTip(tr('Le foto prima e dopo questa. Clic per andarci.\nIl pallino colorato è la scelta già fatta.'))
         self.thumbs_strip.picked.connect(self.jump_to)
         # filtro della striscia: mostra solo le miniature con una certa scelta (o ancora da fare)
         # Pulsante che apre un popup personalizzato (il QComboBox nativo è brutto su macOS)
@@ -1975,8 +1914,7 @@ class MainWindow(QMainWindow):
         self.strip_filter_btn = QPushButton(self._strip_filter_label + "  ▾")
         self.strip_filter_btn.setObjectName("stripnav")
         self.strip_filter_btn.setFocusPolicy(Qt.NoFocus)
-        self.strip_filter_btn.setToolTip("Quali miniature mostrare nella striscia in basso.\n"
-                                         "Quella che stai guardando resta sempre visibile.")
+        self.strip_filter_btn.setToolTip(tr('Quali miniature mostrare nella striscia in basso.\nQuella che stai guardando resta sempre visibile.'))
         self.strip_filter_btn.setFixedWidth(220)
         self.strip_filter_btn.clicked.connect(self._show_strip_filter_popup)
         # Il popup del filtro: una card scura con le voci come pulsanti
@@ -2014,10 +1952,9 @@ class MainWindow(QMainWindow):
         left_col = QVBoxLayout()
         left_col.setSpacing(4)
         left_col.addWidget(self.strip_filter_btn, 0, Qt.AlignVCenter)
-        self.btn_locate = QPushButton("⤳  Torna all'analisi")
+        self.btn_locate = QPushButton(tr("⤳  Torna all'analisi"))
         self.btn_locate.setObjectName("stripnav")
-        self.btn_locate.setToolTip("Torna alla prima foto ancora da decidere\n"
-                                   "(la prossima da giudicare)")
+        self.btn_locate.setToolTip(tr('Torna alla prima foto ancora da decidere\n(la prossima da giudicare)'))
         self.btn_locate.setFocusPolicy(Qt.TabFocus)
         self.btn_locate.setFixedWidth(180)
         self.btn_locate.clicked.connect(self.locate_thumb)
@@ -2030,13 +1967,13 @@ class MainWindow(QMainWindow):
             b.setObjectName("stripnav")
             b.setFixedSize(30, 30)
             b.setFocusPolicy(Qt.TabFocus)
-            b.setToolTip("Scorri le miniature indietro" if step < 0 else "Scorri le miniature avanti")
+            b.setToolTip(tr('Scorri le miniature indietro') if step < 0 else tr('Scorri le miniature avanti'))
             b.clicked.connect(lambda _=False, st=step: self.scroll_thumbs(st))
         strip_row.addWidget(self.btn_thumb_prev, 0, Qt.AlignVCenter)
         strip_row.addWidget(self.thumbs_strip, 1)
         strip_row.addWidget(self.btn_thumb_next, 0, Qt.AlignVCenter)
-        self.btn_return = QPushButton("⤳ Torna all'ultima")
-        self.btn_return.setToolTip("Torna alla foto da cui sei tornato indietro (con ↑ o B).")
+        self.btn_return = QPushButton(tr("⤳ Torna all'ultima"))
+        self.btn_return.setToolTip(tr('Torna alla foto da cui sei tornato indietro (con ↑ o B).'))
         self.btn_return.setFocusPolicy(Qt.TabFocus)
         self.btn_return.setFixedWidth(180)
         self.btn_return.setVisible(False)
@@ -2110,14 +2047,29 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Regola e Ritaglia
     def editable(self, item: Item | None = None) -> bool:
-        """Regola e Ritaglia: foto, panorami e Live (la foto della Live). I video no."""
+        """Regola e Ritaglia: foto, panorami, Live (la foto della Live) e, nei video, il
+        fotogramma fermo (quello che 📷 Prendi foto salva)."""
         item = item or self.current()
-        return item is not None and item.kind in ("photo", "pano", "live")
+        if item is None:
+            return False
+        if item.kind == "video":
+            return self.scene_mode and item is self.current() and self.still_owner == item.id
+        return item.kind in ("photo", "pano", "live")
+
+    def edit_key(self, item: Item | None = None) -> str | None:
+        """Dove stanno le modifiche: la foto, oppure il singolo fotogramma del video
+        (la stessa chiave della foto presa, "video#fN")."""
+        item = item or self.current()
+        if item is None:
+            return None
+        return f"{item.id}#f{self.shown_frame}" if item.kind == "video" else item.id
 
     def item_edit(self, item_id: str | None = None) -> dict:
         if not self.session:
             return {}
-        item_id = item_id or (self.current().id if self.current() else None)
+        cur = self.current()
+        if item_id is None or (cur is not None and item_id == cur.id):
+            item_id = self.edit_key()
         return dict(self.session.edits.get(item_id, {})) if item_id else {}
 
     def store_edit(self, item_id: str, edit: dict) -> None:
@@ -2129,23 +2081,31 @@ class MainWindow(QMainWindow):
         pending = "ritaglia" if self.crop_dirty() else "regola" if self.tone_dirty() else None
         if pending and key != pending:
             self.side_seg.set_current(pending)
-            self.flash("Prima conferma le modifiche con OK oppure Annulla")
+            self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
             return
         if key != "ritaglia" and self.crop_draft is not None:   # aperto senza cambiare nulla
             self._end_crop()
         if key != "regola" and self.tone_draft is not None:
             self.close_clean_drafts()
+        if key != "info" and item is not None and item.kind == "video" and not self.editable(item):
+            info = self.infos.get(item.id)
+            if info:   # video in riproduzione: ci si ferma sul fotogramma che si vede
+                self.set_frame(self.current_frame() or 0, manual=True)
+            if not self.editable(item):
+                self.side_seg.set_current(self.side_tab)
+                self.flash(tr('Video: fermati sul fotogramma da salvare (pausa o clic sulla striscia), poi Regola o Ritaglia'))
+                return
         if key != "info" and not (self.editable(item) and self.stack.currentWidget() is self.image_view
                                   or self.editable(item) and item.kind == "live"):
             self.side_seg.set_current(self.side_tab)
-            self.flash("Regola e Ritaglia: per foto, panorami e Live (non per i video)")
+            self.flash(tr('Regola e Ritaglia: per foto, panorami, Live e il fotogramma fermo dei video'))
             return
         if key == "ritaglia" and item.kind == "live" and self.live_view:
             self.show_live_still()
             self.update_scene_controls()
         if key == "ritaglia" and self.edit_base_owner != item.id:
             self.side_seg.set_current(self.side_tab)
-            self.flash("Aspetta che la foto sia caricata")
+            self.flash(tr('Aspetta che la foto sia caricata'))
             return
         self.side_seg.set_current(key)
         if key == "ritaglia" and self.side_tab != "ritaglia":
@@ -2210,12 +2170,81 @@ class MainWindow(QMainWindow):
         item = self.current()
         if self.tone_draft is None or not item:
             return
-        self.store_edit(item.id, self.tone_draft)
+        self.store_edit(self.edit_key(), self.tone_draft)
         self.tone_draft = None
+        self.after_edit_confirmed()
         self.regola.set_edit(self.item_edit())
         self.set_crop_lock(False)
         self.request_edit_render()
-        self.flash("Modifiche confermate: ✓ Sì esporta la foto modificata")
+        self.flash(tr('Modifiche confermate: ✓ Sì esporta la foto modificata'))
+
+    def after_edit_confirmed(self) -> None:
+        """Video: se questo fotogramma era già stato salvato con 📷, la foto in export si rifà
+        con le modifiche nuove; se no, si ricorda di premere Prendi foto."""
+        item = self.current()
+        if not item or item.kind != "video":
+            return
+        key = self.edit_key()
+        d = self.session.get(key)
+        new = E.clean(self.session.edits.get(key, {}))
+        if d is None or d["choice"] != "snap":
+            if new:
+                self.flash(tr('Modifiche pronte: 📷 Prendi foto (F) salva questo fotogramma modificato'))
+            return
+        if E.clean(d.get("edit") or {}) == new or not self.revert_effects(key, d):
+            return
+        d["files"] = []
+        d.pop("stamps", None)
+        if new:
+            d["edit"] = new
+        else:
+            d.pop("edit", None)
+        self.session.save()
+        self.queue_export(item, d["frame"], key=key, snapshot=True)
+        self.update_counter()
+        self.flash(tr('📷 Foto del fotogramma {v0} rifatta con le modifiche', v0=d['frame'] + 1))
+
+    def auto_enhance(self) -> None:
+        """Bacchetta magica, come in Foto: Luce e Colore automatici in un clic (di nuovo = via).
+        Diventa una modifica da confermare con OK, come le altre."""
+        item = self.current()
+        if self.crop_dirty():
+            self.flash(tr('Prima conferma il ritaglio con OK oppure Annulla'))
+            return
+        if not self.editable(item) or self.edit_base is None:
+            self.flash(tr('La bacchetta magica funziona su foto, panorami, Live e fotogrammi fermi dei video'))
+            return
+        if self.side_tab != "regola":
+            self.on_side_tab("regola")
+            if self.side_tab != "regola":
+                return
+        e = self.current_tone_edit()
+        new = {k: v for k, v in e.items()
+               if k not in E.SECTIONS["light"] + E.SECTIONS["color"] + ("enhanced",)}
+        if e.get("enhanced"):
+            self.regola.set_edit(new)
+            self.on_regola_changed(new)
+            self.flash(tr('Miglioramento automatico tolto: OK per confermare'))
+            return
+        img = E.apply_crop(E.geometry_base(self.edit_proxy().convert("RGB"), e), e)
+        new.update(E.auto_light(img))
+        new.update(E.auto_color(img))
+        new["enhanced"] = True
+        new["off"] = [x for x in new.get("off", []) if x not in ("light", "color")]
+        self.regola.set_edit(new)
+        self.on_regola_changed(new)
+        self.flash(tr("✨ Migliorata automaticamente: OK per tenerla, Annulla per lasciarla com'era"))
+
+    def set_compare(self, on: bool) -> None:
+        """□|□: l'originale a schermo finché il pulsante è premuto."""
+        if self.edit_base is None or self.crop_draft is not None:
+            return
+        if on:
+            self.edit_gen += 1   # i calcoli in corso non devono coprire l'originale
+            self.image_view.set_image(self.edit_base, keep_zoom=True)
+            self.flash(tr('Originale (premi di nuovo □|□ per la versione modificata)'))
+        else:
+            self.request_edit_render()
 
     def regola_cancel(self) -> None:
         if self.tone_draft is None:
@@ -2225,7 +2254,7 @@ class MainWindow(QMainWindow):
         self.set_crop_lock(False)
         if self.edit_base is not None:
             self.set_still(self.edit_base, self.edit_base_owner, keep_zoom=True)
-        self.flash("Modifiche annullate")
+        self.flash(tr('Modifiche annullate'))
 
     def update_pick_mode(self) -> None:
         on = self.side_tab == "regola" and self.regola.redeye_open() and self.editable()
@@ -2243,12 +2272,27 @@ class MainWindow(QMainWindow):
         e = self.item_edit() if ok else {}
         has = not E.is_empty(e)
         crop, tone = self.crop_dirty(), self.tone_dirty()
+        if not ok and not (crop or tone) and self.side_tab != "info" and item is not None \
+                and item.kind == "video":   # il video riparte: si torna a Info
+            self.crop_draft = self.tone_draft = None
+            self.image_view.set_crop_mode(False)
+            self.side_tab = "info"
+            self.side_seg.set_current("info")
+            self.side_pages.setCurrentIndex(0)
         self.side_seg.buttons["regola"].setEnabled(ok and not crop)
         self.side_seg.buttons["ritaglia"].setEnabled(ok and not tone)
         self.side_seg.buttons["info"].setEnabled(not (crop or tone))
         self.btn_discard.setEnabled(has or crop or tone)
         self.confirm_row.setVisible(crop or tone)
         self.side_foot.setVisible(ok)
+        changed = ok and (has or self.tone_draft is not None or self.crop_draft is not None)
+        self.btn_restore.setVisible(changed)
+        self.btn_restore.setEnabled(has or crop or tone)
+        self.btn_compare.setVisible(changed and self.crop_draft is None)
+        if not self.btn_compare.isVisible() and self.btn_compare.isChecked():
+            self.btn_compare.setChecked(False)
+        self.btn_wand.setEnabled(ok and not crop)
+        self.btn_wand.set_active(ok and bool(self.current_tone_edit().get("enhanced")))
         parts = []
         if E.has_tone(e):
             parts.append("regolata")
@@ -2256,14 +2300,13 @@ class MainWindow(QMainWindow):
             parts.append("ritagliata" if e.get("crop") else "raddrizzata")
         d = self.session.get(item.id) if (has and self.session and item) else None
         if crop:
-            self.edit_badge.setText("✂︎ Ritaglio aperto: OK per confermare, Annulla per lasciarla com'era")
+            self.edit_badge.setText(tr("✂︎ Ritaglio aperto: OK per confermare, Annulla per lasciarla com'era"))
         elif tone:
-            self.edit_badge.setText("✎ Modifiche da confermare: OK per tenerle, Annulla per lasciarla com'era")
+            self.edit_badge.setText(tr("✎ Modifiche da confermare: OK per tenerle, Annulla per lasciarla com'era"))
         elif has and d and d["choice"] == "yes" and E.clean(d.get("edit") or {}) != E.clean(e):
-            self.edit_badge.setText(f"✎ Foto {' e '.join(parts)} dopo il Sì: premi di nuovo ✓ Sì "
-                                    "per esportare questa versione")
+            self.edit_badge.setText(tr('✎ Foto {v0} dopo il Sì: premi di nuovo ✓ Sì per esportare questa versione', v0=' e '.join(parts)))
         elif has:
-            self.edit_badge.setText(f"✎ Foto {' e '.join(parts)}: ✓ Sì esporta questa versione")
+            self.edit_badge.setText(tr('✎ Foto {v0}: ✓ Sì esporta questa versione', v0=' e '.join(parts)))
         else:
             self.edit_badge.setText("")
         self.edit_badge.setVisible(bool(self.edit_badge.text()))
@@ -2276,6 +2319,10 @@ class MainWindow(QMainWindow):
             self.image_view.set_crop_mode(False)
             self.set_crop_lock(False)
         self.regola.set_edit(self.item_edit() if self.editable(item) else {})
+        if self.btn_compare.isChecked():
+            self.btn_compare.blockSignals(True)
+            self.btn_compare.setChecked(False)
+            self.btn_compare.blockSignals(False)
         if self.side_tab != "info" and not self.editable(item):
             self.side_tab = "info"
             self.side_seg.set_current("info")
@@ -2296,6 +2343,11 @@ class MainWindow(QMainWindow):
             self.edit_base, self.edit_base_owner = img, item_id
             self._edit_proxy = self._edit_tiny = None
         item = self.item_by_id(item_id)
+        key = self.edit_key(item) if item is not None else None
+        if key != getattr(self, "_shown_edit_key", None):   # altro fotogramma del video: le sue modifiche
+            self._shown_edit_key = key
+            if not self.edit_pending():
+                self.regola.set_edit(self.item_edit() if self.editable(item) else {})
         if not self.edit_pending() and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
             self.edit_gen += 1   # niente da modificare: i calcoli in corso non valgono più
             self.image_view.set_image(img, keep_zoom=keep_zoom)
@@ -2363,7 +2415,8 @@ class MainWindow(QMainWindow):
         if not full:
             self._edit_busy = False
         if not isinstance(res, Exception) and owner == self.edit_base_owner == self.still_owner \
-                and (not full or gen == self.edit_gen) and self.stack.currentWidget() is self.image_view:
+                and (not full or gen == self.edit_gen) and self.stack.currentWidget() is self.image_view \
+                and not self.btn_compare.isChecked():
             self.image_view.set_image(pil_to_qimage(res), keep_zoom=True)
         if not full:
             if self._edit_again:
@@ -2407,6 +2460,10 @@ class MainWindow(QMainWindow):
                 if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         new = {k: v for k, v in e.items() if k not in keep}
         new.update(keep)
+        if self.btn_compare.isChecked():
+            self.btn_compare.blockSignals(True)
+            self.btn_compare.setChecked(False)
+            self.btn_compare.blockSignals(False)
         self.tone_draft = E.clean(new)   # bozza: se cambia qualcosa si conferma con OK o Annulla
         self.refresh_edit_lock()
         self.request_edit_render()
@@ -2437,7 +2494,7 @@ class MainWindow(QMainWindow):
         elif sec == "deblur":
             vals = E.auto_deblur(self.edit_base_full_pil(e))
             if not vals:
-                self.flash("Sfocatura: la foto è già nitida")
+                self.flash(tr('Sfocatura: la foto è già nitida'))
                 return
         else:
             return   # Occhi rossi, Curve, Colore selettivo, Vignettatura: si regolano a mano
@@ -2467,14 +2524,15 @@ class MainWindow(QMainWindow):
             self.regola_cancel()
         if E.is_empty(self.item_edit()):
             return
-        self.store_edit(item.id, {})
+        self.store_edit(self.edit_key(), {})
+        self.after_edit_confirmed()
         self.regola.set_edit({})
         if self.edit_base is not None and self.edit_base_owner == item.id:
             self.edit_gen += 1
             self.image_view.set_image(self.edit_base)
         self.update_thumbs()
         self.update_edit_ui()
-        self.flash("Modifiche annullate: si vede (ed esporta) l'originale")
+        self.flash(tr("Modifiche annullate: si vede (ed esporta) l'originale"))
 
     # ---- Ritaglia: la bozza vale solo con OK; finché è aperto non si sceglie né si cambia foto
     def set_crop_lock(self, on: bool) -> None:
@@ -2546,9 +2604,9 @@ class MainWindow(QMainWindow):
         self.ritaglia.set_draft(d)
         self.on_crop_draft(dict(self.ritaglia.draft))
         a, v = d["straighten"], E.get(d, "vertical")
-        parts = ([f"raddrizzata di {a:+.1f}°".replace(".", ",")] if a else []) + \
+        parts = ([tr('raddrizzata di {a:+.1f}°', a=a).replace(".", ",")] if a else []) + \
                 ([f"verticali corrette ({round(v * 30):+d}°)"] if v else [])
-        self.flash(("Automatico: " + ", ".join(parts)) if parts else "Automatico: è già dritta")
+        self.flash((tr('Automatico: ') + ", ".join(parts)) if parts else tr('Automatico: è già dritta'))
 
     def _end_crop(self) -> None:
         self.crop_draft = None
@@ -2571,16 +2629,17 @@ class MainWindow(QMainWindow):
         e = {k: v for k, v in self.item_edit().items()
              if not (k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait"))}
         e.update(d)
-        self.store_edit(item.id, e)
+        self.store_edit(self.edit_key(), e)
+        self.after_edit_confirmed()
         self.regola.set_edit(self.item_edit())
         self._end_crop()
-        self.flash("Ritaglio confermato: ✓ Sì esporta la foto ritagliata")
+        self.flash(tr('Ritaglio confermato: ✓ Sì esporta la foto ritagliata'))
 
     def crop_cancel(self) -> None:
         if self.crop_draft is None:
             return
         self._end_crop()
-        self.flash("Ritaglio annullato")
+        self.flash(tr('Ritaglio annullato'))
 
     def layout_choices(self) -> None:
         """Cerchi ✕ ✓ ↪ 🗑 ＋: più grandi quando lo schermo lo permette (finestra alta)."""
@@ -2596,6 +2655,9 @@ class MainWindow(QMainWindow):
         super().resizeEvent(e)
         if getattr(self, "choice_btns", None):
             self.layout_choices()
+        if getattr(self, "btn_help", None) is not None:
+            # finestra stretta: il nome del file resta leggibile; l'aiuto resta in ⚙ e coi tasti ? / H
+            self.btn_help.setVisible(self.width() >= 1180)
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -2655,15 +2717,13 @@ class MainWindow(QMainWindow):
             return path, btn
 
         self.src_label, self.btn_pick_src = step(
-            "①", "Cartella da guardare",
-            "La cartella copiata dalla scheda SD (per esempio DCIM). "
-            "Vengono lette anche tutte le sottocartelle.",
-            "Scegli cartella…", self.pick_source)
+            "①", tr('Cartella da guardare'),
+            tr('La cartella copiata dalla scheda SD (per esempio DCIM). Vengono lette anche tutte le sottocartelle.'),
+            tr('Scegli cartella…'), self.pick_source)
         self.dst_label, self.btn_pick_dst = step(
-            "②", "Cartella export: dove copiare quelle approvate",
-            "Le foto approvate vengono copiate qui, i video nella sottocartella “Video”. "
-            "Gli originali non vengono mai spostati né modificati.",
-            "Scegli cartella…", self.pick_destination)
+            "②", tr('Cartella export: dove copiare quelle approvate'),
+            tr('Le foto approvate vengono copiate qui, i video nella sottocartella “Video”. Gli originali non vengono mai spostati né modificati.'),
+            tr('Scegli cartella…'), self.pick_destination)
         v.addSpacing(8)
         self.q_local = QLabel("")
         self.q_local.setObjectName("muted")
@@ -2675,7 +2735,7 @@ class MainWindow(QMainWindow):
         self.btn_resume = QPushButton("")
         self.btn_resume.setFocusPolicy(Qt.TabFocus)
         self.btn_resume.clicked.connect(self.resume_last)
-        self.btn_start = QPushButton("Inizia  ▶")
+        self.btn_start = QPushButton(tr('Inizia  ▶'))
         self.btn_start.setObjectName("start")
         self.btn_start.setMinimumSize(150, 50)
         self.btn_start.setFocusPolicy(Qt.TabFocus)
@@ -2734,13 +2794,13 @@ class MainWindow(QMainWindow):
         return n
 
     def refresh_setup(self):
-        self.src_label.setText(str(self.pick_root) if self.pick_root else "— nessuna cartella scelta —")
+        self.src_label.setText(str(self.pick_root) if self.pick_root else tr('— nessuna cartella scelta —'))
         if self.pick_export:
             self.dst_label.setText(str(self.pick_export))
         elif self.pick_root:
             self.dst_label.setText(f"{self.pick_root / 'export'}   (proposta)")
         else:
-            self.dst_label.setText("— prima scegli la cartella da guardare —")
+            self.dst_label.setText(tr('— prima scegli la cartella da guardare —'))
         for lab, empty in ((self.src_label, not self.pick_root),
                            (self.dst_label, not self.pick_root and not self.pick_export)):
             if lab.property("empty") != ("true" if empty else "false"):
@@ -2752,7 +2812,7 @@ class MainWindow(QMainWindow):
         local = self.pick_root is not None and on_cloud == 0
         # sempre presente (anche vuota): la scheda non salta quando compare il messaggio
         self.q_local.setText(
-            "💽 Cartella su disco (non su iCloud): nessun download, si parte subito." if local else
+            tr('💽 Cartella su disco (non su iCloud): nessun download, si parte subito.') if local else
             "☁️ Questa cartella ha file su iCloud: ogni originale verrà scaricato quando lo apri "
             "(qualità sempre massima, ma con attesa). Per andare veloci usa una cartella su disco."
             if on_cloud else "")
@@ -2763,11 +2823,11 @@ class MainWindow(QMainWindow):
         if last:
             self.btn_resume.setText(f"↻  Riprendi l'ultima sessione:  {Path(last).name}  →  "
                                     f"{Path(last_exp).name if last_exp else 'export'}")
-            self.btn_resume.setToolTip(f"Da: {last}\nExport: {last_exp}")
+            self.btn_resume.setToolTip(tr('Da: {last}\nExport: {last_exp}', last=last, last_exp=last_exp))
 
     def pick_source(self):
         start = str(self.pick_root or self.settings_store.value("last_root", "") or Path.home())
-        d = QFileDialog.getExistingDirectory(self, "①  Scegli la cartella con foto e video da guardare",
+        d = QFileDialog.getExistingDirectory(self, tr('①  Scegli la cartella con foto e video da guardare'),
                                              start)
         if d:
             self.pick_root = Path(d)
@@ -2786,29 +2846,23 @@ class MainWindow(QMainWindow):
         detail = (f"Decise: {info['decided']} su {total}\n"
                   f"✓ {c['yes']} approvate   ✗ {c['no']} scartate   ↪ {c['skip']} saltate"
                   + (f"   🗑 {c['trash']} in “cancellare”" if c.get("trash") else "")
-                  + (f"   📷 {c['snap']} foto da video" if c.get("snap") else "") + "\n\n"
-                  f"Iniziato il {fw(info['created'])}\n"
-                  f"Ultima modifica il {fw(info['updated'])}\n"
-                  f"Export: {info['export']}"
+                  + (tr('   📷 {v0} foto da video', v0=c['snap']) if c.get("snap") else "") + tr('\n\nIniziato il {v0}\nUltima modifica il {v1}\nExport: {v2}', v0=fw(info['created']), v1=fw(info['updated']), v2=info['export'])
                   + ("" if info.get("export_ok", True) else
-                     "\n(questa cartella export non c'è su questo computer: "
-                     "riprendendo ti chiedo dove copiare)"))
+                     tr("\n(questa cartella export non c'è su questo computer: riprendendo ti chiedo dove copiare)")))
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Question)
         if info["completed"]:
-            box.setWindowTitle("Lavoro completato")
-            box.setText(f"<b>Questa cartella è già stata completata</b> "
-                        f"(chiuso il {fw(info['closed'] or info['updated'])}).<br>Vuoi riaprirla?")
-            resume = box.addButton("Riapri", QMessageBox.AcceptRole)
+            box.setWindowTitle(tr('Lavoro completato'))
+            box.setText(tr('<b>Questa cartella è già stata completata</b> (chiuso il {v0}).<br>Vuoi riaprirla?', v0=fw(info['closed'] or info['updated'])))
+            resume = box.addButton(tr('Riapri'), QMessageBox.AcceptRole)
         else:
-            box.setWindowTitle("Lavoro non completato")
+            box.setWindowTitle(tr('Lavoro non completato'))
             when = fw(info["closed"] or info["updated"])
-            box.setText(f"<b>In questa cartella c'è un lavoro a metà</b> (interrotto il {when}).<br>"
-                        f"Vuoi riprendere da dove eri?")
-            resume = box.addButton("Riprendi da dove eri", QMessageBox.AcceptRole)
+            box.setText(tr("<b>In questa cartella c'è un lavoro a metà</b> (interrotto il {when}).<br>Vuoi riprendere da dove eri?", when=when))
+            resume = box.addButton(tr('Riprendi da dove eri'), QMessageBox.AcceptRole)
         box.setInformativeText(detail)
-        restart = box.addButton("Ricomincia da capo", QMessageBox.DestructiveRole)
-        box.addButton("Annulla", QMessageBox.RejectRole)
+        restart = box.addButton(tr('Ricomincia da capo'), QMessageBox.DestructiveRole)
+        box.addButton(tr('Annulla'), QMessageBox.RejectRole)
         box.setDefaultButton(resume)
         box.exec()
         clicked = box.clickedButton()
@@ -2819,18 +2873,15 @@ class MainWindow(QMainWindow):
                 self.pick_export = None
                 self.refresh_setup()
                 self.setup_note.setText(
-                    f"Le scelte salvate verranno riprese. La cartella export di allora "
-                    f"({info['export']}) non c'è su questo computer: scegli dove copiare "
-                    f"le prossime con ②, poi Inizia.")
+                    tr("Le scelte salvate verranno riprese. La cartella export di allora ({v0}) non c'è su questo computer: scegli dove copiare le prossime con ②, poi Inizia.", v0=info['export']))
                 self.setup_note.setVisible(True)
                 return
             self.pick_export = Path(info["export"])
             self.start_from_setup()
         elif clicked is restart:
             sure = QMessageBox.question(
-                self, "Ricomincia da capo",
-                "Le scelte salvate verranno messe da parte (il file viene rinominato, non "
-                "cancellato).\nLe foto già copiate in export restano dove sono.\n\nContinuare?")
+                self, tr('Ricomincia da capo'),
+                tr('Le scelte salvate verranno messe da parte (il file viene rinominato, non cancellato).\nLe foto già copiate in export restano dove sono.\n\nContinuare?'))
             if sure == QMessageBox.Yes:
                 # cartella già aperta: va azzerata la sessione IN MEMORIA, altrimenti alla
                 # chiusura (o a Inizia) riscriverebbe sul disco tutte le scelte vecchie
@@ -2848,7 +2899,7 @@ class MainWindow(QMainWindow):
             return
         start = self.pick_export or self.pick_root
         d = QFileDialog.getExistingDirectory(
-            self, "②  Scegli (o crea con “Nuova cartella”) dove copiare le approvate", str(start))
+            self, tr('②  Scegli (o crea con “Nuova cartella”) dove copiare le approvate'), str(start))
         if d:
             problem = exporter.export_dir_problem(self.pick_root, Path(d))
             if problem:
@@ -2899,7 +2950,7 @@ class MainWindow(QMainWindow):
                 elif k in ("Return", "Enter"):
                     self.confirm_edit()
                 else:
-                    self.flash("Prima conferma le modifiche con OK oppure Annulla")
+                    self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
             return run
 
         QShortcut(QKeySequence("Escape"), self, activated=self.cancel_edit)
@@ -2956,7 +3007,7 @@ class MainWindow(QMainWindow):
             self.pending.discard(("ready-pre", key))
             if isinstance(res, Exception):
                 if cur and cur.id == key:
-                    self.show_message(f"Download da iCloud non riuscito:\n{res}")
+                    self.show_message(tr('Download da iCloud non riuscito:\n{res}', res=res))
                 return
             self.ready.add(key)
             if cur and cur.id == key:
@@ -2964,7 +3015,7 @@ class MainWindow(QMainWindow):
         elif kind == "analyze":
             self.pending.discard(("analyze", key))
             if isinstance(res, Exception):
-                self.status.setText(f"Analisi video non riuscita: {res}")
+                self.status.setText(tr('Analisi video non riuscita: {res}', res=res))
                 return
             info, cam = res
             self.infos[key] = info
@@ -3007,11 +3058,11 @@ class MainWindow(QMainWindow):
             if not cur or cur.id != item_id or self.current_frame() != start:
                 return
             if isinstance(res, Exception):
-                self.status.setText("Non riesco a cercare il fotogramma più nitido", ms=3500)
+                self.status.setText(tr('Non riesco a cercare il fotogramma più nitido'), ms=3500)
                 self.update_scene_controls()   # l'etichetta non resta su "cerco…"
             elif res == start:
                 self.update_scene_controls()
-                self.flash("Questo è già il fotogramma più nitido qui vicino")
+                self.flash(tr('Questo è già il fotogramma più nitido qui vicino'))
             else:
                 self.set_frame(res, manual=True)
         elif kind == "export":
@@ -3020,8 +3071,7 @@ class MainWindow(QMainWindow):
             # non rifatta, stessa cartella); un errore non cancella la scelta
             outcome = self.session.record_export(item_id, token, res) if self.session else "stale"
             if outcome == "failed":
-                self.status.setText(f"Export non riuscito per {Path(item_id).name}: {res} "
-                                    "(la scelta resta: si riprova alla prossima apertura)")
+                self.status.setText(tr('Export non riuscito per {v0}: {res} (la scelta resta: si riprova alla prossima apertura)', v0=Path(item_id).name, res=res))
             elif outcome == "stale":
                 log.info("export %s: esito ignorato, la scelta è cambiata", item_id)
             if cur and item_id == cur.id:
@@ -3040,8 +3090,7 @@ class MainWindow(QMainWindow):
             self.root, self.export_dir = Path(root), Path(export or Path(root) / "export")
             self.start_scan()
         else:
-            self.show_setup("La cartella dell'ultima sessione non è raggiungibile "
-                            "(disco scollegato?).")
+            self.show_setup(tr("La cartella dell'ultima sessione non è raggiungibile (disco scollegato?)."))
 
     def show_help(self):
         # finestra che si scorre: il testo è lungo e non deve uscire dallo schermo
@@ -3054,9 +3103,9 @@ class MainWindow(QMainWindow):
                            " border-radius: 10px; padding: 10px; font-size: 13px; }")
         v.addWidget(text, 1)
         row = QHBoxLayout()
-        logs = QPushButton("Mostra il file di log")
+        logs = QPushButton(tr('Mostra il file di log'))
         logs.clicked.connect(self.reveal_log)
-        close = QPushButton("Chiudi")
+        close = QPushButton(tr('Chiudi'))
         close.setObjectName("primary")
         close.clicked.connect(dlg.accept)
         row.addWidget(logs)
@@ -3077,7 +3126,7 @@ class MainWindow(QMainWindow):
     def choose_export(self):
         if not self.root:
             return
-        d = QFileDialog.getExistingDirectory(self, "Cartella dove copiare le scelte",
+        d = QFileDialog.getExistingDirectory(self, tr('Cartella dove copiare le scelte'),
                                              str(self.export_dir or self.root))
         if d:
             problem = exporter.export_dir_problem(self.root, Path(d))
@@ -3098,9 +3147,9 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.settings_store.setValue("last_root", str(self.root))
         self.settings_store.setValue("last_export", str(self.export_dir))
-        self.btn_export.setText(f"Export: {self.export_dir.name}")
-        self.btn_export.setToolTip(f"Le foto approvate vengono copiate in:\n{self.export_dir}")
-        self.show_message("Lettura della cartella…")
+        self.btn_export.setText(tr('Export: {v0}', v0=self.export_dir.name))
+        self.btn_export.setToolTip(tr('Le foto approvate vengono copiate in:\n{v0}', v0=self.export_dir))
+        self.show_message(tr('Lettura della cartella…'))
         # anche le cartelle export usate prima (dopo un cambio di export): le copie fatte lì
         # non devono tornare come elementi nuovi da scegliere
         used = self.settings_store.value("export_history") or []
@@ -3112,7 +3161,7 @@ class MainWindow(QMainWindow):
 
     def on_scanned(self, res):
         if isinstance(res, Exception):
-            self.show_setup(f"Errore nella lettura della cartella: {res}")
+            self.show_setup(tr('Errore nella lettura della cartella: {res}', res=res))
             return
         self.items = res
         if self.session:
@@ -3121,7 +3170,7 @@ class MainWindow(QMainWindow):
         try:
             self.session = exporter.Session(self.root, self.export_dir, ids=[it.id for it in res])
         except OSError as e:  # salvataggio presente ma illeggibile: non si salva sopra
-            self.show_setup(f"Impossibile leggere il lavoro salvato in questa cartella: {e}")
+            self.show_setup(tr('Impossibile leggere il lavoro salvato in questa cartella: {e}', e=e))
             return
         self.session.save()
         if self.session.corrupt_backup:
@@ -3135,15 +3184,14 @@ class MainWindow(QMainWindow):
         self.ready.clear()
         self.review_skipped = False
         if not self.items:
-            self.show_setup("Nessuna foto o video trovati in questa cartella.")
+            self.show_setup(tr('Nessuna foto o video trovati in questa cartella.'))
             return
         by_id = self._by_id = {it.id: it for it in self.items}
         # copie mai finite (app chiusa o export fallito): si rifanno. Non si cancella nulla.
         pending = self.session.pending_exports(by_id)
         export_warning = ""
         if pending and not exporter.export_reachable(self.export_dir):
-            export_warning = (f"⚠ Cartella export non raggiungibile ({self.export_dir}): "
-                              f"{len(pending)} copie in sospeso verranno rifatte alla prossima apertura")
+            export_warning = (tr('⚠ Cartella export non raggiungibile ({v0}): {v1} copie in sospeso verranno rifatte alla prossima apertura', v0=self.export_dir, v1=len(pending)))
             log.warning(export_warning)
             pending = []
         for key in pending:
@@ -3158,7 +3206,7 @@ class MainWindow(QMainWindow):
             self.status.setText(export_warning, ms=0)   # importante: resta finché non si cambia elemento
         elif done:
             self.status.setStyleSheet("color:#7fd19a;")
-            self.status.setText(f"Ripreso da dove eri: {done} già decise")
+            self.status.setText(tr('Ripreso da dove eri: {done} già decise', done=done))
         self.show_item(keep_status=bool(done or export_warning))
 
     # ------------------------------------------------------------------ navigazione
@@ -3260,10 +3308,9 @@ class MainWindow(QMainWindow):
                 if item.raw and not item.image:
                     # DNG senza anteprima: si può comunque approvare (si copia l'originale)
                     self._yes_without_preview = item.id
-                    self.show_message(f"Anteprima non disponibile per {item.main.name}\n"
-                                      "SÌ copia comunque il DNG originale in export.")
+                    self.show_message(tr('Anteprima non disponibile per {v0}\nSÌ copia comunque il DNG originale in export.', v0=item.main.name))
                 else:
-                    self.show_message(f"Impossibile aprire {item.main.name}")
+                    self.show_message(tr('Impossibile aprire {v0}', v0=item.main.name))
                 return
             self.set_still(img, item.id)
             self.stack.setCurrentWidget(self.image_view)
@@ -3296,14 +3343,14 @@ class MainWindow(QMainWindow):
                 pairs = [(p, pool.submit(cloud.download, p)) for p in files]
                 for p, f in pairs:
                     if not f.result():
-                        raise RuntimeError(f"{p.name} non disponibile")
+                        raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
                 return True
             self.submit("ready", item.id, job, queue=self.waiters)
         else:
             def job(files=files):
                 for p in files:  # uno dopo l'altro: non toglie banda all'elemento corrente
                     if not cloud.download(p):
-                        raise RuntimeError(f"{p.name} non disponibile")
+                        raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
                 return True
             self.submit("ready", item.id, job, queue=self.pre)
 
@@ -3338,29 +3385,37 @@ class MainWindow(QMainWindow):
     def take_photo(self):
         """Video: salva come foto il fotogramma che vedi e ti ci ferma sopra, così vedi
         esattamente quale è stato salvato. Live: niente foto in più, la foto è quella scelta."""
+        if self.edit_pending():   # prima OK o Annulla: si salva la versione confermata
+            self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
+            return
+        self.close_clean_drafts()
         item = self.current()
         if not item or not item.is_clip or self.stack.currentWidget() is self.msg_page:
             return
         info = self.infos.get(item.id)
         if not info:
-            self.status.setText("Attendi: sto analizzando il video…")
+            self.status.setText(tr('Attendi: sto analizzando il video…'))
             return
         n = self.current_frame()
         if item.kind == "live":
             if self.live_view:  # durante il video: questo fotogramma diventa la foto
                 self.set_frame(n, manual=True)
-                self.flash(f"📸 Foto della Live: fotogramma {n + 1}  (SÌ per salvarla)")
+                self.flash(tr('📸 Foto della Live: fotogramma {v0}  (SÌ per salvarla)', v0=n + 1))
             return
         key = f"{item.id}#f{n}"
         if not self.scene_mode:
             self.set_frame(n, manual=True)  # fermo sul fotogramma salvato, esatto
         if self.session.get(key):
-            self.flash(f"📷 Fotogramma {n + 1} già salvato")
+            self.flash(tr('📷 Fotogramma {v0} già salvato', v0=n + 1))
             return
         self.history.append((self.idx, key, None))
         self.session.set(key, "snap", [], n)
+        edit = E.clean(self.session.edits.get(key, {}))
+        if edit:   # Regola / Ritaglia su questo fotogramma: si salva la foto modificata
+            self.session.decisions[key]["edit"] = edit
+            self.session.save()
         self.queue_export(item, n, key=key, snapshot=True)
-        self.flash(f"📷 Foto salvata: fotogramma {n + 1}  (Z per annullare)")
+        self.flash(tr('📷 Foto salvata: fotogramma {v0}  (Z per annullare)', v0=n + 1))
         self.set_buttons_enabled(True)
         self.update_scene_controls()
         self.btn_undo.setEnabled(True)
@@ -3370,7 +3425,7 @@ class MainWindow(QMainWindow):
         item = self.current()
         k = len(self.snaps_of(item)) if item and item.is_clip and self.session else 0
         if k:
-            self.snaps_label.setText(f"📷  {k} foto salvat{'a' if k == 1 else 'e'} da questo video")
+            self.snaps_label.setText((tr('📷  1 foto salvata da questo video') if k == 1 else tr('📷  {k} foto salvate da questo video', k=k)))
             entries = []
             for key in self.snaps_of(item):
                 d = self.session.get(key)
@@ -3396,7 +3451,7 @@ class MainWindow(QMainWindow):
         if not d or d["choice"] != "snap" or not self.revert_effects(key, d):
             return
         self.session.clear(key)
-        self.flash(f"Foto tolta: fotogramma {d['frame'] + 1} (F per riprenderla)")
+        self.flash(tr('Foto tolta: fotogramma {v0} (F per riprenderla)', v0=d['frame'] + 1))
         self.set_buttons_enabled(True)
         self.update_scene_controls()
         self.update_counter()
@@ -3419,45 +3474,38 @@ class MainWindow(QMainWindow):
                  "<span style='color:#ffb340; font-weight:600'>⚠ Non ancora salvato</span>")
         where = self.short_folder(str(ses.path.parent))
         self.save_info.setText(
-            f"{state}<br><span style='color:#98989f'>Si salvano da soli a ogni scelta: puoi chiudere "
-            f"quando vuoi e riprendere da qui.</span>"
-            f"<table cellspacing='0' style='margin-top:6px'>"
-            f"<tr><td style='color:#98989f; padding:2px 10px 2px 0'>Progressi</td>"
-            f"<td>{esc(where)}/{esc(ses.path.name)}</td></tr>"
-            f"<tr><td style='color:#98989f; padding:2px 10px 2px 0'>Foto scelte</td>"
-            f"<td>{esc(self.short_path(self.export_dir))}</td></tr></table>")
+            tr("{state}<br><span style='color:#98989f'>Si salvano da soli a ogni scelta: puoi chiudere quando vuoi e riprendere da qui.</span><table cellspacing='0' style='margin-top:6px'><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Progressi</td><td>{v1}/{v2}</td></tr><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Foto scelte</td><td>{v3}</td></tr></table>", state=state, v1=esc(where), v2=esc(ses.path.name), v3=esc(self.short_path(self.export_dir))))
 
     def file_status(self, item: Item, d: dict | None) -> tuple[str, str, list[tuple[str, str]]]:
         """Cosa è successo AI FILE di questo elemento: copiato in export, spostato in “cancellare”,
         o niente. (colore, testo, link "Apri …") per il pannello Info: niente percorsi lunghi."""
         grey = "#98989f"
         if not d:
-            return grey, "da decidere · niente copiato né spostato", []
+            return grey, tr('da decidere · niente copiato né spostato'), []
         choice = d["choice"]
         if choice == "no":
-            return CHOICE_COLOR["no"], "✗ scartata · niente copiato, l'originale resta al suo posto", []
+            return CHOICE_COLOR["no"], tr("✗ scartata · niente copiato, l'originale resta al suo posto"), []
         if choice == "skip":
-            return CHOICE_COLOR["skip"], "↪ saltata · niente copiato né spostato", []
+            return CHOICE_COLOR["skip"], tr('↪ saltata · niente copiato né spostato'), []
         if choice == "trash":
             moved = [dst for _, dst in d.get("moved", [])]
-            return (CHOICE_COLOR["trash"], "🗑 originale SPOSTATO in “cancellare” (Z lo rimette a posto)",
+            return (CHOICE_COLOR["trash"], tr('🗑 originale SPOSTATO in “cancellare” (Z lo rimette a posto)'),
                     self.open_links(moved))
         if choice == "yes" and d.get("noexport"):
-            return CHOICE_COLOR["yes"], "✓ approvata · video non copiato (tenute solo le foto prese)", []
+            return CHOICE_COLOR["yes"], tr('✓ approvata · video non copiato (tenute solo le foto prese)'), []
         if d.get("export_failed"):
-            return ("#ffb340", f"⚠ copia non riuscita: {d['export_failed']}\n"
-                               "(si riprova alla prossima apertura)", [])
+            return ("#ffb340", tr('⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)', v0=d['export_failed']), [])
         files = d.get("files") or []
         if not files:
-            return "#ffb340", "⏳ copia in export in corso…", []
-        return (CHOICE_COLOR["yes"], "✓ approvata · COPIATA in export (l'originale resta al suo posto)",
+            return "#ffb340", tr('⏳ copia in export in corso…'), []
+        return (CHOICE_COLOR["yes"], tr("✓ approvata · COPIATA in export (l'originale resta al suo posto)"),
                 self.open_links(files))
 
     @staticmethod
     def open_links(files: list[str]) -> list[tuple[str, str]]:
         """Un link per la prima foto e uno per il primo video tra i file indicati."""
         links = []
-        for exts, label in ((IMAGE_EXTS, "Apri foto"), (VIDEO_EXTS, "Apri video")):
+        for exts, label in ((IMAGE_EXTS, tr('Apri foto')), (VIDEO_EXTS, tr('Apri video'))):
             f = next((f for f in files if Path(f).suffix.lower() in exts and Path(f).exists()), None)
             if f:
                 links.append((label, f))
@@ -3478,9 +3526,9 @@ class MainWindow(QMainWindow):
             self.session.save()
         except OSError as e:
             self.status.setStyleSheet("color:#f0b860;")
-            self.status.setText(f"Salvataggio non riuscito: {e}")
+            self.status.setText(tr('Salvataggio non riuscito: {e}', e=e))
             return
-        self.flash("💾 Progressi salvati")
+        self.flash(tr('💾 Progressi salvati'))
         self.update_save_info()
 
     def reveal_session(self):
@@ -3515,7 +3563,7 @@ class MainWindow(QMainWindow):
     def on_play_state(self, state):
         playing = state == QMediaPlayer.PlayingState
         self.btn_play.setText("⏸" if playing else "▶")
-        self.btn_play.setToolTip("Pausa (barra spaziatrice)" if playing else "Play (barra spaziatrice)")
+        self.btn_play.setToolTip(tr('Pausa (barra spaziatrice)') if playing else tr('Play (barra spaziatrice)'))
 
     def showing_still(self, item: Item) -> bool:
         return item.kind == "live" and not self.live_view
@@ -3529,7 +3577,7 @@ class MainWindow(QMainWindow):
         self.set_buttons_enabled(True)
         self.btn_yes.setEnabled(False)          # SÌ solo quando il file è arrivato
         self.btn_yes_video.setEnabled(False)
-        self.msg_btn2.setText("↪  Salta questo  (S)")
+        self.msg_btn2.setText(tr('↪  Salta questo  (S)'))
         self.msg_btn2.clicked.connect(lambda: self.decide("skip"))
         self.msg_btn2.setVisible(True)
         self.update_download_message()
@@ -3553,15 +3601,11 @@ class MainWindow(QMainWindow):
         pct = min(95, int(100 * elapsed / expected))
         bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
         left = max(0, int(expected - elapsed))
-        eta = f"circa {left} s rimanenti" if left else "quasi finito…"
+        eta = f"circa {left} s rimanenti" if left else tr('quasi finito…')
         if secs and secs % 30 == 0:
             log.info("ancora in attesa di iCloud (%d s) per %s", secs, item.id)
         self.message.setText(
-            f"☁️  Scarico da iCloud{dots}\n\n{names}\n\n"
-            f"{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   (stima su {speed:.1f} MB/s)\n"
-            "macOS non dice la percentuale vera: la stima usa la velocità dei download già fatti.\n"
-            f"I prossimi {PREFETCH} elementi si stanno già scaricando in automatico.\n\n"
-            "Intanto puoi premere  S = salta,  N = no,  X = sposta in “cancellare”.")
+            tr('☁️  Scarico da iCloud{dots}\n\n{names}\n\n{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   (stima su {speed:.1f} MB/s)\nmacOS non dice la percentuale vera: la stima usa la velocità dei download già fatti.\nI prossimi {PREFETCH} elementi si stanno già scaricando in automatico.\n\nIntanto puoi premere  S = salta,  N = no,  X = sposta in “cancellare”.', dots=dots, names=names, bar=bar, pct=pct, secs=secs, eta=eta, speed=speed, PREFETCH=PREFETCH))
 
     def download_next_ten(self):
         nxt, i = [], self.idx
@@ -3575,7 +3619,7 @@ class MainWindow(QMainWindow):
             self.dl.submit(cloud.download, p)
         mb = sum(p.stat().st_size for p in todo if p.exists()) / 1e6
         log.info("scarico in anticipo %d file (%.0f MB)", len(todo), mb)
-        self.flash(f"☁️ Scarico in anticipo {len(todo)} file ({mb:.0f} MB)")
+        self.flash(tr('☁️ Scarico in anticipo {v0} file ({mb:.0f} MB)', v0=len(todo), mb=mb))
 
     def show_live_still(self):
         """Live: si vede la foto (fotogramma della fotocamera o quello scelto), come sull'iPhone."""
@@ -3587,7 +3631,7 @@ class MainWindow(QMainWindow):
         info = self.infos.get(item.id)
         if info is None or item.id not in self.camera_frames:
             self.stack.setCurrentWidget(self.image_view)
-            self.image_view.set_loading("Carico la foto in 4K…")  # niente anteprime a bassa risoluzione
+            self.image_view.set_loading(tr('Carico la foto in 4K…'))  # niente anteprime a bassa risoluzione
             return
         self.show_frame(self.live_photo_frame(item), scrub=False)
 
@@ -3677,22 +3721,22 @@ class MainWindow(QMainWindow):
             w_, h_ = dims
             parts.append(f"{w_}×{h_} ({w_ * h_ / 1e6:.1f} MP)")
             if info.source:
-                parts.append("anteprima 720p · originale scaricato al SÌ")
+                parts.append(tr('anteprima 720p · originale scaricato al SÌ'))
             hint = frames.print_hint(w_, h_)
             if hint in ("30×45", "20×30"):
                 parts.append(f"stampa fino a {hint}")
             else:
                 warn.append(f"⚠ bassa risoluzione: stampa max {hint}")
             if info.is_flat_profile:
-                warn.append("⚠ profilo colore piatto (D-Log/HLG)")
+                warn.append(tr('⚠ profilo colore piatto (D-Log/HLG)'))
         elif info and info.source:
-            parts.append("anteprima 720p · originale scaricato al SÌ")
+            parts.append(tr('anteprima 720p · originale scaricato al SÌ'))
         if item.is_clip and item.duration:
             parts.append(f"{item.duration:.1f} s")
         d = self.session.get(item.id) if self.session else None
         self.show_chosen(d)
         pos, total = self.position()
-        self.title.setText(f"{parts[0]}  ·  {pos} di {total}" if total else parts[0])
+        self.title.setText(tr('{v0}  ·  {pos} di {total}', v0=parts[0], pos=pos, total=total) if total else parts[0])
         self.warn.setText("   ".join(warn))
         self.update_side_info(item, info, parts[1:], warn, d)
 
@@ -3716,33 +3760,33 @@ class MainWindow(QMainWindow):
                 f"<div style='color:#98989f; margin-bottom:8px'>ore {t:%H:%M:%S}</div>"]
         row = ("<tr><td width='78' style='color:#98989f; padding:3px 10px 3px 0; vertical-align:top'>{}</td>"
                "<td style='color:#f2f2f7; padding:3px 0'>{}</td></tr>")
-        rows = [("Tipo", KIND_LABEL[item.kind].capitalize())]
+        rows = [(tr('Tipo'), KIND_LABEL[item.kind].capitalize())]
         if m and m.gps:
             lat, lon = m.gps
             url = (f"https://maps.apple.com/?ll={lat},{lon}&q={lat},{lon}" if sys.platform == "darwin"
                    else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}")
             place = (esc(metadata.fmt_gps(lat, lon))
                      + (f"<br>altitudine {m.altitude:.0f} m" if m.altitude is not None else "")
-                     + f"<br><a style='color:#0a84ff' href='{url}'>Apri nella mappa</a>")
+                     + tr("<br><a style='color:#0a84ff' href='{url}'>Apri nella mappa</a>", url=url))
         elif m:
-            place = "<span style='color:#8e8e93'>nessuna posizione nel file</span>"
+            place = tr("<span style='color:#8e8e93'>nessuna posizione nel file</span>")
         else:
             place = "<span style='color:#8e8e93'>…</span>"
-        html_rows = [row.format("Luogo", place)]
+        html_rows = [row.format(tr('Luogo'), place)]
         rows += [(k, v) for k, v in (m.rows if m else [])]
         if not m:
-            rows += [("Dettagli", "  ·  ".join(extra))] if extra else []
+            rows += [(tr('Dettagli'), "  ·  ".join(extra))] if extra else []
         else:
-            rows += [("Stampa", x) for x in extra if x.startswith("stampa")]
-            rows += [("Nota", x) for x in extra if x.startswith("anteprima")]
+            rows += [(tr('Stampa'), x) for x in extra if x.startswith("stampa")]
+            rows += [(tr('Nota'), x) for x in extra if x.startswith("anteprima")]
         if self.session and item.id in self.session.favorites:
-            rows.append(("Preferita", "♥ sì"))
-        rows = [(k, self.short_folder(v) if k == "Cartella" else v) for k, v in rows]
+            rows.append((tr('Preferita'), tr('♥ sì')))
+        rows = [(k, self.short_folder(v) if k == tr('Cartella') else v) for k, v in rows]
         html_rows += [row.format(esc(k), esc(v)) for k, v in rows]
         color, status, links = self.file_status(item, d)   # in cima: copiata, spostata o lasciata lì
         link_html = "".join(f"<br><a style='color:#0a84ff' href='{QUrl.fromLocalFile(f).toString()}'>"
                             f"{label}</a>" for label, f in links)
-        html_rows.insert(0, row.format("Stato", f"<span style='color:{color}'>{esc(status)}</span>"
+        html_rows.insert(0, row.format(tr('Stato'), f"<span style='color:{color}'>{esc(status)}</span>"
                                                 + link_html))
         html.append("<table width='100%' cellspacing='0'>" + "".join(html_rows) + "</table>")
         if warn:
@@ -3763,7 +3807,7 @@ class MainWindow(QMainWindow):
         """Elemento già deciso: etichetta colorata grande + pulsante della scelta evidenziato."""
         choice = d["choice"] if d else None
         if choice in CHOICE_NAME:
-            self.chosen_tag.setText(f"GIÀ SCELTO  {CHOICE_NAME[choice]}")
+            self.chosen_tag.setText(tr('GIÀ SCELTO  {v0}', v0=CHOICE_NAME[choice]))
             self.chosen_tag.setStyleSheet(f"background:{CHOICE_COLOR[choice]};")
             self.chosen_tag.show()
         else:
@@ -3788,7 +3832,7 @@ class MainWindow(QMainWindow):
         vis = [i for i, it in enumerate(self.items) if self.visible(it)]
         done = sum(1 for i in vis if self.session.get(self.items[i].id) is not None)
         self.done_label.setText(
-            f"<span style='font-size:13px; font-weight:700; color:#ffd60a;'>{done} / {len(vis)} già fatte</span>"
+            tr("<span style='font-size:13px; font-weight:700; color:#ffd60a;'>{done} / {v1} già fatte</span>", done=done, v1=len(vis))
             + (f"<span style='font-size:12px; color:#98989f;'>  ·  ne mancano {len(vis) - done}</span>"
                if done < len(vis) else "<span style='font-size:12px; color:#2ad48e;'>  ·  ✓ tutte decise</span>"))
         self.progress.setVisible(True)
@@ -3797,15 +3841,14 @@ class MainWindow(QMainWindow):
         pos = sum(1 for i in vis if i <= self.idx)
         hidden = len(self.items) - len(vis)
         busy = sum(1 for f in self.export_futures.values() if not f.done())
-        extra = f"   ⏳ export {busy}" if busy else ""
+        extra = tr('   ⏳ export {busy}', busy=busy) if busy else ""
         if hidden:
-            extra += f"   ({hidden} video nascosti)"
+            extra += tr('   ({hidden} video nascosti)', hidden=hidden)
         self.update_fav_button()
         self.update_next_preview()
-        self.counter.setText(f"Elemento {pos} di {len(vis)}\n"
-                             f"✓ {c['yes']} approvate\n✗ {c['no']} scartate\n↪ {c['skip']} saltate"
+        self.counter.setText(tr('Elemento {pos} di {v1}\n✓ {v2} approvate\n✗ {v3} scartate\n↪ {v4} saltate', pos=pos, v1=len(vis), v2=c['yes'], v3=c['no'], v4=c['skip'])
                              + (f"\n🗑 {c['trash']} in “cancellare”" if c.get("trash") else "")
-                             + (f"\n📷 {c['snap']} foto prese dai video" if c.get("snap") else "")
+                             + (tr('\n📷 {v0} foto prese dai video', v0=c['snap']) if c.get("snap") else "")
                              + (f"\n{extra.strip()}" if extra else ""))
 
     def show_message(self, text: str, end: bool = False):
@@ -3822,13 +3865,13 @@ class MainWindow(QMainWindow):
                 except (RuntimeError, TypeError):
                     pass
         if end:
-            self.msg_btn1.setText("Mostra la cartella export")
+            self.msg_btn1.setText(tr('Mostra la cartella export'))
             self.msg_btn1.clicked.connect(self.open_export)
             self.msg_btn1.setVisible(True)
             self.msg_btn3.clicked.connect(self.choose_root)
             self.msg_btn3.setVisible(True)
             if self.session and self.session.counts()["skip"]:
-                self.msg_btn2.setText("↪  Rivedi le saltate")
+                self.msg_btn2.setText(tr('↪  Rivedi le saltate'))
                 self.msg_btn2.clicked.connect(self.review_skips)
                 self.msg_btn2.setVisible(True)
 
@@ -3847,12 +3890,12 @@ class MainWindow(QMainWindow):
                      and not (self.session and self.session.get(it.id)))
         # arrivati in fondo saltando avanti (miniature, ↓): prima restano elementi da decidere
         left = sum(1 for it in self.items if self.is_open(it))
-        head = (f"Sei in fondo, ma {'manca' if left == 1 else 'mancano'} {left} "
-                f"element{'o' if left == 1 else 'i'} da decidere più indietro." if left else "Finito!")
+        rest = tr('manca 1 elemento') if left == 1 else tr('mancano {n} elementi', n=left)
+        head = tr('Sei in fondo, ma {rest} da decidere più indietro.', rest=rest) if left else tr('Finito!')
         self.show_message(f"{head}\n\n✓ {c['yes']} approvate    ✗ {c['no']} scartate    "
                           f"↪ {c['skip']} saltate"
-                          + (f"\n\n🎬 {hidden} video nascosti dal filtro “solo foto”" if hidden else "")
-                          + "\n\n↑ = torna indietro a rivedere", end=True)
+                          + (tr('\n\n🎬 {hidden} video nascosti dal filtro “solo foto”', hidden=hidden) if hidden else "")
+                          + tr('\n\n↑ = torna indietro a rivedere'), end=True)
         if left:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
@@ -3860,7 +3903,7 @@ class MainWindow(QMainWindow):
                     self.msg_btn2.clicked.disconnect()   # al posto di "Rivedi le saltate"
                 except (RuntimeError, TypeError):
                     pass
-            self.msg_btn2.setText("→  Vai al primo da decidere")
+            self.msg_btn2.setText(tr('→  Vai al primo da decidere'))
             self.msg_btn2.clicked.connect(self.go_first_open)
             self.msg_btn2.setVisible(True)
 
@@ -3882,9 +3925,9 @@ class MainWindow(QMainWindow):
             or (item.kind == "video" and bool(self.snaps_of(item)))))
         # video: le etichette dicono cosa succede davvero (Sì cambia se hai già preso delle foto)
         snaps = item is not None and item.kind == "video" and bool(self.snaps_of(item))
-        yes, both = (("Tieni le foto (Y)", "Foto + video (⇧Y)") if snaps
-                     else ("Salva video (Y)", "Sì + video (⇧Y)") if item is not None and item.kind == "video"
-                     else ("Sì (Y)", "Sì + video (⇧Y)"))
+        yes, both = ((tr('Tieni le foto (Y)'), tr('Foto + video (⇧Y)')) if snaps
+                     else (tr('Salva video (Y)'), tr('Sì + video (⇧Y)')) if item is not None and item.kind == "video"
+                     else (tr('Sì (Y)'), tr('Sì + video (⇧Y)')))
         self.choice_caps["yes"].setText(yes)
         self.choice_caps["yesvideo"].setText(both)
         for name, cap in (("yes", yes), ("yesvideo", both)):
@@ -3905,6 +3948,7 @@ class MainWindow(QMainWindow):
     # Video: si vede il video; clic sulla striscia, frecce o pausa = fermo sul fotogramma esatto
     # (scene_mode), da salvare con 📷 Prendi foto.
     def update_scene_controls(self):
+        self.update_edit_ui()   # Regola / Ritaglia: nei video solo sul fotogramma fermo
         item = self.current()
         info = self.infos.get(item.id) if item else None
         clip = bool(item) and item.is_clip
@@ -3912,7 +3956,7 @@ class MainWindow(QMainWindow):
         for w in (self.btn_play, self.btn_prev, self.strip, self.btn_next, self.time_label):
             w.setVisible(clip)
         self.btn_live.setVisible(live)
-        self.btn_live.setText("🖼  Torna alla foto (L)" if self.live_view else "▶  Vedi Live (L)")
+        self.btn_live.setText(tr('🖼  Torna alla foto (L)') if self.live_view else tr('▶  Vedi Live (L)'))
         self.btn_replay.setVisible(clip and not live)
         self.btn_snap.setVisible(clip and not live)
         self.btn_sharp.setVisible(clip and info is not None and (live or self.scene_mode))
@@ -3921,28 +3965,28 @@ class MainWindow(QMainWindow):
             return
         self.update_strip()
         if info is None:
-            self.frame_label.setText("analisi del video…")
+            self.frame_label.setText(tr('analisi del video…'))
             return
         if live:
             n = self.live_photo_frame(item)
-            who = "scelta da te" if self.frame is not None else "della fotocamera"
+            who = tr('scelta da te') if self.frame is not None else tr('della fotocamera')
             self.frame_label.setText(
-                f"📸 Foto: fotogramma {n + 1} / {info.frames} ({who})  ·  "
-                + ("trascina sulla striscia per sceglierne un'altra" if self.live_view else
-                   "trascina sulla striscia o usa ← → per cambiarla  ·  SÌ salva questa"))
+                tr('📸 Foto: fotogramma {v0} / {v1} ({who})  ·  ', v0=n + 1, v1=info.frames, who=who)
+                + (tr("trascina sulla striscia per sceglierne un'altra") if self.live_view else
+                   tr('trascina sulla striscia o usa ← → per cambiarla  ·  SÌ salva questa')))
             self.update_time_label(n, info)
             return
         if self.scene_mode:
             saved = bool(self.session) and f"{item.id}#f{self.shown_frame}" in self.session.decisions
             self.frame_label.setText(
-                f"Fotogramma {self.shown_frame + 1} / {info.frames}  ·  "
-                + ("✓ già salvato come foto" if saved else "📷 F = salva questo fotogramma come foto"))
+                tr('Fotogramma {v0} / {v1}  ·  ', v0=self.shown_frame + 1, v1=info.frames)
+                + (tr('✓ già salvato come foto') if saved else tr('📷 F = salva questo fotogramma come foto')))
             self.update_time_label(self.shown_frame, info)
         else:
             k = len(self.snaps_of(item))
             self.frame_label.setText(
-                f"📷 {k} foto prese (segni verdi)  ·  SÌ = tieni solo le foto  ·  ＋ SÌ e video = anche il video"
-                if k else "Clic sulla striscia per fermarti su un fotogramma  ·  SÌ = copia il video in export/Video")
+                tr('📷 {k} foto prese (segni verdi)  ·  SÌ = tieni solo le foto  ·  ＋ SÌ e video = anche il video', k=k)
+                if k else tr('Clic sulla striscia per fermarti su un fotogramma  ·  SÌ = copia il video in export/Video'))
 
     def live_photo_frame(self, item: Item) -> int:
         """Il fotogramma che SÌ salverà come foto della Live."""
@@ -4025,7 +4069,7 @@ class MainWindow(QMainWindow):
             self.preview_timer.start()
         else:
             if not scrub and not same_item_on_screen:
-                self.image_view.set_loading("Carico la foto in 4K…")  # niente anteprime sfocate
+                self.image_view.set_loading(tr('Carico la foto in 4K…'))  # niente anteprime sfocate
             self.stack.setCurrentWidget(self.image_view)
             self.preview_timer.start()
         self.update_scene_controls()
@@ -4207,7 +4251,7 @@ class MainWindow(QMainWindow):
         info = self.infos.get(item.id) if item else None
         n = self.current_frame()
         if info and n is not None:
-            self.frame_label.setText("cerco il fotogramma più nitido…")
+            self.frame_label.setText(tr('cerco il fotogramma più nitido…'))
             self.submit("sharpest", (item.id, n), frames.sharpest_near, info.source or item.video, info, n)
 
     # ------------------------------------------------------------------ filtro, indietro, preferite
@@ -4229,7 +4273,7 @@ class MainWindow(QMainWindow):
         while i >= 0 and not self.visible(self.items[i]):
             i -= 1
         if i < 0:
-            self.flash("Sei al primo elemento")
+            self.flash(tr('Sei al primo elemento'))
             return
         if self.return_idx is None:
             self.return_idx = self.idx   # la foto da cui si è tornati indietro
@@ -4299,7 +4343,7 @@ class MainWindow(QMainWindow):
                 self.copy_paths[item_id] = [moved.get(f, f) for f in files]
                 return pairs
             self.submit("relocate", (item.id, d.get("export_id")), job, queue=self.export_q)
-        self.flash("♥ Preferita: le copie vanno in export/Preferite" if on else "Preferita tolta")
+        self.flash(tr('♥ Preferita: le copie vanno in export/Preferite') if on else tr('Preferita tolta'))
         self.update_fav_button()
 
     def update_fav_button(self):
@@ -4398,7 +4442,7 @@ class MainWindow(QMainWindow):
         self.next_box.show()
         i = self.next_index(self.idx)
         if i >= len(self.items):
-            self.next_txt.setText("Dopo:  fine 🎉")
+            self.next_txt.setText(tr('Dopo:  fine 🎉'))
             self.next_img.setPixmap(QPixmap())
             self.next_img.setText("")
             return
@@ -4424,7 +4468,7 @@ class MainWindow(QMainWindow):
                 self.pending.add(("thumb", it.id))
                 self.submit("thumb", it.id, self.make_thumb, it)
         else:
-            self.next_img.setText("☁️ in download")
+            self.next_img.setText(tr('☁️ in download'))
 
     @staticmethod
     def make_thumb(item: Item) -> QImage:
@@ -4458,7 +4502,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ decisioni
     def decide(self, choice: str, with_video: bool = False):
         if self.edit_pending():   # Regola o Ritaglia cambiati: prima OK o Annulla
-            self.flash("Prima conferma le modifiche con OK oppure Annulla")
+            self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
             return
         self.close_clean_drafts()   # aperti senza cambiare nulla: si chiudono e si va avanti
         item = self.current()
@@ -4487,8 +4531,9 @@ class MainWindow(QMainWindow):
             same = prev["choice"] == choice and (
                 choice != "yes" or (prev.get("frame") == new_frame
                                     and prev.get("with_video", False) == with_video
-                                    and E.clean(prev.get("edit") or {}) == E.clean(self.item_edit(item.id)
-                                                                                   if self.editable(item) else {})))
+                                    and E.clean(prev.get("edit") or {}) == E.clean(
+                                        self.item_edit(item.id)
+                                        if self.editable(item) and item.kind != "video" else {})))
             if same:  # niente da cambiare: si va avanti
                 self.idx = self.next_index(self.idx)
                 self.show_item()
@@ -4529,7 +4574,7 @@ class MainWindow(QMainWindow):
             except (OSError, ValueError) as e:
                 self.history.pop()
                 self.status.setStyleSheet("")
-                self.status.setText(f"Spostamento non riuscito: {e}")
+                self.status.setText(tr('Spostamento non riuscito: {e}', e=e))
                 self.show_item(keep_status=True)
                 return
             self.session.set(item.id, "trash", moved=moved)
@@ -4549,7 +4594,7 @@ class MainWindow(QMainWindow):
         if key == item.id and item.id in self.session.favorites:
             dest = self.export_dir / exporter.FAV_SUBDIR
         self.export_q.submit(self.copy_paths.pop, key, None)   # copia nuova: posizioni vecchie non valgono
-        edit = None if snapshot else (self.session.decisions.get(key) or {}).get("edit")
+        edit = (self.session.decisions.get(key) or {}).get("edit")
         fut = self.submit("export", (key, frame, token), exporter.export_item, item, frame,
                           dest, self.current_settings(with_video), snapshot, edit,
                           queue=self.export_q)
@@ -4567,7 +4612,7 @@ class MainWindow(QMainWindow):
                 renamed = exporter.restore_from_trash(d.get("moved", []), new_names)
             except OSError as e:
                 self.status.setStyleSheet("")
-                self.status.setText(f"Ripristino da “cancellare” non riuscito: {e} (riprova)")
+                self.status.setText(tr('Ripristino da “cancellare” non riuscito: {e} (riprova)', e=e))
                 return False
             item = self.item_by_id(item_id)
             if item and new_names:   # l'elemento ora è il file rinominato, non quello che occupa il posto
@@ -4577,8 +4622,7 @@ class MainWindow(QMainWindow):
                         setattr(item, attr, new_names[p])
             if renamed:
                 QMessageBox.information(
-                    self, APP_TITLE, "Al posto originale c'era già un file con lo stesso nome: "
-                    "nessuno è stato sovrascritto. Ripristinati come:\n"
+                    self, APP_TITLE, tr("Al posto originale c'era già un file con lo stesso nome: nessuno è stato sovrascritto. Ripristinati come:\n")
                     + "\n".join(str(p) for p in renamed))
         elif d["choice"] in ("yes", "snap"):
             fut = self.export_futures.pop(item_id, None)
@@ -4607,7 +4651,7 @@ class MainWindow(QMainWindow):
             try:
                 d = {**d, "moved": exporter.move_to_trash(item, self.root)}
             except (OSError, ValueError) as e:
-                self.status.setText(f"Spostamento non riuscito: {e}")
+                self.status.setText(tr('Spostamento non riuscito: {e}', e=e))
                 self.session.clear(item_id)
                 return
         self.session.decisions[item_id] = d
@@ -4629,7 +4673,7 @@ class MainWindow(QMainWindow):
         if cur and cur["choice"] == "snap" and self.current() and self.idx == idx \
                 and self.stack.currentWidget() is not self.msg_page \
                 and item_id.split("#")[0] == self.current().id:
-            self.flash("Foto annullata")
+            self.flash(tr('Foto annullata'))
             self.set_buttons_enabled(True)
             self.update_scene_controls()
             self.update_counter()
@@ -4669,8 +4713,7 @@ class MainWindow(QMainWindow):
             end = time.monotonic() + self.EXIT_WAIT_S
             while time.monotonic() < end and not barrier.done():
                 left = max(1, sum(1 for f in pending if not f.done()))
-                self.show_message(f"Completo gli export in corso… ({left})\n\n"
-                                  "Le copie non finite verranno rifatte alla prossima apertura.")
+                self.show_message(tr('Completo gli export in corso… ({left})\n\nLe copie non finite verranno rifatte alla prossima apertura.', left=left))
                 QApplication.processEvents()
                 time.sleep(0.05)
         for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q):
@@ -4699,12 +4742,12 @@ def selftest(root: Path, out: Path) -> int:
                 im = Image.open(f)
                 good = get_sampling(im) == 0 and bool(im.info.get("icc_profile"))
                 ok &= good
-                print(kind, f.name, im.size, "4:4:4+sRGB" if good else "ERRORE qualità")
+                print(kind, f.name, im.size, "4:4:4+sRGB" if good else tr('ERRORE qualità'))
             else:
                 same = f.read_bytes() == (it.image or it.video).read_bytes()
                 ok &= same
-                print(kind, f.name, "copia identica" if same else "ERRORE copia")
-    print("ESITO:", "OK" if ok else "ERRORE")
+                print(kind, f.name, tr('copia identica') if same else tr('ERRORE copia'))
+    print("ESITO:", "OK" if ok else tr('ERRORE'))
     return 0 if ok else 1
 
 

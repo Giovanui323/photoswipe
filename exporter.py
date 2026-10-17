@@ -12,6 +12,7 @@ import cloud
 import edits
 import frames
 from scanner import Item
+from i18n import tr
 
 SESSION_FILE = ".photoswipe-session.json"
 TRASH_DIR = "cancellare"   # dentro la cartella sorgente: originali messi da parte, non cancellati
@@ -34,13 +35,11 @@ def export_dir_problem(root: Path, export_dir: Path) -> str | None:
     root, export_dir = root.resolve(), export_dir.resolve()
     trash = root / TRASH_DIR
     if export_dir == root:
-        return "La cartella export non può essere la stessa da guardare: scegline o creane un'altra."
+        return tr("La cartella export non può essere la stessa da guardare: scegline o creane un'altra.")
     if export_dir == trash or trash in export_dir.parents:
-        return (f"La cartella export non può stare dentro “{TRASH_DIR}”: "
-                "lì vanno solo gli originali messi da parte.")
+        return (tr('La cartella export non può stare dentro “{TRASH_DIR}”: lì vanno solo gli originali messi da parte.', TRASH_DIR=TRASH_DIR))
     if export_dir in root.parents:
-        return ("La cartella export non può contenere la cartella da guardare: "
-                "scegline o creane un'altra.")
+        return (tr("La cartella export non può contenere la cartella da guardare: scegline o creane un'altra."))
     return None
 
 
@@ -91,7 +90,7 @@ def _export_edited(item: Item, edit: dict, export_dir: Path) -> Path:
         from scanner import raw_preview
         img, keep = raw_preview(item.raw), {}
         if img is None:
-            raise RuntimeError(f"Impossibile modificare {item.raw.name}: anteprima non disponibile")
+            raise RuntimeError(tr('Impossibile modificare {v0}: anteprima non disponibile', v0=item.raw.name))
     ext = src.suffix if src.suffix.lower() in (".jpg", ".jpeg") else ".jpg"   # stesso nome se era JPEG
     dst = unique_path(export_dir, src.stem + ext)
     edits.save_edited(edits.render(img, edit), dst, keep)
@@ -108,7 +107,7 @@ def export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
     edit: modifiche di Regola / Ritaglia (foto, panorami e Live): si salva la foto modificata.
     """
     out: list[Path] = []
-    edit = None if edits.is_empty(edit) or snapshot else edits.clean(edit)
+    edit = None if edits.is_empty(edit) else edits.clean(edit)   # anche le foto prese dai video
     if item.kind in ("photo", "pano"):
         if edit:
             out.append(_export_edited(item, edit, export_dir))
@@ -415,7 +414,7 @@ class Session:
             cloud.download(path, timeout=60)  # salvataggio solo su iCloud
         if not path.exists():
             if cloud.stub_for(path).exists():
-                raise OSError(f"Salvataggio non scaricabile da iCloud: {path}")
+                raise OSError(tr('Salvataggio non scaricabile da iCloud: {path}', path=path))
             return None
         try:
             data = json.loads(path.read_text("utf-8"))

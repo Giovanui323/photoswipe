@@ -181,7 +181,7 @@ def test_auto_wb_removes_cast():
                 else rng.uniform(0.2, 0.9)
     gray = np.ptp(arr, axis=-1) < 1e-6
     warm = Image.fromarray((np.clip(arr ** 2.2 * [1.25, 1.0, 0.7], 0, 1) ** (1 / 2.2) * 255).astype(np.uint8))
-    out = np.asarray(E.render(warm, E.auto_wb(warm)), np.float32)[gray].mean(0)
+    out = np.asarray(E.render(warm, E.classic_auto_wb(warm)), np.float32)[gray].mean(0)
     before = np.asarray(warm, np.float32)[gray].mean(0)
     assert np.ptp(out) < np.ptp(before) * 0.5
 
@@ -189,10 +189,10 @@ def test_auto_wb_removes_cast():
 def test_auto_light_brightens_dark_and_leaves_good_photo():
     base = _horizon_scene()
     dark = Image.fromarray((np.asarray(base, np.float32) * 0.4).astype(np.uint8))
-    e = E.auto_light(dark)
+    e = E.classic_auto_light(dark)
     assert e.get("exposure", 0) > 0.3
     assert np.asarray(E.render(dark, e)).mean() > np.asarray(dark).mean() * 1.4
-    assert abs(E.auto_light(base).get("exposure", 0)) < 0.2
+    assert abs(E.classic_auto_light(base).get("exposure", 0)) < 0.2
 
 
 def test_auto_buttons_in_app(qapp, win, sd):
@@ -253,3 +253,82 @@ def test_open_crop_without_changes_does_not_block(qapp, win, sd):
     win.regola._set("contrast", 0.3)
     win.regola._set("contrast", 0.0)         # tornato com'era: niente da confermare
     assert win.decision_bar.isEnabled()
+
+
+# ------------------------------------------------------------------ video: Prendi foto modificata
+def _video_frame(qapp, win, n):
+    from test_core import LONG
+    go(qapp, win, f"{LONG}.MP4")
+    win.on_strip_picked(n)
+    assert wait(qapp, lambda: win.still_owner == win.current().id
+                and win.stack.currentWidget() is win.image_view and win.editable())
+    return LONG
+
+
+def test_video_frame_regola_then_snapshot_is_edited(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    long_ = _video_frame(qapp, win, 30)
+    win.on_side_tab("regola")
+    assert win.side_tab == "regola"
+    win.regola._set("exposure", -0.9)
+    win.take_photo()                      # bloccato finché non si conferma
+    assert win.snaps_of(win.current()) == []
+    win.regola_ok()
+    assert win.session.edits[f"{win.current().id}#f30"]["exposure"] == -0.9
+    click(qapp, win, win.btn_snap)
+    exports_done(qapp, win)
+    out = win.export_dir / f"{long_}_f0031.jpg"
+    edited = np.asarray(Image.open(out), np.float32).mean()
+    # stesso fotogramma senza modifiche, per confronto
+    win.on_side_tab("regola")
+    win.regola.reset_all.emit()
+    win.regola_ok()                        # foto già presa: si rifà senza modifiche
+    exports_done(qapp, win)
+    files = [p for p in win.export_dir.iterdir() if p.suffix == ".jpg"]
+    assert len(files) == 1
+    plain = np.asarray(Image.open(files[0]), np.float32).mean()
+    assert edited < plain - 10
+
+
+def test_video_crop_on_frame(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    long_ = _video_frame(qapp, win, 10)
+    win.on_side_tab("ritaglia")
+    assert win.crop_draft is not None
+    win.ritaglia._set_aspect("square")
+    win.crop_ok()
+    click(qapp, win, win.btn_snap)
+    exports_done(qapp, win)
+    w, h = Image.open(win.export_dir / f"{long_}_f0011.jpg").size
+    assert w == h
+
+
+def test_wand_compare_and_restore(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    assert not win.btn_restore.isVisible() and win.btn_wand.isEnabled()
+    click(qapp, win, win.btn_wand)
+    assert win.side_tab == "regola" and win.tone_draft and win.tone_draft.get("enhanced")
+    assert win.btn_wand.active
+    win.confirm_edit()
+    assert win.item_edit().get("enhanced") and win.btn_restore.isVisible() and win.btn_compare.isVisible()
+    click(qapp, win, win.btn_compare)
+    assert win.image_view.full.cacheKey() == win.edit_base.cacheKey()   # originale a schermo
+    click(qapp, win, win.btn_compare)
+    click(qapp, win, win.btn_wand)                                       # di nuovo: tolto
+    assert not (win.tone_draft or {}).get("enhanced")
+    win.cancel_edit()
+    click(qapp, win, win.btn_restore)
+    assert E.is_empty(win.item_edit()) and not win.btn_restore.isVisible()
+
+
+def test_learned_auto_model_loads_and_is_gentle():
+    """L'AUTO imparato (auto_model.py) c'è, schiarisce una foto scura e tocca poco una normale."""
+    E._MODEL = None
+    base = _horizon_scene()
+    assert E.learned_auto(base) is not None
+    dark = E.render_tone(base, {"exposure": -0.7})
+    assert E.learned_auto(dark)["exposure"] > E.learned_auto(base)["exposure"] + 0.15
+    cast = E.render_tone(base, {"wb_temp": 0.7})          # troppo calda
+    assert E.learned_auto(cast)["wb_temp"] < E.learned_auto(base)["wb_temp"] - 0.1
+    assert set(E.auto_light(base)) <= set(E.LEARNED_SECTIONS["light"])
