@@ -29,6 +29,7 @@ DEFAULTS: dict[str, float] = {
     "lv_black": 0.0, "lv_gamma": 0.0, "lv_white": 1.0, "lv_out_black": 0.0, "lv_out_white": 1.0,
     # Definizione, riduzione disturbo, nitidezza, vignettatura, occhi rossi
     "definition": 0.0, "noise": 0.0,
+    "deblur": 0.0, "deblur_radius": 0.3,   # Sfocatura: deconvoluzione Richardson-Lucy
     "sharp_amount": 0.0, "sharp_edges": 0.5, "sharp_falloff": 0.5,
     "vig_amount": 0.0, "vig_radius": 0.5, "vig_soft": 0.5,
     "redeye_size": 0.04,
@@ -57,6 +58,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "definition": ("definition",),
     "selective": tuple(f"sel_{h}_{p}" for h in SEL_HUES for p in ("h", "s", "l")),
     "noise": ("noise",),
+    "deblur": ("deblur", "deblur_radius"),
     "sharpen": ("sharp_amount", "sharp_edges", "sharp_falloff"),
     "vignette": ("vig_amount", "vig_radius", "vig_soft"),
 }
@@ -439,6 +441,26 @@ def _redeye(x, e):
     return x
 
 
+def deblur_sigma(radius: float) -> float:
+    """Raggio di Sfocatura (0..1) → sfocatura in pixel di una foto da 2000 px."""
+    return 0.6 + 3.4 * radius
+
+
+def _deblur(x: np.ndarray, amount: float, sigma: float, iters: int = 12) -> np.ndarray:
+    """Richardson-Lucy con una sfocatura gaussiana (come restoration.richardson_lucy di
+    scikit-image), sulla sola luminanza: ridà i contorni senza aloni colorati. Il rapporto
+    è limitato a ogni passo, così il rumore e gli aloni non esplodono."""
+    if amount <= 1e-6 or sigma < 0.3:
+        return x
+    L = np.clip(_lum(x), 1e-3, 1)
+    est = L.copy()
+    for _ in range(iters):
+        conv = np.maximum(_blur(est, sigma), 1e-3)
+        est = est * _blur(np.clip(L / conv, 0.5, 2.0), sigma)
+    detail = np.clip(est - L, -0.25, 0.25) * amount
+    return np.clip(x + detail[..., None], 0, 1)
+
+
 def render_tone(img: Image.Image, e: dict) -> Image.Image:
     """Tutte le regolazioni di Regola, nell'ordine di Foto."""
     if not has_tone(e):
@@ -472,6 +494,8 @@ def render_tone(img: Image.Image, e: dict) -> Image.Image:
     if on("noise"):
         n = get(e, "noise")
         x = x + (_blur(x, (0.8 + 1.6 * n) * scale + 0.3) - x) * min(1.0, n * 1.1)
+    if on("deblur"):
+        x = _deblur(x, get(e, "deblur"), deblur_sigma(get(e, "deblur_radius")) * scale)
     if on("sharpen"):
         a = get(e, "sharp_amount")
         radius = (0.6 + 2.0 * get(e, "sharp_falloff")) * max(scale, 0.25)
@@ -593,7 +617,11 @@ def _illuminant(x: np.ndarray) -> np.ndarray:
     gy, gx = np.gradient(sm, axis=(0, 1))
     mag = np.hypot(gx, gy)
     ge = np.array([np.mean(mag[..., c][ok] ** p) ** (1 / p) for c in range(3)])
-    est = np.sqrt(sog / sog.sum() * ge / max(ge.sum(), 1e-9))
+    if sog.sum() < 1e-9:
+        return np.full(3, 1 / 3)
+    est = sog / sog.sum()
+    if ge.sum() > 1e-6:   # foto tutta piatta: senza bordi vale solo Shades of Gray
+        est = np.sqrt(est * ge / ge.sum())
     return est / est.sum()
 
 
@@ -834,3 +862,40 @@ def save_edited(img: Image.Image, dst: Path, keep: dict) -> None:
     img.save(tmp, "JPEG", quality=100, subsampling=0, optimize=True, **kw)
     os.replace(tmp, dst)
 
+
+
+def estimate_blur(img: Image.Image) -> float:
+    """Quanto è sfocata la foto (sigma in pixel su 2000 px), col metodo del "risfocare"
+    (Zhuo & Sim 2011): sui bordi, il rapporto tra il gradiente e quello della foto risfocata
+    di σ0 dà σ = σ0 / √(R² − 1). Si prende la mediana dei bordi più netti."""
+    side = 1000
+    k = side / max(img.size)
+    g = img.convert("L")
+    if k < 1:
+        g = g.resize((max(1, round(g.width * k)), max(1, round(g.height * k))), Image.BILINEAR)
+    else:
+        k = 1.0
+    a = np.asarray(g, np.float32) / 255
+    s0 = 1.0
+    g1 = np.hypot(*np.gradient(a))
+    g2 = np.hypot(*np.gradient(_blur(a, s0)))
+    edge = g1 > max(float(np.percentile(g1, 97)), 0.03)
+    if edge.sum() < 50:
+        return 0.0
+    r = g1[edge] / np.maximum(g2[edge], 1e-4)
+    r = r[r > 1.01]
+    if len(r) < 30:
+        return 4.0
+    sig = s0 / np.sqrt(r * r - 1)
+    px = side if k < 1 else max(img.size)   # lato della foto misurata
+    return float(np.median(sig)) * 2000 / px
+
+
+def auto_deblur(img: Image.Image) -> dict:
+    """Sfocatura automatica: niente se la foto è già nitida."""
+    est = estimate_blur(img)
+    sigma = math.sqrt(max(est * est - 1.8 * 1.8, 0.0))   # anche una foto nitida misura ~1,8
+    if sigma < 1.2:
+        return {}
+    return {"deblur": float(np.clip(0.5 + sigma * 0.1, 0.5, 0.9)),
+            "deblur_radius": float(np.clip((sigma - 0.6) / 3.4, 0, 1))}

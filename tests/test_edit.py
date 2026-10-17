@@ -74,6 +74,11 @@ def test_regola_then_yes_exports_modified(qapp, win, sd):
     win.regola.bars["exposure"].set_value(-0.8)
     win.regola._set("exposure", -0.8)
     pump(qapp, 0.3)
+    # prima di OK è solo una bozza: Sì è bloccato e la sessione non cambia
+    assert win.tone_draft is not None and not win.decision_bar.isEnabled()
+    win.decide("yes")
+    assert exported(win) == [] and win.current().id not in win.session.edits
+    win.regola_ok()
     assert win.session.edits[win.current().id]["exposure"] == -0.8
     assert win.btn_discard.isEnabled() and "✓ Sì" in win.edit_badge.text()
     click(qapp, win, win.btn_yes)
@@ -93,12 +98,14 @@ def test_crop_needs_ok_and_blocks_choices(qapp, win, sd):
     name = win.current().main.name
     win.on_side_tab("ritaglia")
     assert win.crop_draft is not None and win.image_view.crop_mode
-    assert not win.decision_bar.isEnabled()
-    press(qapp, win, Qt.Key_Y)               # Sì bloccato finché il ritaglio è aperto
-    win.decide("yes")
-    assert win.current().main.name == name and exported(win) == []
+    assert win.decision_bar.isEnabled()      # aperto senza cambiare nulla: niente conferma
+    assert not win.confirm_row.isVisible()
     win.ritaglia._set_aspect("square")
     assert abs(win.image_view.crop[2] * 1200 - win.image_view.crop[3] * 900) < 2
+    assert not win.decision_bar.isEnabled()  # ora sì: riquadro cambiato
+    press(qapp, win, Qt.Key_Y)               # Sì bloccato finché non si conferma
+    win.decide("yes")
+    assert win.current().main.name == name and exported(win) == []
     win.crop_ok()
     assert win.crop_draft is None and win.decision_bar.isEnabled()
     assert win.side_tab == "info"
@@ -124,6 +131,7 @@ def test_discard_edits_button(qapp, win, sd):
     go(qapp, win, PHOTO1)
     win.on_side_tab("regola")
     win.regola._set("saturation", 0.5)
+    win.regola_ok()
     assert not E.is_empty(win.item_edit())
     click(qapp, win, win.btn_discard)
     assert E.is_empty(win.item_edit()) and not win.btn_discard.isEnabled()
@@ -191,10 +199,57 @@ def test_auto_buttons_in_app(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)
     win.on_side_tab("regola")
-    for sec in ("light", "color", "wb", "levels", "definition", "noise", "sharpen", "bw"):
+    for sec in ("light", "color", "wb", "levels", "definition", "noise", "sharpen", "deblur", "bw"):
         win.on_auto(sec)   # nessun errore, e la sezione risulta toccata se serve
+    win.on_side_tab("ritaglia")          # bloccato: prima OK o Annulla
+    assert win.side_tab == "regola"
+    win.regola_ok()
     win.on_side_tab("ritaglia")
     win.crop_auto()
     assert win.crop_draft is not None
     win.crop_ok()
     assert win.crop_draft is None
+
+
+def test_regola_cancel_restores(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    win.on_side_tab("regola")
+    win.regola._set("contrast", 0.5)
+    win.cancel_edit()
+    assert win.tone_draft is None and E.is_empty(win.item_edit()) and win.decision_bar.isEnabled()
+    assert E.get(win.regola.edit, "contrast") == 0
+
+
+def test_auto_deblur_only_when_blurred():
+    from PIL import ImageDraw, ImageFilter
+    rng = np.random.default_rng(1)
+    im = Image.new("RGB", (1600, 1100), (200, 200, 200))
+    d = ImageDraw.Draw(im)
+    for _ in range(250):
+        x, y = rng.integers(0, 1600), rng.integers(0, 1100)
+        d.rectangle([x, y, x + rng.integers(10, 150), y + rng.integers(10, 150)],
+                    fill=tuple(int(v) for v in rng.integers(0, 255, 3)))
+    assert E.auto_deblur(im) == {}
+    soft = im.filter(ImageFilter.GaussianBlur(2.5))
+    a = E.auto_deblur(soft)
+    assert a and a["deblur"] > 0.4
+    g = lambda m: float(np.hypot(*np.gradient(np.asarray(m.convert("L"), np.float32))).mean())  # noqa: E731
+    assert g(E.render(soft, a)) > g(soft) * 1.1
+
+
+def test_open_crop_without_changes_does_not_block(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    win.on_side_tab("ritaglia")
+    win.on_side_tab("info")                  # si esce senza OK
+    assert win.crop_draft is None and win.side_tab == "info"
+    win.on_side_tab("ritaglia")
+    click(qapp, win, win.btn_yes)            # Sì direttamente: chiude Ritaglia ed esporta l'originale
+    exports_done(qapp, win)
+    assert win.crop_draft is None and not win.image_view.crop_mode
+    assert (win.export_dir / PHOTO1).read_bytes() == next((sd / "DCIM").rglob(PHOTO1)).read_bytes()
+    win.on_side_tab("regola")
+    win.regola._set("contrast", 0.3)
+    win.regola._set("contrast", 0.0)         # tornato com'era: niente da confermare
+    assert win.decision_bar.isEnabled()

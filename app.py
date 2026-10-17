@@ -38,7 +38,7 @@ import metadata
 from scanner import Item, mp4_duration, raw_preview, scan
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.2.8"
+APP_VERSION = "1.2.9"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -1383,6 +1383,7 @@ class MainWindow(QMainWindow):
         self._edit_busy = False
         self._edit_again = False
         self.crop_draft: dict | None = None    # Ritaglia aperto: bozza finché non si preme OK
+        self.tone_draft: dict | None = None    # Regola toccata: bozza finché non si preme OK
         self.side_tab = "info"
         self._tab_before_crop = "info"
 
@@ -1615,6 +1616,8 @@ class MainWindow(QMainWindow):
         self.ritaglia.aspect_changed.connect(self.on_crop_aspect)
         self.ritaglia.ok.connect(self.crop_ok)
         self.ritaglia.cancel.connect(self.crop_cancel)
+        self.ritaglia.btn_ok.hide()       # OK / Annulla stanno in fondo al pannello, per tutti e due
+        self.ritaglia.btn_cancel.hide()
         self.ritaglia.auto.connect(self.crop_auto)
         self.side_pages.addWidget(EP.scroll(self.ritaglia, "ritagliabody"))
         side_outer.addWidget(self.side_pages, 1)
@@ -1633,6 +1636,25 @@ class MainWindow(QMainWindow):
         self.btn_discard.setToolTip("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n"
                                     "(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)")
         self.btn_discard.clicked.connect(self.discard_edits)
+        # Regola e Ritaglia si confermano qui: OK (Invio) o Annulla (Esc), sempre in vista
+        self.confirm_row = QWidget()
+        cr = QHBoxLayout(self.confirm_row)
+        cr.setContentsMargins(0, 0, 0, 2)
+        cr.setSpacing(8)
+        self.btn_edit_cancel = QPushButton("Annulla")
+        self.btn_edit_cancel.setObjectName("cropbtn")
+        self.btn_edit_cancel.setToolTip("Lascia la foto com'era prima di queste modifiche (Esc).")
+        self.btn_edit_ok = QPushButton("OK")
+        self.btn_edit_ok.setObjectName("cropok")
+        self.btn_edit_ok.setToolTip("Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.")
+        for b in (self.btn_edit_cancel, self.btn_edit_ok):
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            cr.addWidget(b, 1)
+        self.btn_edit_cancel.clicked.connect(self.cancel_edit)
+        self.btn_edit_ok.clicked.connect(self.confirm_edit)
+        self.confirm_row.setVisible(False)
+        fl.addWidget(self.confirm_row)
         fl.addWidget(self.btn_discard)
         self.side_foot = foot
         side_outer.addWidget(foot)
@@ -2104,10 +2126,15 @@ class MainWindow(QMainWindow):
 
     def on_side_tab(self, key: str) -> None:
         item = self.current()
-        if self.crop_draft is not None and key != "ritaglia":
-            self.side_seg.set_current("ritaglia")
-            self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+        pending = "ritaglia" if self.crop_dirty() else "regola" if self.tone_dirty() else None
+        if pending and key != pending:
+            self.side_seg.set_current(pending)
+            self.flash("Prima conferma le modifiche con OK oppure Annulla")
             return
+        if key != "ritaglia" and self.crop_draft is not None:   # aperto senza cambiare nulla
+            self._end_crop()
+        if key != "regola" and self.tone_draft is not None:
+            self.close_clean_drafts()
         if key != "info" and not (self.editable(item) and self.stack.currentWidget() is self.image_view
                                   or self.editable(item) and item.kind == "live"):
             self.side_seg.set_current(self.side_tab)
@@ -2133,6 +2160,73 @@ class MainWindow(QMainWindow):
         if key == "regola":
             self.update_thumbs()
 
+    def _geometry(self, e: dict) -> dict:
+        g = E.clean({k: v for k, v in e.items() if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")})
+        g.pop("aspect", None)   # scegliere le proporzioni senza spostare il riquadro non cambia la foto
+        g.pop("aspect_custom", None)
+        g.pop("aspect_portrait", None)
+        return g
+
+    def crop_dirty(self) -> bool:
+        """Ritaglia aperto e la foto è davvero cambiata (riquadro, rotazione, prospettiva…)."""
+        if self.crop_draft is None:
+            return False
+        d = dict(self.crop_draft)
+        d["crop"] = list(self.image_view.crop)
+        return self._geometry(d) != self._geometry(self.item_edit())
+
+    def tone_dirty(self) -> bool:
+        return self.tone_draft is not None and E.clean(self.tone_draft) != E.clean(self.item_edit())
+
+    def edit_pending(self) -> bool:
+        """Serve OK / Annulla solo se qualcosa è cambiato davvero."""
+        return self.crop_dirty() or self.tone_dirty()
+
+    def close_clean_drafts(self) -> None:
+        """Ritaglia o Regola aperti senza aver cambiato nulla: si chiudono da soli."""
+        if self.crop_draft is not None and not self.crop_dirty():
+            self._end_crop()
+        if self.tone_draft is not None and not self.tone_dirty():
+            self.tone_draft = None
+            self.regola.set_edit(self.item_edit())
+        self.refresh_edit_lock()
+
+    def refresh_edit_lock(self) -> None:
+        self.set_crop_lock(self.edit_pending())
+
+    def confirm_edit(self) -> None:
+        if self.crop_draft is not None:
+            self.crop_ok()
+        elif self.tone_draft is not None:
+            self.regola_ok()
+
+    def cancel_edit(self) -> None:
+        if self.crop_draft is not None:
+            self.crop_cancel()
+        elif self.tone_draft is not None:
+            self.regola_cancel()
+
+    def regola_ok(self) -> None:
+        item = self.current()
+        if self.tone_draft is None or not item:
+            return
+        self.store_edit(item.id, self.tone_draft)
+        self.tone_draft = None
+        self.regola.set_edit(self.item_edit())
+        self.set_crop_lock(False)
+        self.request_edit_render()
+        self.flash("Modifiche confermate: ✓ Sì esporta la foto modificata")
+
+    def regola_cancel(self) -> None:
+        if self.tone_draft is None:
+            return
+        self.tone_draft = None
+        self.regola.set_edit(self.item_edit())
+        self.set_crop_lock(False)
+        if self.edit_base is not None:
+            self.set_still(self.edit_base, self.edit_base_owner, keep_zoom=True)
+        self.flash("Modifiche annullate")
+
     def update_pick_mode(self) -> None:
         on = self.side_tab == "regola" and self.regola.redeye_open() and self.editable()
         self.image_view.pick_enabled = on
@@ -2148,11 +2242,12 @@ class MainWindow(QMainWindow):
         ok = self.editable(item) and self.stack.currentWidget() is not self.setup_page
         e = self.item_edit() if ok else {}
         has = not E.is_empty(e)
-        for k in ("regola", "ritaglia"):
-            self.side_seg.buttons[k].setEnabled(ok and self.crop_draft is None or k == "ritaglia" and
-                                                self.crop_draft is not None)
-        self.side_seg.buttons["info"].setEnabled(self.crop_draft is None)
-        self.btn_discard.setEnabled(has or self.crop_draft is not None)
+        crop, tone = self.crop_dirty(), self.tone_dirty()
+        self.side_seg.buttons["regola"].setEnabled(ok and not crop)
+        self.side_seg.buttons["ritaglia"].setEnabled(ok and not tone)
+        self.side_seg.buttons["info"].setEnabled(not (crop or tone))
+        self.btn_discard.setEnabled(has or crop or tone)
+        self.confirm_row.setVisible(crop or tone)
         self.side_foot.setVisible(ok)
         parts = []
         if E.has_tone(e):
@@ -2160,8 +2255,10 @@ class MainWindow(QMainWindow):
         if E.has_geometry(e):
             parts.append("ritagliata" if e.get("crop") else "raddrizzata")
         d = self.session.get(item.id) if (has and self.session and item) else None
-        if self.crop_draft is not None:
+        if crop:
             self.edit_badge.setText("✂︎ Ritaglio aperto: OK per confermare, Annulla per lasciarla com'era")
+        elif tone:
+            self.edit_badge.setText("✎ Modifiche da confermare: OK per tenerle, Annulla per lasciarla com'era")
         elif has and d and d["choice"] == "yes" and E.clean(d.get("edit") or {}) != E.clean(e):
             self.edit_badge.setText(f"✎ Foto {' e '.join(parts)} dopo il Sì: premi di nuovo ✓ Sì "
                                     "per esportare questa versione")
@@ -2174,8 +2271,8 @@ class MainWindow(QMainWindow):
     def reset_edit_view(self) -> None:
         """Nuovo elemento: pannelli aggiornati sulle sue modifiche."""
         item = self.current()
-        if self.crop_draft is not None:
-            self.crop_draft = None
+        if self.edit_pending():   # non dovrebbe succedere (si cambia foto solo dopo OK / Annulla)
+            self.crop_draft = self.tone_draft = None
             self.image_view.set_crop_mode(False)
             self.set_crop_lock(False)
         self.regola.set_edit(self.item_edit() if self.editable(item) else {})
@@ -2183,10 +2280,11 @@ class MainWindow(QMainWindow):
             self.side_tab = "info"
             self.side_seg.set_current("info")
             self.side_pages.setCurrentIndex(0)
-        elif self.side_tab == "ritaglia":   # Ritaglia si riapre a mano: si torna a Regola
-            self.side_tab = "regola"
-            self.side_seg.set_current("regola")
-            self.side_pages.setCurrentIndex(1)
+        elif self.side_tab == "ritaglia":   # Ritaglia si riapre a mano: si torna dove si era
+            back = self._tab_before_crop if self._tab_before_crop in ("info", "regola") else "info"
+            self.side_tab = back
+            self.side_seg.set_current(back)
+            self.side_pages.setCurrentIndex({"info": 0, "regola": 1}[back])
         self.update_pick_mode()
         self.update_edit_ui()
 
@@ -2198,7 +2296,7 @@ class MainWindow(QMainWindow):
             self.edit_base, self.edit_base_owner = img, item_id
             self._edit_proxy = self._edit_tiny = None
         item = self.item_by_id(item_id)
-        if self.crop_draft is None and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
+        if not self.edit_pending() and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
             self.edit_gen += 1   # niente da modificare: i calcoli in corso non valgono più
             self.image_view.set_image(img, keep_zoom=keep_zoom)
         else:
@@ -2215,8 +2313,12 @@ class MainWindow(QMainWindow):
             self._edit_proxy = qimage_to_pil(q)
         return self._edit_proxy
 
+    def current_tone_edit(self) -> dict:
+        """Le regolazioni che si vedono: la bozza di Regola se c'è, se no quelle confermate."""
+        return dict(self.tone_draft) if self.tone_draft is not None else self.item_edit(self.edit_base_owner)
+
     def view_edit(self) -> dict:
-        e = self.item_edit(self.edit_base_owner)
+        e = self.current_tone_edit()
         if self.crop_draft is not None:
             for k in E.GEOMETRY_KEYS + ("aspect_custom", "aspect_portrait"):
                 e.pop(k, None)
@@ -2281,7 +2383,7 @@ class MainWindow(QMainWindow):
             p = self.edit_proxy()
             k = 72 / max(1, p.height)
             self._edit_tiny = p.resize((max(1, round(p.width * k)), 72), Image.BILINEAR)
-        e = self.item_edit(self.edit_base_owner)
+        e = self.current_tone_edit()
         base = E.apply_crop(E.geometry_base(self._edit_tiny, e), e)
         for sec in ("light", "color", "bw"):
             thumbs = []
@@ -2305,12 +2407,8 @@ class MainWindow(QMainWindow):
                 if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         new = {k: v for k, v in e.items() if k not in keep}
         new.update(keep)
-        new = E.clean(new)
-        if new:
-            self.session.edits[item.id] = new
-        else:
-            self.session.edits.pop(item.id, None)
-        self.edit_save_timer.start()   # si salva quando la mano si ferma
+        self.tone_draft = E.clean(new)   # bozza: se cambia qualcosa si conferma con OK o Annulla
+        self.refresh_edit_lock()
         self.request_edit_render()
         self.update_thumbs()
         self.update_edit_ui()
@@ -2318,7 +2416,7 @@ class MainWindow(QMainWindow):
     def on_auto(self, sec: str) -> None:
         if self.edit_base is None or not self.editable():
             return
-        e = self.item_edit()
+        e = self.current_tone_edit()
         img = E.apply_crop(E.geometry_base(self.edit_proxy().convert("RGB"), e), e)
         if sec == "light":
             vals = E.auto_light(img)
@@ -2336,6 +2434,11 @@ class MainWindow(QMainWindow):
             vals = E.auto_noise(self.edit_base_full_pil(e))
         elif sec == "sharpen":
             vals = E.auto_sharpen(self.edit_base_full_pil(e))
+        elif sec == "deblur":
+            vals = E.auto_deblur(self.edit_base_full_pil(e))
+            if not vals:
+                self.flash("Sfocatura: la foto è già nitida")
+                return
         else:
             return   # Occhi rossi, Curve, Colore selettivo, Vignettatura: si regolano a mano
         self.regola.apply_auto(sec, vals)
@@ -2348,7 +2451,7 @@ class MainWindow(QMainWindow):
         return qimage_to_pil(q)
 
     def reset_regola(self) -> None:
-        e = self.item_edit()
+        e = self.current_tone_edit()
         keep = {k: v for k, v in e.items() if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         self.regola.set_edit(keep)
         self.on_regola_changed(keep)
@@ -2360,6 +2463,8 @@ class MainWindow(QMainWindow):
             return
         if self.crop_draft is not None:
             self.crop_cancel()
+        if self.tone_draft is not None:
+            self.regola_cancel()
         if E.is_empty(self.item_edit()):
             return
         self.store_edit(item.id, {})
@@ -2390,7 +2495,6 @@ class MainWindow(QMainWindow):
         self.crop_draft = {k: v for k, v in e.items()
                            if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         self.ritaglia.set_draft(self.crop_draft)
-        self.set_crop_lock(True)
         self.request_edit_render(sync=True, keep_zoom=False)
         self.image_view.set_crop_mode(True, self.crop_draft.get("crop"), self.crop_ratio())
 
@@ -2408,6 +2512,7 @@ class MainWindow(QMainWindow):
             d["crop"] = E.fit_aspect(d.get("crop"), ratio, f.width(), f.height())
         self.image_view.set_crop_mode(True, d.get("crop"), ratio)
         self.ritaglia.set_crop(d.get("crop"))
+        self.refresh_edit_lock()
 
     def on_crop_aspect(self, d: dict) -> None:
         if self.crop_draft is None:
@@ -2420,11 +2525,13 @@ class MainWindow(QMainWindow):
             d["crop"] = E.fit_aspect(None, ratio, f.width(), f.height())
         self.image_view.set_crop_mode(True, d["crop"], ratio)
         self.ritaglia.set_crop(d["crop"])
+        self.refresh_edit_lock()
 
     def on_view_crop(self, crop: list) -> None:
         if self.crop_draft is not None:
             self.crop_draft["crop"] = crop
             self.ritaglia.set_crop(crop)
+            self.refresh_edit_lock()
 
     def crop_auto(self) -> None:
         if self.crop_draft is None or self.edit_base is None:
@@ -2787,15 +2894,15 @@ class MainWindow(QMainWindow):
         def unless_cropping(k, fn):
             # Ritaglia aperto: Invio = OK, il resto aspetta (si conferma o si annulla prima)
             def run():
-                if self.crop_draft is None or k in ("?", "H", "I"):
+                if not self.edit_pending() or k in ("?", "H", "I"):
                     fn()
                 elif k in ("Return", "Enter"):
-                    self.crop_ok()
+                    self.confirm_edit()
                 else:
-                    self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+                    self.flash("Prima conferma le modifiche con OK oppure Annulla")
             return run
 
-        QShortcut(QKeySequence("Escape"), self, activated=self.crop_cancel)
+        QShortcut(QKeySequence("Escape"), self, activated=self.cancel_edit)
         for k, fn in keys.items():
             fn = unless_cropping(k, fn)
             if k in ("Return", "Enter", "Space"):
@@ -3681,10 +3788,9 @@ class MainWindow(QMainWindow):
         vis = [i for i, it in enumerate(self.items) if self.visible(it)]
         done = sum(1 for i in vis if self.session.get(self.items[i].id) is not None)
         self.done_label.setText(
-            f"<span style='font-size:30px; font-weight:800; color:#ffd60a;'>{done}</span>"
-            f"<span style='font-size:15px; font-weight:600; color:#d1d1d6;'> / {len(vis)} già fatte</span>"
-            + (f"<br><span style='font-size:12px; color:#98989f;'>ne mancano {len(vis) - done}</span>"
-               if done < len(vis) else "<br><span style='font-size:12px; color:#2ad48e;'>✓ tutte decise</span>"))
+            f"<span style='font-size:13px; font-weight:700; color:#ffd60a;'>{done} / {len(vis)} già fatte</span>"
+            + (f"<span style='font-size:12px; color:#98989f;'>  ·  ne mancano {len(vis) - done}</span>"
+               if done < len(vis) else "<span style='font-size:12px; color:#2ad48e;'>  ·  ✓ tutte decise</span>"))
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, len(vis)))
         self.progress.setValue(done)
@@ -4351,9 +4457,10 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ decisioni
     def decide(self, choice: str, with_video: bool = False):
-        if self.crop_draft is not None:   # Ritaglia aperto: prima OK o Annulla
-            self.flash("Prima conferma il ritaglio con OK oppure Annulla")
+        if self.edit_pending():   # Regola o Ritaglia cambiati: prima OK o Annulla
+            self.flash("Prima conferma le modifiche con OK oppure Annulla")
             return
+        self.close_clean_drafts()   # aperti senza cambiare nulla: si chiudono e si va avanti
         item = self.current()
         if item:
             log.info("scelta %s%s su %s", choice, " +video" if with_video else "", item.id)
