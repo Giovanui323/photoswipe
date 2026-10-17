@@ -1,6 +1,6 @@
 # PhotoSwipe
 
-Versione **1.1.7** — il numero è in fondo al pannello Info, a destra.
+Versione **1.1.8** — il numero è nel titolo della finestra.
 
 Sfogli foto, panorami, Live e video della DJI Osmo Pocket 4 e scegli con **Sì / No / Salta**.
 Quello che approvi viene **copiato** (mai spostato) nella cartella `export`, pronta da caricare
@@ -26,6 +26,8 @@ Ispirata a Foto di macOS, con la scelta "alla Tinder":
   "Apri nella mappa", nulla viene inviato in rete da solo), fotocamera, scatto (ƒ, tempo, ISO, mm),
   dimensioni, video (fps, bit, codec, bitrate), file e cartella; sotto, le foto prese dal video con
   📷 e il riepilogo della selezione.
+  In basso a destra, le **foto prese dal video** in miniatura: clic = il video torna su quel
+  fotogramma per rivederla, doppio clic = apre il file, ✕ = la toglie da export.
 - **sotto la foto**: per Live e video la striscia dei fotogrammi con Vedi Live / Prendi foto / Più nitida;
   poi i pulsanti rotondi centrati: 🗑 No e cancella (X) · ✕ No (N) · ↪ Salta (S) · ✓ Sì (Y) ·
   ＋ Sì + video (⇧Y). Il cerchio pieno indica la scelta già fatta.
