@@ -1,6 +1,6 @@
 # PhotoSwipe
 
-Versione **1.1.8** — il numero è nel titolo della finestra.
+Versione **1.2.4** — il numero è nel titolo della finestra.
 
 Sfogli foto, panorami, Live e video della DJI Osmo Pocket 4 e scegli con **Sì / No / Salta**.
 Quello che approvi viene **copiato** (mai spostato) nella cartella `export`, pronta da caricare
@@ -19,7 +19,8 @@ completata, quando l'avevi chiusa e quante ne avevi decise, e chiede se **ripren
 
 ## Interfaccia
 Ispirata a Foto di macOS, con la scelta "alla Tinder":
-- **in alto**: ‹ › precedente/successivo, ↩ annulla, cursore dello **zoom**; al centro nome, data e
+- **sulla foto, in alto a sinistra**: il cursore dello **zoom** (foto e panorami).
+- **in alto**: ‹ › precedente/successivo, ↩ annulla; al centro nome, data e
   posizione (es. "17 di 245"); a destra ♡ preferita, ⚙ **impostazioni** (cartella, export, filtro,
   formato, ora) e ? aiuto. Su Mac la barra del titolo è integrata (si trascina dallo spazio vuoto).
 - **a destra, sempre aperto, il pannello Info**: giorno, luogo (coordinate GPS se presenti, con link

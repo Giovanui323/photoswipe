@@ -217,7 +217,11 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
         d = Path(dirpath)
         for n in dirnames:
             if n.upper() == "PANORAMA":
-                for sub in os.listdir(d / n):
+                try:
+                    subs = os.listdir(d / n)
+                except OSError:   # non leggibile: si salta, senza far fallire tutta la lettura
+                    subs = []
+                for sub in subs:
                     m = _PANO_DIR.match(sub)
                     if m:
                         pano_indexes.add((d, m.group(1)))
@@ -225,6 +229,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
             n for n in dirnames
             if not n.startswith(".") and n.upper() not in SKIP_DIRS
             and (d / n).resolve() not in excluded
+            and not (d == root and n == "export")   # l'export proposto: mai riletto come sorgente
         )
         for name in sorted(filenames):
             if name.startswith("."):
@@ -255,7 +260,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
             continue
         seen.add((main.name.upper(), size))
         local = cloud.is_local(main)
-        it = Item(kind="photo", id=str(main.relative_to(root)), image=files.get("image"),
+        it = Item(kind="photo", id=main.relative_to(root).as_posix(), image=files.get("image"),
                   raw=files.get("raw"), video=files.get("video"),
                   taken=capture_time(main, local), size=size)
         if it.image:

@@ -62,6 +62,23 @@ def _copy(src: Path, folder: Path) -> Path:
     return dst
 
 
+def clean_partial(export_dir: Path) -> int:
+    """Toglie le copie a metà (*.part) lasciate da un'uscita durante un export: sono solo file
+    temporanei dell'app, la copia vera si rifà alla ripresa."""
+    n = 0
+    if not export_dir.is_dir():
+        return 0
+    for pat in ("*.part", "*.part.png"):
+        for f in export_dir.rglob(pat):
+            try:
+                if f.is_file():
+                    f.unlink()
+                    n += 1
+            except OSError:
+                pass
+    return n
+
+
 def export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
                 snapshot: bool = False) -> list[Path]:
     """Esegue l'export di un elemento approvato. Ritorna i file creati.
@@ -131,10 +148,11 @@ def move_to_trash(item: Item, root: Path) -> list[list[str]]:
     return moved
 
 
-def restore_from_trash(moved: list[list[str]]) -> list[Path]:
+def restore_from_trash(moved: list[list[str]], new_names: dict[Path, Path] | None = None) -> list[Path]:
     """Rimette a posto i file spostati in 'cancellare'. Si può richiamare dopo un errore:
     i file già rimessi a posto vengono saltati. Se al posto originale c'è già un file con lo
-    stesso nome non lo sovrascrive: usa un nome nuovo, che viene ritornato nella lista."""
+    stesso nome non lo sovrascrive: usa un nome nuovo, che viene ritornato nella lista
+    (e in new_names: posto originale → nome nuovo, per aggiornare l'elemento)."""
     renamed: list[Path] = []
     for src, dst in reversed(moved):
         if Path(dst).exists():
@@ -142,6 +160,8 @@ def restore_from_trash(moved: list[list[str]]) -> list[Path]:
             if target.exists():
                 target = unique_path(target.parent, target.name)
                 renamed.append(target)
+                if new_names is not None:
+                    new_names[Path(src)] = target
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(dst, str(target))
         # toglie le cartelle rimaste vuote dentro "cancellare" (mai oltre)
@@ -177,12 +197,137 @@ def relocate_exports(files: list[str], old_root: Path, new_root: Path) -> list[l
     return out
 
 
-def remove_files(files: list[str]) -> None:
+def file_stamp(path: Path) -> list[int]:
+    """Impronta di una copia (dimensione, data di modifica): per riconoscerla prima di toglierla."""
+    st = Path(path).stat()
+    return [st.st_size, st.st_mtime_ns]
+
+
+def remove_files(files: list[str], stamps: list[list[int]] | None = None) -> None:
+    """Toglie copie fatte in export. Con stamps toglie solo i file che sono ancora QUELLE copie:
+    se l'utente ne ha cancellata una a mano e un altro elemento ha riusato il nome, non si tocca."""
+    known = {tuple(x) for x in stamps} if stamps else None
     for f in files:
         try:
+            if known is not None and tuple(file_stamp(Path(f))) not in known:
+                continue
             Path(f).unlink()
         except FileNotFoundError:
             pass
+
+
+# ---- compatibilità con salvataggi fatti altrove (altro livello, altro disco, altro computer)
+SEARCH_UP = 4      # quante cartelle sopra si cerca un salvataggio fatto aprendo la cartella madre
+SEARCH_DOWN = 3    # quanti livelli sotto (es. aperta DJI/1 ieri, oggi DJI/1/DCIM o il contrario)
+_SKIP_DIRS = {TRASH_DIR, "export", FAV_SUBDIR, VIDEO_SUBDIR}
+
+
+def _key(k: str) -> str:
+    """Chiave di un elemento sempre con "/" (i salvataggi fatti su Windows hanno "\\")."""
+    return k.replace("\\", "/")
+
+
+def _normalize(decisions) -> dict[str, dict]:
+    """Scelte lette da un salvataggio di qualsiasi versione: chiavi con "/" e tutti i campi
+    che il resto dell'app si aspetta. Le voci senza una scelta valida si scartano."""
+    out: dict[str, dict] = {}
+    if not isinstance(decisions, dict):
+        return out
+    for k, d in decisions.items():
+        if not isinstance(d, dict) or d.get("choice") not in ("yes", "no", "skip", "trash", "snap"):
+            continue
+        d = dict(d)
+        d["files"] = [str(f) for f in d.get("files") or []]
+        d.setdefault("frame", None)
+        d.setdefault("with_video", False)
+        out[_key(str(k))] = d
+    return out
+
+
+def _same_root(a, b) -> bool:
+    """Stessa cartella, anche se il disco esterno oggi si chiama diversamente
+    (/Volumes/Backup → /Volumes/Backup 1)."""
+    if not a or not b:
+        return False
+    pa, pb = Path(a).parts, Path(b).parts
+    if pa == pb:
+        return True
+    tail = lambda p: p[3:] if len(p) > 3 and p[1] == "Volumes" else None
+    return tail(pa) is not None and tail(pa) == tail(pb)
+
+
+def _nearby_saves(root: Path) -> list[tuple[Path, Path]]:
+    """Salvataggi fatti aprendo una cartella sopra o sotto questa: (file, cartella aperta allora)."""
+    found: list[tuple[Path, Path]] = []
+    for n, parent in enumerate(root.parents):
+        if n >= SEARCH_UP or parent == Path(parent.anchor) or parent.name == "Volumes":
+            break
+        if (parent / SESSION_FILE).is_file():
+            found.append((parent / SESSION_FILE, parent))
+
+    def walk(folder: str, depth: int) -> None:
+        if depth > SEARCH_DOWN:
+            return
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            return
+        for e in entries:
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if not is_dir or e.name.startswith(".") or e.name in _SKIP_DIRS:
+                continue
+            sub = Path(e.path)
+            if (sub / SESSION_FILE).is_file():
+                found.append((sub / SESSION_FILE, sub))
+            walk(e.path, depth + 1)
+    walk(str(root), 1)
+    return found
+
+
+def _rebase(decisions: dict[str, dict], base: Path, root: Path) -> dict[str, dict]:
+    """Chiavi relative alla cartella aperta allora (base) → relative a quella aperta ora."""
+    if base == root:
+        return decisions
+    if base in root.parents:                    # allora la cartella madre: si tiene solo la parte qui sotto
+        prefix = root.relative_to(base).as_posix() + "/"
+        return {k[len(prefix):]: d for k, d in decisions.items() if k.startswith(prefix)}
+    prefix = base.relative_to(root).as_posix() + "/"   # allora una sottocartella
+    return {prefix + k: d for k, d in decisions.items()}
+
+
+def gather_saved(root: Path, own: dict | None) -> dict | None:
+    """Il salvataggio di questa cartella unito a quelli fatti aprendo una cartella sopra o sotto
+    (stesso lavoro, aperto a un altro livello). I vecchi file non vengono mai modificati: si
+    leggono soltanto, e da qui in poi si salva nella cartella aperta ora. A parità di elemento
+    vince il salvataggio modificato più di recente. Dopo "Ricomincia da capo" non si uniscono."""
+    sources = []
+    if own:
+        sources.append((own, root))
+    if not (own and own.get("fresh")):
+        for f, base in _nearby_saves(root):
+            data = Session.read(f)
+            if isinstance(data, dict) and data.get("decisions"):
+                sources.append((data, base))
+    if not sources:
+        return own
+    merged = dict(own or max((d for d, _ in sources), key=lambda d: d.get("updated") or ""))
+    decisions: dict[str, dict] = {}
+    favorites: set[str] = set()
+    for data, base in sorted(sources, key=lambda s: s[0].get("updated") or ""):
+        decisions.update(_rebase(_normalize(data.get("decisions")), base, root))
+        favs = {_key(str(k)): {} for k in data.get("favorites") or []}
+        favorites |= set(_rebase(favs, base, root))
+    merged["decisions"], merged["favorites"] = decisions, sorted(favorites)
+    newest = max(sources, key=lambda s: s[0].get("updated") or "")[0]
+    merged["updated"] = newest.get("updated")
+    merged.setdefault("export", newest.get("export"))
+    if len(sources) > 1 or sources[0][1] != root:
+        merged.pop("decided", None)    # si ricontano sulle scelte unite
+        merged["completed"] = False
+    return merged
 
 
 class Session:
@@ -205,11 +350,14 @@ class Session:
         self.created, self.updated, self.closed = now, now, None
         self.path = root / SESSION_FILE
         self.corrupt_backup: Path | None = None  # salvataggio illeggibile messo da parte
-        data = (self._load(self.path)
-                or Session.read(export_dir / SESSION_FILE, root))  # vecchie versioni
+        self.fresh = False   # "Ricomincia da capo": non riprendere salvataggi di altri livelli
+        own = (self._load(self.path)
+               or Session.read(export_dir / SESSION_FILE, root))  # vecchie versioni
+        self.fresh = bool(own and own.get("fresh"))
+        data = gather_saved(root, own)
         if data:
-            self.decisions = data.get("decisions", {})
-            self.favorites = set(data.get("favorites", []))
+            self.decisions = _normalize(data.get("decisions", {}))
+            self.favorites = {_key(str(k)) for k in data.get("favorites", [])}
             self.created = data.get("created", now)
             self.updated = data.get("updated", now)
         if not _writable(root):
@@ -266,6 +414,10 @@ class Session:
             self.save()
             return "failed"
         d["files"] = [str(f) for f in res]
+        try:
+            d["stamps"] = [file_stamp(f) for f in res]
+        except OSError:
+            d.pop("stamps", None)
         d.pop("export_failed", None)
         self.save()
         return "ok"
@@ -276,21 +428,23 @@ class Session:
             data = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):
             return None
-        if root is not None and data.get("root") != str(root):
+        if root is not None and not _same_root(data.get("root"), root):
             return None
         return data
 
     @staticmethod
     def peek(root: Path) -> dict | None:
         """Riassunto del lavoro salvato in questa cartella (o None se non ce n'è)."""
-        data = Session.read(root / SESSION_FILE) or Session.read(root / "export" / SESSION_FILE, root)
+        own = Session.read(root / SESSION_FILE) or Session.read(root / "export" / SESSION_FILE, root)
+        data = gather_saved(root, own if isinstance(own, dict) else None)
         if not data or not data.get("decisions"):
             return None
         c = _count(data["decisions"])
         decided = data.get("decided")  # vecchi salvataggi: si conta come prima
         if decided is None:
             decided = sum(1 for k in data["decisions"] if "#" not in k)
-        return {"export": data.get("export") or str(root / "export"),
+        export = data.get("export") or str(root / "export")
+        return {"export": export, "export_ok": export_reachable(Path(export)),
                 "created": data.get("created"), "updated": data.get("updated"),
                 "closed": data.get("closed"), "total": data.get("total", 0),
                 "decided": decided, "completed": bool(data.get("completed")), "counts": c}
@@ -348,13 +502,24 @@ class Session:
 
     def archive(self) -> None:
         """'Ricomincia da capo': il vecchio salvataggio viene rinominato, non cancellato."""
-        if self.path.exists():
-            os.replace(self.path, self.path.with_name(
-                f"{SESSION_FILE}.{datetime.now():%Y%m%d-%H%M%S}.bak"))
+        stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+        # anche il salvataggio delle vecchie versioni (in export), se è di questa cartella:
+        # altrimenti alla riapertura verrebbe ricaricato e il "ricomincia" non avrebbe effetto
+        root = Path(self.root)
+        legacy = Path(self.export_dir) / SESSION_FILE
+        for path in dict.fromkeys((self.path, root / SESSION_FILE, legacy)):
+            if not path.exists():
+                continue
+            if path == legacy and path != self.path and Session.read(path, root) is None:
+                continue   # è il salvataggio di un'altra cartella: non si tocca
+            os.replace(path, path.with_name(f"{SESSION_FILE}.{stamp}.bak"))
         self.decisions = {}
         self.favorites = set()
         self.created = self.updated = _now()
         self.closed = None
+        self.fresh = True
+        if self.path.parent.exists() and _nearby_saves(Path(self.root)):
+            self.save()   # ricorda la scelta: i salvataggi di altri livelli non si riprendono più
 
     def save(self, touch: bool = True) -> None:
         if touch:
@@ -368,6 +533,7 @@ class Session:
                 "created": self.created, "updated": self.updated, "closed": self.closed,
                 "total": self.total, "decided": self.decided, "completed": self.completed,
                 "decisions": self.decisions, "favorites": sorted(self.favorites),
+                **({"fresh": True} if self.fresh else {}),
             }, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())  # su disco prima di sostituire il vecchio
