@@ -1,0 +1,9 @@
+PhotoSwipe — installazione
+
+1. Trascina PhotoSwipe nella cartella Applicazioni.
+2. La prima volta: clic destro (o Ctrl+clic) su PhotoSwipe → Apri → Apri.
+   (L'app non è firmata con un certificato Apple a pagamento: macOS lo chiede una volta sola.)
+   Se non compare "Apri": Impostazioni di Sistema → Privacy e sicurezza → "Apri comunque".
+
+Requisiti: Mac con chip Apple (M1 o successivi), macOS 12 (Monterey) o successivo.
+Tutto è incluso (anche ffmpeg): non serve installare altro.
