@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 

@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 from i18n import tr
 
 # valore predefinito di ogni regolazione (tutte da -1 a 1 o da 0 a 1, salvo dove indicato)

@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.3.5-blue)
+![Version](https://img.shields.io/badge/version-1.3.6-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
@@ -161,12 +161,17 @@ Checked against each project's own license file. All are redistributable inside 
 long as their notices travel with it: full texts are in [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt),
 which is also copied into the DMG and the app.
 
+On Windows the Real-ESRGAN executable needs Microsoft's OpenMP runtime (`vcomp140.dll`). It is **not**
+bundled (Microsoft license): it comes with the free
+[Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most PCs already
+have. Without it, "Migliora per la stampa" still works with a simple Lanczos enlargement and tells you
+how to get the better one.
+
 | Component | Used for | License |
 |---|---|---|
 | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) model `realesrgan-x4plus` | "Migliora per la stampa" | BSD 3-Clause (© 2021 Xintao Wang) |
 | [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) executables | running the model offline | MIT (© 2021 Xintao Wang, © 2019 nihui) |
 | [ncnn](https://github.com/Tencent/ncnn), [libwebp](https://github.com/webmproject/libwebp), [stb](https://github.com/nothings/stb), [dirent](https://github.com/tronkko/dirent) | inside those executables | BSD-3 (Tencent), BSD-3 (Google), MIT/public domain, MIT |
-| `vcomp140.dll` (Windows only) | OpenMP runtime for the Windows executable | Microsoft Visual C++ redistributable terms — not MIT |
 | `auto_model.py` | AUTO and magic wand | trained by PhotoSwipe on public-domain / CC0 Wikimedia Commons photos |
 
 ## 🤝 Contributing

@@ -34,3 +34,24 @@ def test_improve_writes_copy_and_keeps_original(tmp_path):
         assert out.info.get("dpi", (0, 0))[0] == 300
         assert out.width >= 800 and out.height >= 600          # mai più piccola
     assert "px" in desc
+
+
+def test_windows_without_vc_runtime_falls_back_and_explains(tmp_path, monkeypatch):
+    """Su Windows senza il Visual C++ Redistributable il motore non parte: si usa Lanczos e lo si dice."""
+    import subprocess
+    import sys
+    from PIL import Image
+    import printprep
+    src = tmp_path / "a.jpg"
+    Image.new("RGB", (800, 600), (120, 90, 60)).save(src)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(printprep, "realesrgan_bin", lambda: tmp_path / "realesrgan-ncnn-vulkan.exe")
+
+    def fail(*a, **k):
+        raise subprocess.CalledProcessError(-1073741515, a[0])   # 0xC0000135: DLL non trovata
+    monkeypatch.setattr(subprocess, "run", fail)
+    monkeypatch.setattr(printprep, "missing_runtime", False)
+    text = printprep.improve(src, tmp_path / "out.jpg")
+    assert (tmp_path / "out.jpg").exists()
+    assert "Visual C++" in text and printprep.missing_runtime

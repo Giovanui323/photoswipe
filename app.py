@@ -21,9 +21,9 @@ from PySide6.QtGui import (QColor, QDesktopServices, QFont, QImage, QImageReader
                            QLinearGradient, QPainterPath, QPalette, QPen, QPixmap, QShortcut)
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame,
                                QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGridLayout,
-                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QProxyStyle, QRadioButton,
+                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QProxyStyle,
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle, QStyleOption, QTextBrowser, QVBoxLayout, QWidget)
 
 from PIL import Image
@@ -40,7 +40,7 @@ from scanner import Item, mp4_duration, raw_preview, scan
 from i18n import HELP, LANG, tr
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -1310,6 +1310,9 @@ class MainWindow(QMainWindow):
         self.export_q = ThreadPoolExecutor(max_workers=1)  # export in ordine, uno alla volta
         # fotogrammi da mostrare subito: coda tutta loro, non aspettano dietro le miniature
         self.frames_q = ThreadPoolExecutor(max_workers=2)
+        # copia per la stampa (Real-ESRGAN può metterci minuti): coda sua, non blocca il resto
+        self.print_q = ThreadPoolExecutor(max_workers=1)
+        self.print_job: str | None = None   # id della foto in preparazione, None = nessun lavoro
         self.bridge = Bridge()
         self.bridge.done.connect(self.on_done)
 
@@ -1717,6 +1720,13 @@ class MainWindow(QMainWindow):
         self.btn_print_fix.setObjectName("cropbig")
         self.btn_print_fix.clicked.connect(self.improve_for_print)
         pb.addWidget(self.btn_print_fix)
+        # barra a tempo indeterminato: si vede mentre la copia si prepara
+        self.print_busy = QProgressBar()
+        self.print_busy.setObjectName("progress")
+        self.print_busy.setTextVisible(False)
+        self.print_busy.setRange(0, 0)
+        self.print_busy.hide()
+        pb.addWidget(self.print_busy)
         self.print_box.hide()
         sv.addWidget(self.print_box)
         self.side_slot = sv.count()   # qui arrivano le foto prese da un video
@@ -2240,17 +2250,15 @@ class MainWindow(QMainWindow):
         src = (item.image or item.raw) if item else None
         if not src:
             return
-        out = self.export_dir / "Stampa" / f"{item.main.stem}_stampa.jpg"
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            desc = printprep.improve(src, out)
-        except Exception as ex:  # noqa: BLE001 - file non leggibile dal motore immagini: si avvisa e basta
-            log.error("stampa %s: %r", src, ex)
-            self.flash(tr('Non riesco a preparare questa foto per la stampa'))
+        if self.print_job is not None:   # già in preparazione: non se ne avvia un altro
             return
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.flash(tr('Copia per la stampa salvata: {v0}  ({v1})', v0=out.name, v1=desc))
+        out = self.export_dir / "Stampa" / f"{item.main.stem}_stampa.jpg"
+        self.print_job = item.id
+        self.btn_print_fix.setEnabled(False)
+        self.btn_print_fix.setText(tr('Preparo la copia per la stampa…'))
+        self.print_busy.show()
+        self.status.setText(tr('Preparo la copia per la stampa… può richiedere qualche minuto'), ms=0)
+        self.submit("print", (item.id, out), printprep.improve, src, out, queue=self.print_q)
 
     def update_btn_info(self):
         self.btn_info.setProperty("on", "true" if self.side_wanted else "false")
@@ -3317,6 +3325,16 @@ class MainWindow(QMainWindow):
                 self.thumbs[key] = res
                 if self.strip.owner == key:
                     self.strip.set_thumbs(res)
+        elif kind == "print":
+            item_id, out = key
+            self.print_job = None
+            self.btn_print_fix.setEnabled(True)
+            self.btn_print_fix.setText(tr('Migliora per la stampa'))
+            self.print_busy.hide()
+            if isinstance(res, Exception):
+                self.flash(tr('Non riesco a preparare questa foto per la stampa'))
+            else:
+                self.flash(tr('Copia per la stampa salvata: {v0}  ({v1})', v0=out.name, v1=res))
         elif kind == "sharpest":
             item_id, start = key
             # vale solo se sei ancora sul fotogramma da cui hai chiesto: se intanto ti sei
@@ -3814,7 +3832,6 @@ class MainWindow(QMainWindow):
         if not ses:
             self.save_info.setText("")
             return
-        esc = lambda x: str(x).replace("&", "&amp;").replace("<", "&lt;").replace("/", "/\u200b")
         saved = ses.path.exists()
         when = ses.updated[11:19] if saved and len(ses.updated) >= 19 else ""
         day = ses.updated[:10] if saved else ""
@@ -5147,7 +5164,7 @@ class MainWindow(QMainWindow):
                 self.show_message(tr('Completo gli export in corso… ({left})\n\nLe copie non finite verranno rifatte alla prossima apertura.', left=left))
                 QApplication.processEvents()
                 time.sleep(0.05)
-        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q):
+        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q):
             ex.shutdown(wait=False, cancel_futures=True)
         if self.session:
             self.session.close()

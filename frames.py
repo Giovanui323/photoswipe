@@ -8,7 +8,6 @@ Regole (verificate sui file della Pocket 4):
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 import shutil

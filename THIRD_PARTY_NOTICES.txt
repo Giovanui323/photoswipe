@@ -204,11 +204,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ==============================================================================
-7. vcomp140.dll (engines/windows) — Microsoft OpenMP runtime, part of the
-   Microsoft Visual C++ Redistributable. Copyright (c) Microsoft Corporation.
-   It is NOT covered by PhotoSwipe's MIT license: it is distributed unmodified
-   under Microsoft's Visual Studio redistribution terms
-   (https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution).
+7. Windows runtime: the Windows executable needs Microsoft's OpenMP runtime
+   (vcomp140.dll), which is NOT bundled. It comes with the free Microsoft Visual
+   C++ Redistributable (https://aka.ms/vs/17/release/vc_redist.x64.exe); without
+   it PhotoSwipe falls back to a simple (Lanczos) enlargement.
 ==============================================================================
 8. auto_model.py (AUTO / magic wand) — trained by PhotoSwipe itself only on
    public-domain and CC0 photographs from Wikimedia Commons; no third-party weights.

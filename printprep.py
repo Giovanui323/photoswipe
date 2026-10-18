@@ -77,7 +77,15 @@ def realesrgan_bin() -> Path | None:
     return Path(found) if found else None
 
 
+# Windows: il motore usa il runtime OpenMP di Microsoft (vcomp140.dll), che non distribuiamo
+# (licenza Microsoft): se manca, si usa l'ingrandimento semplice e si suggerisce di installarlo.
+VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+_DLL_NOT_FOUND = 0xC0000135
+missing_runtime = False
+
+
 def _enlarge(im: Image.Image, scale: float) -> Image.Image:
+    global missing_runtime
     w, h = round(im.width * scale), round(im.height * scale)
     engine = realesrgan_bin()
     if engine:
@@ -93,6 +101,9 @@ def _enlarge(im: Image.Image, scale: float) -> Image.Image:
                 with Image.open(out) as big:
                     big.load()
                     return big.resize((w, h), Image.LANCZOS)
+        except subprocess.CalledProcessError as e:
+            if sys.platform == "win32" and (e.returncode & 0xFFFFFFFF) == _DLL_NOT_FOUND:
+                missing_runtime = True   # manca il Visual C++ Redistributable
         except (OSError, subprocess.SubprocessError):
             pass   # motore non disponibile o fallito: si ripiega sul metodo classico
     return im.resize((w, h), Image.LANCZOS).filter(
@@ -114,4 +125,8 @@ def improve(src: Path, dst: Path) -> str:
     dst.parent.mkdir(parents=True, exist_ok=True)
     im.save(dst, "JPEG", quality=95, subsampling=0, dpi=(300, 300), exif=exif.tobytes())
     _, text = verdict(*im.size)
-    return tr('{v0} × {v1} px: {v2}', v0=im.width, v1=im.height, v2=text)
+    note = ""
+    if missing_runtime:
+        note = tr(" (ingrandimento semplice: per la qualità migliore installa il Visual C++ "
+                  "Redistributable gratuito di Microsoft: {url})", url=VC_REDIST_URL)
+    return tr('{v0} × {v1} px: {v2}', v0=im.width, v1=im.height, v2=text) + note
