@@ -105,16 +105,16 @@ def test_live_exports_exactly_the_frame_chosen_and_shown(qapp, win, nsd, how, ex
     open_folder(qapp, win, nsd)
     go(qapp, win, f"{LIVE}.MP4")
     if how == "shift_right":
-        press(qapp, win, Qt.Key_Right, Qt.ShiftModifier)
+        press(qapp, win, Qt.Key_Down, Qt.ShiftModifier)
     elif how == "left_x3":
         for _ in range(3):
-            press(qapp, win, Qt.Key_Left)
+            press(qapp, win, Qt.Key_Up)
     elif how == "strip_click":
         win.strip.picked.emit(71)
     else:
         win.strip.picked.emit(10)
-        press(qapp, win, Qt.Key_Right)
-        press(qapp, win, Qt.Key_Right)
+        press(qapp, win, Qt.Key_Down)
+        press(qapp, win, Qt.Key_Down)
     pump(qapp, 0.2)
     assert win.frame == expected
     assert shown(qapp, win) == expected                      # a schermo c'è proprio quello

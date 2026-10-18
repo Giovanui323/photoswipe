@@ -40,7 +40,7 @@ from scanner import Item, mp4_duration, raw_preview, scan
 from i18n import HELP, LANG, tr
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -123,6 +123,10 @@ QFrame#scenebar QPushButton#play:hover { background: #3a3a3c; border-color: #d1d
 QPushButton#stripnav { background: transparent; color: #f2f2f7; font-size: 13px;
     border: 1.5px solid #8e8e93; border-radius: 15px; padding: 3px 10px; }
 QPushButton#stripnav:hover { background: #3a3a3c; border-color: #d1d1d6; }
+QPushButton#stripnav[home="true"] { border: 2px solid #ffd60a; }
+QPushButton#photoarrow { background: rgba(28,28,30,170); color: #f2f2f7; font-size: 22px;
+    border: 1.5px solid #8e8e93; border-radius: 22px; padding-bottom: 3px; }
+QPushButton#photoarrow:hover { background: rgba(58,58,60,220); border-color: #d1d1d6; }
 QFrame#scenebar QPushButton#live { background: #ffd60a; color: #1c1c1e; font-weight: 700; }
 /* come la barra Live di Foto: striscia tra parentesi, volume e menu "Live" */
 QFrame#scenebar QFrame#stripbox { background: #3a3a3c; border: none; border-radius: 8px; }
@@ -1809,11 +1813,14 @@ class MainWindow(QMainWindow):
         self.btn_side_export = QPushButton(tr('Export'))
         self.btn_side_export.setToolTip(tr('Apre in {FILE_MANAGER} la cartella con le foto approvate.', FILE_MANAGER=FILE_MANAGER))
         self.btn_side_export.clicked.connect(self.open_export)
+        self.btn_rename_date = QPushButton(tr('Rinomina per data'))
+        self.btn_rename_date.setToolTip(tr('Rinomina le copie approvate in export in ordine di data e ora di scatto. Gli originali non si toccano.'))
+        self.btn_rename_date.clicked.connect(self.rename_exports_by_date)
         self.save_row = QWidget()
         srow = QHBoxLayout(self.save_row)
         srow.setContentsMargins(0, 2, 0, 0)
         srow.setSpacing(6)
-        for b in (self.btn_save_now, self.btn_show_save, self.btn_side_export):
+        for b in (self.btn_save_now, self.btn_show_save, self.btn_side_export, self.btn_rename_date):
             b.setObjectName("small")   # stessa pillola degli altri pulsanti piccoli del pannello
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
@@ -1873,6 +1880,18 @@ class MainWindow(QMainWindow):
         # in sovraimpressione: data e ora (SOLO a schermo, mai nei file esportati), avvisi, messaggi
         self.zoom_pill.setParent(self.stack)
         self.zoom_pill.hide()
+        # frecce ai lati della foto: come Su / Giù (foto precedente / successiva)
+        self.photo_prev = QPushButton("‹", self.stack)
+        self.photo_next = QPushButton("›", self.stack)
+        for b, fn, tip in ((self.photo_prev, self.go_back, 'Foto precedente'),
+                           (self.photo_next, self.go_forward, 'Foto successiva')):
+            b.setObjectName("photoarrow")
+            b.setFixedSize(44, 44)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(tr(tip))
+            b.clicked.connect(fn)
+            b.hide()
         self.stamp = QLabel("", self.stack)
         self.stamp.setObjectName("stamp")
         self.stamp.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -2217,6 +2236,8 @@ class MainWindow(QMainWindow):
         right_box.setFixedWidth(220)
         strip_row.addWidget(right_box, 0, Qt.AlignVCenter)
         self.return_idx: int | None = None   # dove eri prima di tornare indietro
+        self.came_from_home = False          # riaperta da ⌂ Riprendi: "Torna all'analisi" e frecce
+        self.btn_locate.setProperty("home", "true")   # contorno giallo
         lay.addLayout(strip_row)
 
         self.dl_timer = QTimer(self)
@@ -2275,9 +2296,10 @@ class MainWindow(QMainWindow):
         self.update_btn_info()
         for w in (self.side_info, self.side_details, self.side_sel, self.counter, self.snaps_label,
                   self.snap_gallery, self.save_head, self.save_info, self.save_row,
-                  self.thumbs_strip, self.strip_filter):
+                  self.thumbs_strip, self.strip_filter, self.btn_thumb_prev, self.btn_thumb_next):
             w.setVisible(browsing)
         self.update_print_box()
+        self.update_photo_arrows()
 
     def update_print_box(self):
         """Box Stampa: quanto regge la foto in stampa, e il pulsante per la copia migliorata."""
@@ -2867,6 +2889,7 @@ class MainWindow(QMainWindow):
                   self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn,
                   self.btn_return, self.zoom_pill):
             w.setEnabled(not on)
+        self.update_locate_btn()
         self.btn_locate.setEnabled(not on and not self.locate_is_here())
         self.update_edit_ui()
 
@@ -2990,6 +3013,8 @@ class MainWindow(QMainWindow):
             self.btn_help.setVisible(self.width() >= 1180)
         if getattr(self, "btn_home", None) is not None:   # finestra stretta: il nome del file ha la precedenza (tasto Home)
             self.btn_home.setVisible(self.width() >= 1180)
+        if getattr(self, "photo_prev", None) is not None:
+            self.place_photo_arrows()
         self.balance_top()
         QTimer.singleShot(0, self.balance_top)   # di nuovo quando le misure si sono assestate
 
@@ -3297,11 +3322,12 @@ class MainWindow(QMainWindow):
             "Shift+Y": lambda: self.decide("yes", with_video=True),
             "Shift+Return": lambda: self.decide("yes", with_video=True), "N": lambda: self.decide("no"),
             "S": lambda: self.decide("skip"), "X": lambda: self.decide("trash"), "Z": self.undo, "Ctrl+Z": self.undo,
-            "C": self.toggle_scene, "Left": lambda: self.step(-1), "Right": lambda: self.step(1),
-            "Shift+Left": lambda: self.step(-10), "Shift+Right": lambda: self.step(10),
+            "C": self.toggle_scene, "Left": self.go_back, "Right": self.go_forward,
+            "Shift+Up": lambda: self.step(-10), "Shift+Down": lambda: self.step(10),
             "P": self.pick_sharpest, "R": self.reset_frame, "Space": self.play_pause,
             "?": self.show_help, "H": self.show_help, "V": self.replay, "L": self.toggle_live, "F": self.take_photo,
-            "Up": self.go_back, "B": self.go_back, "Home": self.go_home, "Down": self.go_forward, ".": self.toggle_favorite,
+            "Up": lambda: self.nav_frame(-1), "B": self.go_back, "Home": self.go_home,
+            "Down": lambda: self.nav_frame(1), ".": self.toggle_favorite,
             "I": self.toggle_side,
 
         }
@@ -3594,8 +3620,12 @@ class MainWindow(QMainWindow):
         home_id = self.settings_store.value("home_id", "")
         self.settings_store.remove("home_root")
         self.settings_store.remove("home_id")
+        self.came_from_home = False
         if home_root == str(self.root) and home_id:
-            self.idx = next((i for i, it in enumerate(self.items) if it.id == home_id), self.idx)
+            pos = next((i for i, it in enumerate(self.items) if it.id == home_id), None)
+            if pos is not None:
+                self.idx = pos
+                self.came_from_home = True   # "Torna all'analisi" e frecce compaiono solo da qui
         done = sum(1 for it in self.items if self.session.get(it.id) is not None)
         if export_warning:
             self.status.setStyleSheet("color:#f0b860;")
@@ -3665,6 +3695,7 @@ class MainWindow(QMainWindow):
         self._yes_without_preview = None  # SÌ senza anteprima: solo per il DNG mostrato ora
         self.reset_edit_view()
         self.update_counter()
+        self.update_locate_btn()
         self.btn_locate.setEnabled(not self.locate_is_here())
         if self.return_idx is not None and self.idx == self.return_idx:
             self.return_idx = None
@@ -4004,6 +4035,36 @@ class MainWindow(QMainWindow):
         home = str(Path.home())
         return "~" + str(path)[len(home):] if str(path).startswith(home) else str(path)
 
+    def rename_exports_by_date(self):
+        """Copie approvate in export: numero e data/ora di scatto, in ordine cronologico. Originali intatti."""
+        if not self.session or not self.items:
+            return
+        if any(not f.done() for f in self.export_futures.values()) or self.print_job is not None:
+            self.flash(tr('Aspetta che finiscano le copie in corso, poi rinomina'))
+            return
+        if not exporter.export_reachable(self.export_dir):
+            self.flash(tr('Cartella export non raggiungibile'))
+            return
+        entries = []
+        for it in self.items:
+            d = self.session.get(it.id)
+            if d and d.get("choice") == "yes" and d.get("files"):
+                entries.append((it.id, it.taken, list(d["files"])))
+        if not entries:
+            self.flash(tr('Nessuna copia da rinominare'))
+            return
+        sure = QMessageBox.question(
+            self, tr('Rinomina per data'),
+            tr("Rinomino {v0} foto approvate in export in ordine di data e ora.\nGli originali non si toccano.\n\nContinuare?", v0=len(entries)))
+        if sure != QMessageBox.Yes:
+            return
+        moved = exporter.rename_by_date(entries, self.export_dir)
+        for item_id, pairs in moved.items():
+            d = self.session.get(item_id)
+            if d:
+                self.session.relocated(item_id, d.get("export_id"), pairs)
+        self.flash(tr('Copie rinominate: {v0}', v0=sum(len(p) for p in moved.values())))
+
     def save_now(self):
         if not self.session:
             return
@@ -4236,9 +4297,27 @@ class MainWindow(QMainWindow):
             self.zoom_pill.move(self.stamp.x(), self.stamp.y() + self.stamp.height() + 6)
             self.zoom_pill.raise_()
 
+    def place_photo_arrows(self):
+        """Frecce ai lati della foto, a metà altezza."""
+        area = self.stack.rect()
+        y = max(0, (area.height() - 44) // 2)
+        self.photo_prev.move(14, y)
+        self.photo_next.move(max(14, area.width() - 44 - 14), y)
+        self.photo_prev.raise_()
+        self.photo_next.raise_()
+
+    def update_photo_arrows(self):
+        """Visibili solo mentre si sfoglia foto o video (non in home, non durante una modifica)."""
+        browsing = (self.stack.currentWidget() in (self.image_view, self.video_widget)
+                    and self.current() is not None and not self.edit_pending())
+        self.photo_prev.setVisible(browsing)
+        self.photo_next.setVisible(browsing)
+        self.place_photo_arrows()
+
     def update_item_labels(self):
         item = self.current()
         self.update_print_box()
+        self.update_photo_arrows()
         if not item:
             return
         color = KIND_COLOR[item.kind]
@@ -4710,6 +4789,14 @@ class MainWindow(QMainWindow):
             self._preview_again = False
             self.request_preview()
 
+    def nav_frame(self, delta: int):
+        """Su / Giù: fotogramma prima / dopo nei video; sulle foto, foto precedente / successiva."""
+        item = self.current()
+        if item is not None and item.is_clip and self.current_frame() is not None:
+            self.step(delta)
+        else:
+            (self.go_back if delta < 0 else self.go_forward)()
+
     def set_frame(self, n: int, manual: bool):
         item = self.current()
         info = self.infos.get(item.id) if item else None
@@ -4860,10 +4947,17 @@ class MainWindow(QMainWindow):
         i = self.next_index(-1)
         return bool(self.items) and i < len(self.items) and i == self.idx
 
+    def update_locate_btn(self):
+        """"Torna all'analisi" e le frecce della striscia: solo se si torna dalla home, finché serve."""
+        show = self.came_from_home and bool(self.items) and not self.locate_is_here()
+        self.btn_locate.setVisible(show)
+
     def locate_thumb(self):
         """Torna alla prima foto ancora da decidere (la prossima da giudicare)."""
         if not self.session or not self.items:
             return
+        self.came_from_home = False   # fatto: il pulsante e le frecce tornano nascosti
+        self.update_locate_btn()
         i = self.next_index(-1)
         if i >= len(self.items):
             # Tutte decise: resta dove sei, ma riporta la striscia al centro

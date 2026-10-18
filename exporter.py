@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -226,6 +227,33 @@ def relocate_exports(files: list[str], old_root: Path, new_root: Path) -> list[l
         dst = unique_path((new_root / rel).parent, src.name)
         os.replace(src, dst)
         out.append([str(src), str(dst)])
+    return out
+
+
+_DATE_PREFIX = re.compile(r"^\d{4}_\d{8}_\d{6}_")
+
+
+def rename_by_date(entries: list[tuple[str, datetime, list[str]]], export_dir: Path) -> dict[str, list[list[str]]]:
+    """Rinomina le copie in export con numero e data/ora di scatto (0001_20240615_123456_nome.jpg),
+    in ordine cronologico. Solo copie in export, mai originali; non sovrascrive.
+    entries: (id elemento, ora di scatto, copie). Ritorna, per elemento, le coppie [prima, dopo]."""
+    out: dict[str, list[list[str]]] = {}
+    for n, (item_id, when, files) in enumerate(sorted(entries, key=lambda e: (e[1], e[0])), start=1):
+        for f in files:
+            src = Path(f)
+            try:
+                src.relative_to(export_dir)
+            except ValueError:
+                continue   # non è in export: non si tocca
+            if not src.exists():
+                continue
+            base = _DATE_PREFIX.sub("", src.name)   # rifare il rinomino non aggiunge un secondo prefisso
+            name = f"{n:04d}_{when:%Y%m%d_%H%M%S}_{base}"
+            if name == src.name:
+                continue
+            dst = unique_path(src.parent, name)
+            os.replace(src, dst)
+            out.setdefault(item_id, []).append([str(src), str(dst)])
     return out
 
 

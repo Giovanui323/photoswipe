@@ -25,6 +25,8 @@ def tr(text: str, **kw) -> str:
 
 
 EN = {
+    "Foto precedente": "Previous photo",
+    "Foto successiva": "Next photo",
     "Confronta con la copia per la stampa": "Compare with the print copy",
     "Creo la copia per la stampa in export/Stampa. L'originale non si tocca.": "I'll create the print copy in export/Stampa. The original is not touched.",
     "Premuto: mostra la copia per la stampa. Di nuovo: torna alla foto.": "Pressed: shows the print copy. Press again: back to the photo.",

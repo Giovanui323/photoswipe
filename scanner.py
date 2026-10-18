@@ -7,7 +7,7 @@ import struct
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cloud
@@ -95,12 +95,29 @@ def mp4_duration(path: Path) -> float:
     """Legge la durata dall'atom 'mvhd' senza decodificare il video."""
     try:
         with open(path, "rb") as f:
-            return _find_mvhd(f, 0, os.fstat(f.fileno()).st_size)
+            return _find_mvhd(f, 0, os.fstat(f.fileno()).st_size)[0]
     except (OSError, struct.error, IndexError):
         return 0.0
 
 
-def _find_mvhd(f, start: int, end: int) -> float:
+def mp4_created(path: Path) -> datetime | None:
+    """Data di creazione scritta nel video (atom 'mvhd', UTC), convertita all'ora locale."""
+    try:
+        with open(path, "rb") as f:
+            seconds = _find_mvhd(f, 0, os.fstat(f.fileno()).st_size)[1]
+    except (OSError, struct.error, IndexError):
+        return None
+    if not seconds:
+        return None
+    try:
+        utc = datetime(1904, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=seconds)
+        return utc.astimezone().replace(tzinfo=None)
+    except (OverflowError, ValueError, OSError):
+        return None
+
+
+def _find_mvhd(f, start: int, end: int) -> tuple[float, int]:
+    """(durata in secondi, data di creazione in secondi dal 1904) dall'atom 'mvhd'."""
     pos = start
     while pos + 8 <= end:
         f.seek(pos)
@@ -112,21 +129,23 @@ def _find_mvhd(f, start: int, end: int) -> float:
         elif size == 0:
             size = end - pos
         if size < header:
-            return 0.0
+            return 0.0, 0
         if kind == b"moov":
             return _find_mvhd(f, pos + header, pos + size)
         if kind == b"mvhd":
             version = f.read(1)[0]
             f.read(3)
             if version == 1:
-                f.read(16)
+                created = struct.unpack(">Q", f.read(8))[0]
+                f.read(8)
                 timescale, duration = struct.unpack(">IQ", f.read(12))
             else:
-                f.read(8)
+                created = struct.unpack(">I", f.read(4))[0]
+                f.read(4)
                 timescale, duration = struct.unpack(">II", f.read(8))
-            return duration / timescale if timescale else 0.0
+            return (duration / timescale if timescale else 0.0), created
         pos += size
-    return 0.0
+    return 0.0, 0
 
 
 def spotlight_durations(paths: list[Path]) -> list[float]:
@@ -149,8 +168,36 @@ def spotlight_durations(paths: list[Path]) -> list[float]:
     return out
 
 
-def capture_time(path: Path, local: bool) -> datetime:
-    """Data di scatto: nome file DJI -> EXIF (solo se già scaricato) -> data di modifica."""
+def spotlight_dates(paths: list[Path]) -> list[datetime | None]:
+    """Data di creazione dal sistema (macOS, Spotlight): serve per HEIC, PNG, DNG e video senza data."""
+    if sys.platform != "darwin" or not paths:
+        return [None] * len(paths)
+    out: list[datetime | None] = []
+    for i in range(0, len(paths), 200):
+        chunk = paths[i:i + 200]
+        try:
+            res = subprocess.run(["mdls", "-raw", "-name", "kMDItemContentCreationDate", *map(str, chunk)],
+                                 capture_output=True, timeout=60)
+            values = res.stdout.decode(errors="replace").split("\0")
+        except (OSError, subprocess.SubprocessError):
+            values = []
+        for j in range(len(chunk)):
+            text = values[j].strip() if j < len(values) else ""
+            when = None
+            try:   # "2026-07-23 21:54:08 +0200": con il fuso, convertito all'ora locale
+                when = datetime.strptime(text[:25], "%Y-%m-%d %H:%M:%S %z").astimezone().replace(tzinfo=None)
+            except ValueError:
+                try:
+                    when = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    pass
+            out.append(when)
+    return out
+
+
+def capture_time(path: Path, local: bool) -> datetime | None:
+    """Data di scatto: nome file DJI -> EXIF (JPEG, solo se già scaricato) -> data nel video.
+    None se non c'è: si chiede a Spotlight, poi si usa la data del file (file_time)."""
     m = _DJI_TS.search(path.name)
     if m:
         try:
@@ -167,6 +214,15 @@ def capture_time(path: Path, local: bool) -> datetime:
                 return datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
         except Exception:
             pass
+    if local and path.suffix.lower() in {".mp4", ".mov", ".m4v"}:
+        created = mp4_created(path)
+        if created:
+            return created
+    return None
+
+
+def file_time(path: Path, local: bool) -> datetime:
+    """Ultima risorsa: la data di modifica del file (dopo una copia è il giorno della copia)."""
     try:
         return datetime.fromtimestamp(path.stat().st_mtime)
     except OSError:
@@ -254,6 +310,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     # Prima le cartelle più profonde (DCIM originale), poi le copie fatte a mano
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[0][0].parts), str(kv[0][0])))
     unknown: list[Item] = []
+    undated: list[Item] = []   # senza data nel nome né nell'EXIF: si chiede a Spotlight
     for (folder, stem), files in ((k, g) for k, slots in ordered for g in slots):
         main = files.get("image") or files.get("video") or files["raw"]
         size = _size(main)
@@ -261,9 +318,12 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
             continue
         seen.add((main.name.upper(), size))
         local = cloud.is_local(main)
+        taken = capture_time(main, local)
         it = Item(kind="photo", id=main.relative_to(root).as_posix(), image=files.get("image"),
                   raw=files.get("raw"), video=files.get("video"),
-                  taken=capture_time(main, local), size=size)
+                  taken=taken or file_time(main, local), size=size)
+        if taken is None and local:
+            undated.append(it)
         if it.image:
             idx = _DJI_INDEX.search(stem)
             if idx and (folder.parent, idx.group(1)) in pano_indexes:
@@ -277,6 +337,12 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
             else:
                 unknown.append(it)
         items.append(it)
+
+    # Senza data nel nome né nell'EXIF (HEIC, PNG, DNG, video): la data di creazione di Spotlight,
+    # così l'ordine segue davvero l'ora di scatto e non il giorno della copia
+    for it, when in zip(undated, spotlight_dates([it.main for it in undated])):
+        if when:
+            it.taken = when
 
     # Video su iCloud: durata da Spotlight (macOS) senza scaricarli
     for it, seconds in zip(unknown, spotlight_durations([i.video for i in unknown])):

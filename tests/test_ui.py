@@ -210,9 +210,9 @@ def test_keyboard_shortcuts_decide(qapp, win, sd):
     assert win.session.get(win.items[1].id)["choice"] == "no"
     press(qapp, win, Qt.Key_S)
     assert win.session.get(win.items[2].id)["choice"] == "skip"
-    press(qapp, win, Qt.Key_Up)                     # indietro
+    press(qapp, win, Qt.Key_Left)                   # indietro (Su/Giù sono i fotogrammi del video)
     assert win.idx == 2
-    press(qapp, win, Qt.Key_Down)                   # avanti
+    press(qapp, win, Qt.Key_Right)                  # avanti
     assert win.idx == 3
     go(qapp, win, PHOTO1)
     press(qapp, win, Qt.Key_Return)                 # Invio = Sì
@@ -282,7 +282,7 @@ def test_live_yes_exports_the_frame_chosen_on_the_strip(qapp, win, sd):
     assert win.camera_frames[win.current().id] == CAM_FRAME
     assert "della fotocamera" in win.frame_label.text()
     assert win.btn_live.isVisible() and not win.btn_snap.isVisible()
-    press(qapp, win, Qt.Key_Right, Qt.ShiftModifier)    # 10 avanti
+    press(qapp, win, Qt.Key_Down, Qt.ShiftModifier)    # 10 avanti
     assert win.frame == CAM_FRAME + 10
     assert "scelta da te" in win.frame_label.text()
     assert win.btn_reset.isVisible()

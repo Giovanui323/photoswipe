@@ -29,7 +29,7 @@ def test_video_frame_size_changes_only_with_zoom(qapp, win, sd):
         win.on_strip_picked(n)
         pump(qapp, 0.2)
         sizes.append(settle(qapp, win, f"fotogramma {n}"))
-    press(qapp, win, Qt.Key_Right)
+    press(qapp, win, Qt.Key_Down)
     sizes.append(settle(qapp, win, "freccia"))
     assert len(set(sizes)) == 1, f"la misura cambia senza zoom: {sizes}"
 
@@ -43,7 +43,7 @@ def test_live_frame_size_changes_only_with_zoom(qapp, win, sd):
         win.on_strip_picked(n)
         pump(qapp, 0.2)
         sizes.append(settle(qapp, win, f"fotogramma {n}"))
-    press(qapp, win, Qt.Key_Left, Qt.ShiftModifier)
+    press(qapp, win, Qt.Key_Up, Qt.ShiftModifier)
     sizes.append(settle(qapp, win, "Maiusc+←"))
     assert len(set(sizes)) == 1, f"la misura cambia senza zoom: {sizes}"
 

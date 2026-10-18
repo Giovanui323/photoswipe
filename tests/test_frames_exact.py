@@ -83,11 +83,11 @@ def test_video_snapshots_are_exactly_the_frames_shown(qapp, win, sd, video_ref):
     assert which(shown_image(qapp, win), video_ref) == 30
     press(qapp, win, Qt.Key_F)
     for _ in range(5):                            # → cinque volte
-        press(qapp, win, Qt.Key_Right)
+        press(qapp, win, Qt.Key_Down)
     taken.append(win.current_frame())
     assert which(shown_image(qapp, win), video_ref) == 35
     click(qapp, win, win.btn_snap)                # pulsante 📷
-    press(qapp, win, Qt.Key_Right, Qt.ShiftModifier)   # Maiusc+→ = 10 avanti
+    press(qapp, win, Qt.Key_Down, Qt.ShiftModifier)   # Maiusc+→ = 10 avanti
     taken.append(win.current_frame())
     press(qapp, win, Qt.Key_F)
     exports_done(qapp, win)

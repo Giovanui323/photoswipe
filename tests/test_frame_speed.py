@@ -134,5 +134,5 @@ def test_proxy_window_frames_are_exact(sd, live_ref):
 def test_key_arrows_still_work_after_quick_frames(qapp, win, sd):
     open_live(qapp, win, sd)
     win.on_strip_picked(10)
-    press(qapp, win, Qt.Key_Right)
+    press(qapp, win, Qt.Key_Down)
     assert win.shown_frame == 11
