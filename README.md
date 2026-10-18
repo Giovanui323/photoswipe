@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.3.3-blue)
+![Version](https://img.shields.io/badge/version-1.3.4-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
@@ -154,6 +154,18 @@ packaging/build_dmg.sh                 # build the macOS .dmg
 ## 📄 License
 
 [MIT](LICENSE). Free to use, modify and share.
+
+### Third-party components (bundled, freely redistributable)
+
+| Component | Used for | License |
+|---|---|---|
+| [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) model `realesrgan-x4plus` © 2021 Xintao Wang | "Migliora per la stampa" (print upscaling) | BSD 3-Clause — full text in [`engines/LICENSE-Real-ESRGAN.txt`](engines/LICENSE-Real-ESRGAN.txt) |
+| [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan) executables (`engines/macos`, `engines/windows`) | running the model on CPU/GPU, offline | MIT |
+| Self-taught AUTO model (`auto_model.py`) | AUTO and magic wand | trained only on public-domain / CC0 photos from Wikimedia Commons |
+
+All of these may be redistributed, also inside the app, as long as their copyright notices travel
+with it: the DMG includes `LICENSE-Real-ESRGAN.txt` next to the app. The original photos are never
+modified; upscaled copies go to a separate folder.
 
 ## 🤝 Contributing
 

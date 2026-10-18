@@ -12,7 +12,7 @@ echo "Versione: $OLD -> $VER"
 rm -rf build/work build/dist build/dmg
 build/venv/bin/pyinstaller --noconfirm --clean --windowed --name PhotoSwipe \
   --icon "$PWD/packaging/PhotoSwipe.icns" --osx-bundle-identifier io.github.giovanui323.photoswipe \
-  --collect-binaries imageio_ffmpeg --add-data "$PWD/engines/macos:engines/macos" --exclude-module rawpy --exclude-module pytest \
+  --collect-binaries imageio_ffmpeg --add-data "$PWD/engines/macos:engines/macos" --add-data "$PWD/engines/LICENSE-Real-ESRGAN.txt:engines" --exclude-module rawpy --exclude-module pytest \
   --exclude-module tkinter --distpath build/dist --workpath build/work --specpath build "$PWD/app.py"
 APP=build/dist/PhotoSwipe.app
 plutil -replace CFBundleShortVersionString -string "$VER" "$APP/Contents/Info.plist"
@@ -23,6 +23,7 @@ mkdir -p build/dmg dist
 cp -R "$APP" build/dmg/
 ln -s /Applications build/dmg/Applicazioni
 cp packaging/LEGGIMI.txt build/dmg/ 2>/dev/null || true
+cp engines/LICENSE-Real-ESRGAN.txt build/dmg/ 2>/dev/null || true   # licenza BSD-3: va distribuita insieme
 DMG="dist/PhotoSwipe-$VER-arm64.dmg"
 rm -f "$DMG"
 hdiutil create -volname "PhotoSwipe $VER" -srcfolder build/dmg -ov -format UDZO "$DMG"
