@@ -40,7 +40,7 @@ from scanner import Item, mp4_duration, raw_preview, scan
 from i18n import HELP, LANG, tr
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.3.6"
+APP_VERSION = "1.3.7"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -1330,6 +1330,7 @@ class MainWindow(QMainWindow):
         self.copy_paths: dict[str, list[str]] = {}
         self.still_owner: str | None = None   # elemento la cui foto è ora a schermo
         self.pending: set[tuple[str, str]] = set()
+        self._sharp_busy = False      # una ricerca del fotogramma più nitido alla volta
         self.ready: set[str] = set()
         self.infos: dict[str, frames.VideoInfo] = {}
         self.camera_frames: dict[str, int] = {}
@@ -1404,6 +1405,9 @@ class MainWindow(QMainWindow):
             return f
 
         # ---- barra in alto
+        self.btn_home = QPushButton("⌂")
+        self.btn_home.setToolTip(tr("Home: torna alla scelta della cartella (la sessione resta salvata)."))
+        self.btn_home.clicked.connect(self.go_home)
         self.btn_back = QPushButton("‹")
         self.btn_back.setToolTip(tr("Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia."))
         self.btn_back.clicked.connect(self.go_back)
@@ -1414,7 +1418,7 @@ class MainWindow(QMainWindow):
         self.btn_undo.setObjectName("undo")
         self.btn_undo.setToolTip(tr("Annulla l'ultima scelta e torna indietro (Z).\nSe era un Sì, toglie anche i file copiati in export."))
         self.btn_undo.clicked.connect(self.undo)
-        self.nav_pill = pill(self.btn_back, self.btn_fwd, self.btn_undo)
+        self.nav_pill = pill(self.btn_home, self.btn_back, self.btn_fwd, self.btn_undo)
         left = QHBoxLayout()
         left.setSpacing(10)
         if self.unified:
@@ -1492,7 +1496,7 @@ class MainWindow(QMainWindow):
         self.btn_settings.clicked.connect(self.show_settings)
         self.btn_wand = EP.WandButton()
         self.btn_wand.setObjectName("wand")
-        self.btn_wand.setToolTip(tr('Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi OK per confermare.'))
+        self.btn_wand.setToolTip(tr('Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Fine per confermare.'))
         self.btn_wand.clicked.connect(self.auto_enhance)
         self.fav_pill = pill(self.btn_fav, self.btn_wand)
         right = QHBoxLayout()
@@ -1641,6 +1645,14 @@ class MainWindow(QMainWindow):
         self.edit_badge.setObjectName("editbadge")
         self.edit_badge.setWordWrap(True)
         fl.addWidget(self.edit_badge)
+        self.btn_confirm_foot = QPushButton(tr('Conferma le modifiche'))
+        self.btn_confirm_foot.setObjectName("cropok")
+        self.btn_confirm_foot.setFocusPolicy(Qt.NoFocus)
+        self.btn_confirm_foot.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm_foot.setToolTip(tr('Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.'))
+        self.btn_confirm_foot.clicked.connect(self.finish_edit)
+        self.btn_confirm_foot.setVisible(False)
+        fl.addWidget(self.btn_confirm_foot)
         self.btn_discard = QPushButton(tr('Annulla le modifiche'))
         self.btn_discard.setObjectName("cropbig")
         self.btn_discard.setFocusPolicy(Qt.NoFocus)
@@ -2452,7 +2464,7 @@ class MainWindow(QMainWindow):
         if e.get("enhanced"):
             self.regola.set_edit(new)
             self.on_regola_changed(new)
-            self.flash(tr('Miglioramento automatico tolto: OK per confermare'))
+            self.flash(tr('Miglioramento automatico tolto: Fine per confermare'))
             return
         img = E.apply_crop(E.geometry_base(self.edit_proxy().convert("RGB"), e), e)
         new.update(E.auto_light(img))
@@ -2461,7 +2473,7 @@ class MainWindow(QMainWindow):
         new["off"] = [x for x in new.get("off", []) if x not in ("light", "color")]
         self.regola.set_edit(new)
         self.on_regola_changed(new)
-        self.flash(tr("✨ Migliorata automaticamente: OK per tenerla, Annulla per lasciarla com'era"))
+        self.flash(tr("✨ Migliorata automaticamente: Fine per tenerla, Annulla per lasciarla com'era"))
 
     def set_compare(self, on: bool) -> None:
         """□|□: l'originale a schermo finché il pulsante è premuto."""
@@ -2518,8 +2530,9 @@ class MainWindow(QMainWindow):
         editing = ok and (self.crop_draft is not None or tone)
         self.btn_done.setVisible(editing)
         self.btn_edit_cancel_top.setVisible(crop or tone)
-        self.btn_discard.setVisible(has and not (crop or tone))   # solo se c'è qualcosa da togliere
-        self.side_foot.setVisible(ok and has and not (crop or tone))
+        self.btn_discard.setVisible(has or crop or tone)   # solo se c'è qualcosa da togliere (o da scartare)
+        self.btn_confirm_foot.setVisible(ok and (crop or tone))
+        self.side_foot.setVisible(ok and (has or crop or tone))
         changed = ok and (has or self.tone_draft is not None or self.crop_draft is not None)
         self.btn_restore.setVisible(changed)
         self.btn_restore.setEnabled(has or crop or tone)
@@ -2893,6 +2906,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "btn_help", None) is not None:
             # finestra stretta: il nome del file resta leggibile; l'aiuto resta in ⚙ e coi tasti ? / H
             self.btn_help.setVisible(self.width() >= 1180)
+        if getattr(self, "btn_home", None) is not None:   # finestra stretta: il nome del file ha la precedenza (tasto Home)
+            self.btn_home.setVisible(self.width() >= 1180)
         self.balance_top()
         QTimer.singleShot(0, self.balance_top)   # di nuovo quando le misure si sono assestate
 
@@ -3201,7 +3216,7 @@ class MainWindow(QMainWindow):
             "Shift+Left": lambda: self.step(-10), "Shift+Right": lambda: self.step(10),
             "P": self.pick_sharpest, "R": self.reset_frame, "Space": self.play_pause,
             "?": self.show_help, "H": self.show_help, "V": self.replay, "L": self.toggle_live, "F": self.take_photo,
-            "Up": self.go_back, "B": self.go_back, "Down": self.go_forward, ".": self.toggle_favorite,
+            "Up": self.go_back, "B": self.go_back, "Home": self.go_home, "Down": self.go_forward, ".": self.toggle_favorite,
             "I": self.toggle_side,
 
         }
@@ -3336,6 +3351,8 @@ class MainWindow(QMainWindow):
             else:
                 self.flash(tr('Copia per la stampa salvata: {v0}  ({v1})', v0=out.name, v1=res))
         elif kind == "sharpest":
+            self._sharp_busy = False
+            self.btn_sharp.setEnabled(True)
             item_id, start = key
             # vale solo se sei ancora sul fotogramma da cui hai chiesto: se intanto ti sei
             # spostato (→, striscia, altro elemento) il risultato non ti riporta indietro
@@ -4693,9 +4710,12 @@ class MainWindow(QMainWindow):
         item = self.current()
         info = self.infos.get(item.id) if item else None
         n = self.current_frame()
-        if info and n is not None:
-            self.frame_label.setText(tr('cerco il fotogramma più nitido…'))
-            self.submit("sharpest", (item.id, n), frames.sharpest_near, info.source or item.video, info, n)
+        if not info or n is None or self._sharp_busy:   # già in corso: premere di nuovo non ne accoda altre
+            return
+        self._sharp_busy = True
+        self.btn_sharp.setEnabled(False)
+        self.frame_label.setText(tr('cerco il fotogramma più nitido…'))
+        self.submit("sharpest", (item.id, n), frames.sharpest_near, info.source or item.video, info, n)
 
     # ------------------------------------------------------------------ filtro, indietro, preferite
     def on_filter_changed(self):
@@ -4708,6 +4728,13 @@ class MainWindow(QMainWindow):
             i = self.next_index(self.idx)
             self.idx = i if i < len(self.items) else self.next_index(-1)
         self.show_item()
+
+    def go_home(self):
+        """Home: torna alla scelta della cartella. Con modifiche aperte non si esce."""
+        if self.edit_pending():
+            self.flash(tr('Prima conferma o annulla le modifiche'))
+            return
+        self.show_setup()
 
     def go_back(self):
         if not self.session or not self.items or self.stack.currentWidget() is self.setup_page:

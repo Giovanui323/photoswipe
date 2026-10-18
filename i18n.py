@@ -46,6 +46,9 @@ EN = {
     "Analisi video non riuscita: {res}": "Video analysis failed: {res}",
     "Annulla": "Cancel",
     "Annulla le modifiche": "Discard edits",
+    "Conferma le modifiche": "Confirm edits",
+    "Home: torna alla scelta della cartella (la sessione resta salvata).": "Home: back to choosing the folder (the session is kept).",
+    "Prima conferma o annulla le modifiche": "First confirm or discard the edits",
     "Annulla questa regolazione": "Reset this adjustment",
     "Anteprima dell'elemento che arriva dopo questa scelta.": "Preview of the item that comes after this decision.",
     "Anteprima non disponibile per {v0}\nSÌ copia comunque il DNG originale in export.":
@@ -110,7 +113,7 @@ EN = {
         "The saved choices will be resumed. The export folder from before ({v0}) isn't on this computer: choose where to copy the next ones with ②, then Start.",
     "Lettura della cartella…": "Reading the folder…",
     "Luminosità": "Brightness",
-    "Miglioramento automatico tolto: OK per confermare": "Auto enhancement removed: OK to confirm",
+    "Miglioramento automatico tolto: Fine per confermare": "Auto enhancement removed: Done to confirm",
     "Modifiche annullate: si vede (ed esporta) l'originale": "Edits discarded: the original is shown (and exported)",
     "Modifiche confermate: ✓ Sì esporta la foto modificata": "Edits confirmed: ✓ Yes exports the edited photo",
     "Modifiche pronte: 📷 Prendi foto (F) salva questo fotogramma modificato":
@@ -218,19 +221,19 @@ EN = {
         "⚠ Export folder not reachable ({v0}): {v1} pending copies will be redone the next time you open the folder",
     "⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)":
         "⚠ copy failed: {v0}\n(will be retried the next time you open the folder)",
-    "✂︎ Ritaglio aperto: OK per confermare, Annulla per lasciarla com'era":
-        "✂︎ Crop open: OK to confirm, Cancel to leave it as it was",
+    "✂︎ Ritaglio aperto: Fine per confermare, Annulla per lasciarla com'era":
+        "✂︎ Crop open: Done to confirm, Cancel to leave it as it was",
     "✎ Foto {v0} dopo il Sì: premi di nuovo ✓ Sì per esportare questa versione":
         "✎ Photo {v0} after Yes: press ✓ Yes again to export this version",
     "✎ Foto {v0}: ✓ Sì esporta questa versione": "✎ Photo {v0}: ✓ Yes exports this version",
-    "✎ Modifiche da confermare: OK per tenerle, Annulla per lasciarla com'era":
-        "✎ Edits to confirm: OK to keep them, Cancel to leave it as it was",
+    "✎ Modifiche da confermare: Fine per tenerle, Annulla per lasciarla com'era":
+        "✎ Edits to confirm: Done to keep them, Cancel to leave it as it was",
     "✓ SÌ": "✓ YES",
     "✓ approvata · video non copiato (tenute solo le foto prese)": "✓ approved · video not copied (only the photos taken are kept)",
     "✓ già salvato come foto": "✓ already saved as a photo",
     "✨  Più nitida (P)": "✨  Sharper (P)",
-    "✨ Migliorata automaticamente: OK per tenerla, Annulla per lasciarla com'era":
-        "✨ Auto-enhanced: OK to keep it, Cancel to leave it as it was",
+    "✨ Migliorata automaticamente: Fine per tenerla, Annulla per lasciarla com'era":
+        "✨ Auto-enhanced: Done to keep it, Cancel to leave it as it was",
     "💽 Cartella su disco (non su iCloud): nessun download, si parte subito.":
         "💽 Folder on disk (not iCloud): no download, starts right away.",
     "📂  Apri cartella…": "📂  Open folder…",
@@ -376,8 +379,8 @@ EN.update({
         "The saved choices will be set aside (the file is renamed, not deleted).\nPhotos already copied to export stay where they are.\n\nContinue?",
     "Luce, colore, bianco e nero, curve, nitidezza…\n✓ Sì esporta la foto modificata (l'originale non si tocca).":
         "Light, color, black & white, curves, sharpness…\n✓ Yes exports the edited photo (the original is not touched).",
-    "Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi OK per confermare.":
-        "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then OK to confirm.",
+    "Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Fine per confermare.":
+        "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then Done to confirm.",
     "Non serve: si salva da solo a ogni scelta.\nSe vuoi esserne sicuro, questo salva subito.":
         "Not needed: it saves itself with every choice.\nIf you want to be sure, this saves right away.",
     "Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.":
@@ -401,8 +404,8 @@ EN.update({
         "Removes adjustments and crop from this photo: back to the original.\n(If you had already approved it, press ✓ Yes again to export it as it was.)",
     "Torna alla prima foto ancora da decidere\n(la prossima da giudicare)":
         "Go back to the first photo still to decide\n(the next one to judge)",
-    "Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi OK per confermare il ritaglio (o Annulla).":
-        "Drag the corners or sides of the frame on the photo; drag inside to move it.\nThen OK to confirm the crop (or Cancel).",
+    "Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi Fine per confermare il ritaglio (o Annulla).":
+        "Drag the corners or sides of the frame on the photo; drag inside to move it.\nThen Done to confirm the crop (or Cancel).",
     "Video: fermati sul fotogramma da salvare (pausa o clic sulla striscia), poi Regola o Ritaglia":
         "Video: stop on the frame to save (pause or click the strip), then Adjust or Crop",
     "Zoom (anche due dita sul trackpad o rotella; doppio clic = foto intera)":

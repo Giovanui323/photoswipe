@@ -147,3 +147,24 @@ def test_lru_keeps_what_is_still_used():
     assert c.get("a") == 1                        # usata di recente: resta
     c["d"] = 4
     assert list(c) == ["c", "a", "d"]
+
+
+def test_repeated_press_runs_one_search(qapp, win, bsd, monkeypatch):
+    """Premere "Più nitida" più volte non accoda ricerche: una alla volta, il pulsante si spegne."""
+    real = frames.sharpest_near
+    calls = []
+
+    def slow(*a, **k):
+        calls.append(1)
+        time.sleep(0.8)
+        return real(*a, **k)
+    monkeypatch.setattr(frames, "sharpest_near", slow)
+    open_folder(qapp, win, bsd)
+    go(qapp, win, f"{LONG}.MP4")
+    at_frame(qapp, win, SHARP + 5)
+    for _ in range(5):
+        click(qapp, win, win.btn_sharp)
+    assert not win.btn_sharp.isEnabled()
+    assert wait(qapp, lambda: win.btn_sharp.isEnabled(), 20)
+    assert len(calls) == 1, f"ricerche avviate: {len(calls)}"
+    assert wait(qapp, lambda: win.current_frame() == SHARP, 5), win.current_frame()
