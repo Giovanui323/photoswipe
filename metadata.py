@@ -12,6 +12,7 @@ from pathlib import Path
 from PIL import Image
 
 import frames
+import printprep
 from i18n import tr
 
 
@@ -20,6 +21,7 @@ class Meta:
     rows: list[tuple[str, str]] = field(default_factory=list)   # (etichetta, valore), in ordine
     gps: tuple[float, float] | None = None                       # latitudine, longitudine
     altitude: float | None = None
+    size: tuple[int, int] | None = None                          # pixel della foto
 
 
 def _ratio(v) -> float | None:
@@ -57,6 +59,17 @@ def _size(path: Path) -> str:
     except OSError:
         return ""
     return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{n / 1e3:.0f} KB"
+
+
+def print_size(w: int, h: int) -> str:
+    """Il formato più grande stampabile con una buona resa: 300 dpi (ottima) e 200 dpi (buona)."""
+    parts = []
+    b300, b200 = printprep.best_format(w, h, 300), printprep.best_format(w, h, 200)
+    if b300:
+        parts.append(tr('{v0} a 300 dpi', v0=f"{b300[0]} × {b300[1]} cm"))
+    if b200 and b200 != b300:
+        parts.append(tr('{v0} a 200 dpi', v0=f"{b200[0]} × {b200[1]} cm"))
+    return "  ·  ".join(parts) if parts else tr('troppo piccola per una stampa di qualità')
 
 
 def read_image(path: Path) -> Meta:
@@ -108,6 +121,8 @@ def read_image(path: Path) -> Meta:
         if alt is not None:
             meta.altitude = -alt if gps.get(5) == 1 else alt
     meta.rows.append((tr('Dimensioni'), f"{w} × {h}  ({w * h / 1e6:.1f} MP)"))
+    meta.size = (w, h)
+    meta.rows.append((tr('Stampabilità'), print_size(w, h)))
     return meta
 
 
@@ -162,7 +177,9 @@ def read(item, info: frames.VideoInfo | None = None) -> Meta:
     if item.is_clip:
         meta = read_video(item.video, info)
         if item.image:  # foto abbinata al video
-            meta.rows.extend(r for r in read_image(item.image).rows if r[0] != tr('Dimensioni'))
+            img = read_image(item.image)
+            meta.rows.extend(r for r in img.rows if r[0] != tr('Dimensioni'))
+            meta.size = img.size
     else:
         meta = read_image(item.image or item.raw)
     files = [p for p in (item.image, item.raw, item.video) if p]

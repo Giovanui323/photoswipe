@@ -328,6 +328,16 @@ EN = {
     "Personalizzato": "Custom", "Quadrato": "Square", "Rosso": "Red", "Verde": "Green",
     "Audio": "Audio", "Bitrate": "Bitrate", "Durata": "Duration", "File": "File", "Fotocamera": "Camera",
     "Obiettivo": "Lens", "Scatto": "Shot", "Video": "Video", "Dimensioni": "Size",
+    "Stampabilità": "Printability", "{v0} a 300 dpi": "{v0} at 300 dpi", "{v0} a 200 dpi": "{v0} at 200 dpi",
+    "troppo piccola per una stampa di qualità": "too small for a good-quality print",
+    "ottima": "excellent", "buona": "good", "discreta": "fair", "scarsa": "poor",
+    "STAMPA": "PRINT", "Migliora per la stampa": "Improve for print",
+    "Copia per la stampa salvata: {v0}  ({v1})": "Print copy saved: {v0}  ({v1})",
+    "Non riesco a preparare questa foto per la stampa": "I can't prepare this photo for print",
+    "{v0} × {v1} px: {v2}": "{v0} × {v1} px: {v2}",
+    "FOTO PRESA · FOTOGRAMMA {v0}": "TAKEN PHOTO · FRAME {v0}",
+    "Correggi": "Fix", "Aggiorna foto": "Update photo", "Chiudi ✕": "Close ✕",
+    "Modifica il fotogramma, poi premi \"Aggiorna foto\"": "Edit the frame, then press \"Update photo\"",
 }
 
 EN.update({

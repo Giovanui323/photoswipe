@@ -63,7 +63,7 @@ def test_tabs_info_regola_ritaglia(qapp, win, sd):
     assert win.side_pages.currentIndex() == 1
     pump(qapp, 0.4)
     assert len(win.regola.scrubbers["light"].thumbs) == 5
-    assert "/ 8 già fatte" in win.done_label.text()
+    assert "di 8 già fatte" in win.done_label.text()
 
 
 def test_regola_then_yes_exports_modified(qapp, win, sd):
@@ -80,7 +80,7 @@ def test_regola_then_yes_exports_modified(qapp, win, sd):
     assert exported(win) == [] and win.current().id not in win.session.edits
     win.regola_ok()
     assert win.session.edits[win.current().id]["exposure"] == -0.8
-    assert win.btn_discard.isEnabled() and "✓ Sì" in win.edit_badge.text()
+    assert win.btn_discard.isEnabled() and win.btn_restore.isVisible()
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
     assert exported(win) == [PHOTO1]
@@ -332,3 +332,32 @@ def test_learned_auto_model_loads_and_is_gentle():
     cast = E.render_tone(base, {"wb_temp": 0.7})          # troppo calda
     assert E.learned_auto(cast)["wb_temp"] < E.learned_auto(base)["wb_temp"] - 0.1
     assert set(E.auto_light(base)) <= set(E.LEARNED_SECTIONS["light"])
+
+
+def test_click_on_live_plays_and_stops(qapp, win, sd):
+    from test_core import LIVE
+    open_folder(qapp, win, sd)
+    go(qapp, win, f"{LIVE}.MP4")
+    assert win.btn_volume.isVisible() and win.btn_live_mode.isVisible()
+    win.set_live_mode("live")
+    win.on_media_click()                     # clic sulla foto: parte
+    assert win.live_view
+    win.on_media_click()                     # di nuovo: si ferma e torna alla foto
+    assert not win.live_view
+    win.set_live_mode("off")
+    win.on_media_click()                     # Disattiva: il clic non la avvia
+    assert not win.live_view
+    win.set_live_mode("live")
+    win.btn_volume.setChecked(True)
+    assert win.audio.isMuted()
+
+
+def test_compare_says_what_you_see(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    win.auto_enhance()
+    win.confirm_edit()
+    click(qapp, win, win.btn_compare)
+    assert win.status.text() == "Originale"
+    click(qapp, win, win.btn_compare)
+    assert win.status.text() == "Modificata"

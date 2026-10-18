@@ -43,3 +43,13 @@ def test_no_gps_and_unreadable(tmp_path):
     bad.write_bytes(b"non una foto")
     m = metadata.read(Item("photo", bad.name, image=bad))   # nessuna eccezione
     assert m.gps is None and dict(m.rows)["File"].startswith("rotta.jpg")
+
+
+def test_printability():
+    # 6000×4000 px (24 MP): 4000 px / 300 dpi = 33,9 cm di lato corto -> 30×45 cm; a 200 dpi arriva a 50×70
+    assert metadata.print_size(6000, 4000) == "30 × 45 cm a 300 dpi  ·  50 × 70 cm a 200 dpi"
+    # 3000×2000 px (6 MP): 300 dpi -> 15×20 cm; 200 dpi -> 20×30 cm
+    assert metadata.print_size(2000, 3000) == "15 × 20 cm a 300 dpi  ·  20 × 30 cm a 200 dpi"
+    # orientamento irrilevante
+    assert metadata.print_size(3000, 2000) == metadata.print_size(2000, 3000)
+    assert metadata.print_size(800, 600) == "troppo piccola per una stampa di qualità"

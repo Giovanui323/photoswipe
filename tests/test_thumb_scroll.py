@@ -82,3 +82,17 @@ def test_click_still_picks_a_thumbnail(qapp, win, sd):
     QTest.mouseClick(strip, Qt.LeftButton, Qt.NoModifier, target.center().toPoint())
     pump(qapp, 0.2)
     assert win.idx == 2
+
+
+def test_locate_button_disabled_when_on_the_next_open_photo(qapp, win, sd):
+    win.resize(1440, 900)
+    open_folder(qapp, win, sd)
+    assert win.idx == win.next_index(-1)            # la prima da giudicare è già selezionata
+    assert not win.btn_locate.isEnabled()
+    win.idx += 1                                    # una foto più avanti (es. con le frecce)
+    win.show_item()
+    assert win.idx != win.next_index(-1)
+    assert win.btn_locate.isEnabled()
+    win.locate_thumb()
+    assert win.idx == win.next_index(-1)
+    assert not win.btn_locate.isEnabled()

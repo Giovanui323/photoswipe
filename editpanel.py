@@ -42,9 +42,21 @@ QFrame#side QPushButton#reset:disabled, QFrame#side QPushButton#cropbtn:disabled
 QFrame#side QPushButton#cropok { background: #ffd60a; color: #1c1c1e; border: none; border-radius: 15px;
     padding: 7px 14px; font-size: 14px; font-weight: 700; text-align: center; }
 QFrame#side QPushButton#cropok:hover { background: #ffe14d; }
-QFrame#side QPushButton#aspect { background: transparent; border: none; border-radius: 6px; padding: 3px 6px;
-    font-size: 14px; color: #d1d1d6; text-align: left; }
-QFrame#side QPushButton#aspect:hover { background: #2f2f31; color: #ffffff; }
+QLabel#panelhead { color: #98989f; font-size: 13px; font-weight: 700; padding-bottom: 7px;
+    border-bottom: 2px solid #48484a; }
+QFrame#side QPushButton#cropitem { background: transparent; border: none; padding: 4px 0; font-size: 15px;
+    color: #d1d1d6; text-align: left; }
+QFrame#side QPushButton#cropitem:hover { color: #ffffff; }
+QFrame#side QPushButton#cropitem[on="true"] { color: #ffffff; }
+QLabel#cropitemlabel { font-size: 15px; color: #d1d1d6; padding: 4px 0; }
+QFrame#side QPushButton#cropbig { background: #48484a; border: none; border-radius: 20px; min-height: 40px;
+    max-height: 40px; font-size: 15px; color: #f2f2f7; text-align: center; padding: 0 12px; }
+QFrame#side QPushButton#cropbig:hover { background: #545456; }
+QFrame#side QPushButton#cropbig:disabled { background: #2f2f31; color: #6e6e73; }
+QFrame#side QPushButton#aspect:checked { color: #ffffff; }
+QFrame#side QPushButton#aspect { background: transparent; border: none; border-radius: 0; padding: 5px 0;
+    font-size: 15px; color: #aeaeb2; text-align: left; }
+QFrame#side QPushButton#aspect:hover { color: #ffffff; }
 QFrame#side QPushButton#aspect:checked { color: #ffffff; }
 QFrame#side QPushButton#flip { background: transparent; border: none; padding: 4px 0; font-size: 15px;
     color: #d1d1d6; text-align: left; }
@@ -161,8 +173,11 @@ class ValueBar(QWidget):
         x0 = r.left() + r.width() * self._frac(self.origin)
         x1 = r.left() + r.width() * self._frac(self.value)
         p.fillRect(QRectF(min(x0, x1), r.top(), abs(x1 - x0), r.height()), QColor("#4a4a4d"))
-        p.setPen(QPen(QColor("#8e8e93"), 2))
-        p.drawLine(QPointF(x1, r.top()), QPointF(x1, r.bottom()))
+        p.setPen(QPen(QColor("#5a5a5e"), 2))            # la tacca dello zero resta ferma, come in Foto
+        p.drawLine(QPointF(x0, r.top()), QPointF(x0, r.bottom()))
+        if abs(x1 - x0) > 1:
+            p.setPen(QPen(QColor("#a1a1a6"), 2))
+            p.drawLine(QPointF(x1, r.top()), QPointF(x1, r.bottom()))
         p.setClipping(False)
         p.setPen(QColor("#f2f2f7" if self.isEnabled() else "#6e6e73"))
         f = p.font()
@@ -296,6 +311,36 @@ class CompareButton(QPushButton):
         p.setBrush(col if self.isChecked() else Qt.NoBrush)
         p.drawRoundedRect(right, 1.5, 1.5)
         p.drawLine(QPointF(cx, cy - 8), QPointF(cx, cy + 8))
+
+
+class VolumeButton(QPushButton):
+    """Altoparlante di Foto: con le onde = audio acceso, barrato = muto."""
+
+    def __init__(self):
+        super().__init__("")
+        self.setCheckable(True)   # premuto = muto
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor("#f2f2f7" if self.isEnabled() else "#6e6e73")
+        cx, cy = self.width() / 2 - 4, self.height() / 2
+        path = QPainterPath(QPointF(cx - 7, cy - 3))
+        path.lineTo(QPointF(cx - 3, cy - 3))
+        path.lineTo(QPointF(cx + 2, cy - 8))
+        path.lineTo(QPointF(cx + 2, cy + 8))
+        path.lineTo(QPointF(cx - 3, cy + 3))
+        path.lineTo(QPointF(cx - 7, cy + 3))
+        path.closeSubpath()
+        p.fillPath(path, col)
+        p.setPen(QPen(col, 1.6, Qt.SolidLine, Qt.RoundCap))
+        if self.isChecked():
+            p.drawLine(QPointF(cx + 6, cy - 4), QPointF(cx + 13, cy + 4))
+            p.drawLine(QPointF(cx + 13, cy - 4), QPointF(cx + 6, cy + 4))
+        else:
+            for r in (5.0, 9.0):
+                p.drawArc(QRectF(cx + 2 - r, cy - r, 2 * r, 2 * r), -45 * 16, 90 * 16)
 
 
 class CircleToggle(QPushButton):
@@ -480,6 +525,58 @@ class SectionIcon(QWidget):
             p.drawEllipse(QPointF(11, 11), 4, 4)
             p.setPen(QPen(c, 1.2, Qt.DotLine))
             p.drawEllipse(QPointF(11, 11), 7.5, 7.5)
+        elif k == "straighten":     # orizzonte dentro un cerchio
+            p.drawEllipse(QPointF(11, 11), 6.5, 6.5)
+            p.drawLine(QPointF(2, 11), QPointF(20, 11))
+            path = QPainterPath()
+            path.moveTo(4.5, 11)
+            path.arcTo(QRectF(4.5, 4.5, 13, 13), 180, 180)
+            path.closeSubpath()
+            p.fillPath(path, c)
+        elif k == "vertical":       # trapezio: verticali che convergono
+            path = QPainterPath(QPointF(7, 4))
+            path.lineTo(QPointF(15, 4))
+            path.lineTo(QPointF(19, 18))
+            path.lineTo(QPointF(3, 18))
+            path.closeSubpath()
+            p.drawPath(path)
+            half = QPainterPath(QPointF(7, 4))
+            half.lineTo(QPointF(11, 4))
+            half.lineTo(QPointF(11, 18))
+            half.lineTo(QPointF(3, 18))
+            half.closeSubpath()
+            p.fillPath(half, c)
+        elif k == "horizontal":     # trapezio coricato
+            path = QPainterPath(QPointF(4, 7))
+            path.lineTo(QPointF(18, 3))
+            path.lineTo(QPointF(18, 19))
+            path.lineTo(QPointF(4, 15))
+            path.closeSubpath()
+            p.drawPath(path)
+            half = QPainterPath(QPointF(4, 7))
+            half.lineTo(QPointF(18, 3))
+            half.lineTo(QPointF(18, 11))
+            half.lineTo(QPointF(4, 11))
+            half.closeSubpath()
+            p.fillPath(half, c)
+        elif k == "flip":           # due triangoli specchiati con la freccia sopra
+            left = QPainterPath(QPointF(10, 8))
+            left.lineTo(QPointF(10, 19))
+            left.lineTo(QPointF(3, 19))
+            left.closeSubpath()
+            p.fillPath(left, c)
+            right = QPainterPath(QPointF(12, 8))
+            right.lineTo(QPointF(12, 19))
+            right.lineTo(QPointF(19, 19))
+            right.closeSubpath()
+            p.drawPath(right)
+            p.drawLine(QPointF(4, 4), QPointF(18, 4))
+            p.drawLine(QPointF(4, 4), QPointF(6, 2.5))
+            p.drawLine(QPointF(18, 4), QPointF(16, 2.5))
+        elif k == "aspect":         # riquadri delle proporzioni
+            p.drawRoundedRect(QRectF(3, 5, 16, 12), 2, 2)
+            p.fillRect(QRectF(3.5, 5.5, 9, 11), c)
+            p.drawLine(QPointF(15.5, 5), QPointF(15.5, 17))
         elif k == "vignette":       # due cerchi
             p.drawEllipse(QPointF(11, 11), 7.5, 7.5)
             p.drawEllipse(QPointF(11, 11), 4.5, 4.5)
@@ -598,7 +695,7 @@ class RegolaPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
         head = QLabel(tr('REGOLA'))
-        head.setObjectName("section")
+        head.setObjectName("panelhead")
         v.addWidget(head)
 
         def bar(key, label, lo=-1.0, hi=1.0, fmt=None):
@@ -743,7 +840,7 @@ class RegolaPanel(QWidget):
 
         v.addSpacing(6)
         self.btn_reset = QPushButton(tr('Reimposta regolazioni'))
-        self.btn_reset.setObjectName("reset")
+        self.btn_reset.setObjectName("cropbig")   # come Automatico / Reimposta di Ritaglia
         self.btn_reset.setFocusPolicy(Qt.NoFocus)
         self.btn_reset.setToolTip(tr('Toglie tutte le regolazioni di questa foto (il ritaglio resta).'))
         self.btn_reset.clicked.connect(self.reset_all.emit)
@@ -859,56 +956,49 @@ class RitagliaPanel(QWidget):
     def __init__(self):
         super().__init__()
         self.draft: dict = {}
+        self._landscape_photo = True   # lo imposta l'app: serve per il primo verticale/orizzontale
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
         head = QLabel(tr('RITAGLIA'))
-        head.setObjectName("section")
+        head.setObjectName("panelhead")
         v.addWidget(head)
+        v.addSpacing(4)
         self.bars = {
             "straighten": ValueBar(tr('Raddrizza'), -45, 45, 0, _deg),
             "vertical": ValueBar(tr('Verticale'), -1, 1, 0, lambda x: _deg(x * 30)),
             "horizontal": ValueBar(tr('Orizzontale'), -1, 1, 0, lambda x: _deg(x * 30)),
         }
-        for icon, (k, b) in zip(("⊖", "⏃", "⏛"), self.bars.items()):
+        for k, b in self.bars.items():
             row = QHBoxLayout()
             row.setSpacing(8)
-            ic = QLabel(icon)
-            ic.setFixedWidth(20)
-            ic.setAlignment(Qt.AlignCenter)
-            ic.setStyleSheet("font-size: 15px; color: #d1d1d6;")
-            row.addWidget(ic)
+            row.addWidget(SectionIcon(k))
             row.addWidget(b, 1)
             b.changed.connect(lambda val, kk=k: self._set(kk, val))
             v.addLayout(row)
         self.bars["straighten"].setToolTip(tr('Ruota la foto (doppio clic = 0°). ⌥ mentre trascini = più preciso.'))
         self.bars["vertical"].setToolTip(tr('Raddrizza le linee verticali che convergono (palazzi).'))
         self.bars["horizontal"].setToolTip(tr('Corregge la prospettiva da sinistra a destra.'))
-        v.addSpacing(4)
-        self.btn_flip = QPushButton(tr('⇋   Capovolgi'))
-        self.btn_flip.setObjectName("flip")
+        v.addSpacing(10)
+        frow = QHBoxLayout()
+        frow.setSpacing(8)
+        frow.addWidget(SectionIcon("flip"))
+        self.btn_flip = QPushButton(tr('Capovolgi'))
+        self.btn_flip.setObjectName("cropitem")
         self.btn_flip.setFocusPolicy(Qt.NoFocus)
         self.btn_flip.setCursor(Qt.PointingHandCursor)
         self.btn_flip.setToolTip(tr('Specchia la foto da sinistra a destra.'))
         self.btn_flip.clicked.connect(self._flip)
-        v.addWidget(self.btn_flip)
-        ph = QHBoxLayout()
-        lab = QLabel(tr('▦   Proporzioni'))
-        lab.setStyleSheet("font-size: 15px; color: #d1d1d6;")
-        ph.addWidget(lab, 1)
-        self.orient: dict[bool, QPushButton] = {}
-        og = QButtonGroup(self)
-        for portrait, text, tip in ((False, "▭", tr('Orizzontale')), (True, "▯", tr('Verticale'))):
-            b = QPushButton(text)
-            b.setObjectName("orient")
-            b.setCheckable(True)
-            b.setToolTip(tip)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.clicked.connect(lambda _=False, pp=portrait: self._set_orient(pp))
-            og.addButton(b)
-            self.orient[portrait] = b
-            ph.addWidget(b)
-        v.addLayout(ph)
+        frow.addWidget(self.btn_flip, 1)
+        v.addLayout(frow)
+        arow = QHBoxLayout()
+        arow.setSpacing(8)
+        arow.addWidget(SectionIcon("aspect"))
+        lab = QLabel(tr('Proporzioni'))
+        lab.setObjectName("cropitemlabel")
+        arow.addWidget(lab, 1)
+        v.addLayout(arow)
+        self.orient: dict[bool, QPushButton] = {}   # verticale / orizzontale: secondo clic sulla voce
         self.aspect_btns: dict[str, QPushButton] = {}
         ag = QButtonGroup(self)
         for key, name, _r in E.ASPECTS:
@@ -918,11 +1008,13 @@ class RitagliaPanel(QWidget):
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self._set_aspect(k))
+            if _r and key != "square":
+                b.setToolTip(tr('Clic di nuovo per passare da orizzontale a verticale'))
             ag.addButton(b)
             self.aspect_btns[key] = b
             v.addWidget(b)
         cr = QHBoxLayout()
-        cr.setContentsMargins(26, 0, 0, 0)
+        cr.setContentsMargins(30, 0, 0, 0)
         self.custom_w, self.custom_h = QSpinBox(), QSpinBox()
         for sb in (self.custom_w, self.custom_h):
             sb.setRange(1, 100)
@@ -936,36 +1028,29 @@ class RitagliaPanel(QWidget):
         self.custom_row.setLayout(cr)
         v.addWidget(self.custom_row)
         v.addStretch(1)
-        hint = QLabel(tr('Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi OK per confermare il ritaglio (o Annulla).'))
-        hint.setObjectName("editnote")
-        hint.setWordWrap(True)
-        v.addWidget(hint)
+        v.addSpacing(16)
         row = QHBoxLayout()
+        row.setSpacing(10)
         self.btn_auto = QPushButton(tr('Automatico'))
-        self.btn_auto.setToolTip(tr("Raddrizza l'orizzonte da solo."))
+        self.btn_auto.setToolTip(tr("Raddrizza l'orizzonte e le linee verticali da solo."))
         self.btn_reset = QPushButton(tr('Reimposta'))
         self.btn_reset.setToolTip(tr('Toglie ritaglio, rotazione e prospettiva.'))
         for b in (self.btn_auto, self.btn_reset):
-            b.setObjectName("cropbtn")
+            b.setObjectName("cropbig")
             b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
             row.addWidget(b, 1)
         self.btn_auto.clicked.connect(self.auto.emit)
         self.btn_reset.clicked.connect(self._reset)
         v.addLayout(row)
-        row2 = QHBoxLayout()
+        # OK / Annulla stanno in alto (Fine), come in Foto: questi restano solo per compatibilità
         self.btn_cancel = QPushButton(tr('Annulla'))
-        self.btn_cancel.setObjectName("cropbtn")
-        self.btn_cancel.setToolTip(tr("Lascia la foto com'era prima di aprire Ritaglia (Esc)."))
         self.btn_ok = QPushButton("OK")
-        self.btn_ok.setObjectName("cropok")
-        self.btn_ok.setToolTip(tr('Conferma il ritaglio (Invio). Poi con ✓ Sì si esporta la foto ritagliata.'))
-        for b in (self.btn_cancel, self.btn_ok):
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setCursor(Qt.PointingHandCursor)
-            row2.addWidget(b, 1)
         self.btn_cancel.clicked.connect(self.cancel.emit)
         self.btn_ok.clicked.connect(self.ok.emit)
-        v.addLayout(row2)
+        for b in (self.btn_cancel, self.btn_ok):
+            b.setParent(self)
+            b.hide()
         self.refresh()
 
     def set_draft(self, d: dict) -> None:
@@ -987,14 +1072,18 @@ class RitagliaPanel(QWidget):
                 sb.setValue(val)
                 sb.blockSignals(False)
         portrait = d.get("aspect_portrait")
-        for p, b in self.orient.items():
-            b.setEnabled(key not in ("free", "original", "square", "custom"))
-            b.setChecked(portrait is not None and p == portrait)
-        self.btn_flip.setText(tr('⇋   Capovolgi') + ("  ✓" if d.get("flip") else ""))
+        self.btn_flip.setProperty("on", "true" if d.get("flip") else "false")
+        self.btn_flip.style().unpolish(self.btn_flip)
+        self.btn_flip.style().polish(self.btn_flip)
         self.btn_reset.setEnabled(E.has_geometry(d) or key != "free")
         for key2, b in self.aspect_btns.items():
             name = dict((k, n) for k, n, _ in E.ASPECTS)[key2]
-            b.setText(("✓   " if b.isChecked() else "      ") + name)
+            if key2 == key and portrait is not None and ":" in name:   # 16:9 ↔ 9:16, come si vedrà
+                a_, b_ = name.split(":")
+                long_first = int(a_) >= int(b_)
+                if long_first == portrait:
+                    name = f"{b_}:{a_}"
+            b.setText(("✓    " if b.isChecked() else "       ") + name)
 
     def _emit(self) -> None:
         self.refresh()
@@ -1012,6 +1101,16 @@ class RitagliaPanel(QWidget):
         self._emit()
 
     def _set_aspect(self, key: str) -> None:
+        ratio = dict((k, r) for k, _n, r in E.ASPECTS).get(key)
+        if self.draft.get("aspect", "free") == key and ratio and key != "square":
+            # secondo clic sulla stessa voce: verticale ↔ orizzontale
+            cur = self.draft.get("aspect_portrait")
+            if cur is None:
+                cur = not self._landscape_photo
+            self.draft["aspect_portrait"] = not cur
+            self.refresh()
+            self.aspect_changed.emit(copy.deepcopy(self.draft))
+            return
         self.draft["aspect"] = key
         if key == "custom" and not self.draft.get("aspect_custom"):
             self.draft["aspect_custom"] = [self.custom_w.value(), self.custom_h.value()]

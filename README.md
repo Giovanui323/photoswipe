@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.3.0-blue)
+![Version](https://img.shields.io/badge/version-1.3.3-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
@@ -67,6 +67,9 @@ PhotoSwipe works with photos from any camera or phone. It also understands a few
 - **Panoramas**: the individual source shots in `PANORAMA/` are hidden, so you only see the
   finished panorama.
 - `.LRF` proxy files are used for smooth playback, and `MISC` / macOS `._` files are ignored.
+
+**iPhone Live Photos** (HEIC + MOV with the same name) are shown as one photo. Export keeps the
+still by default, and **Shift+Y** also copies the MOV to `export/Video`.
 
 ## 🚀 Getting started
 
@@ -158,7 +161,7 @@ Issues and pull requests are welcome. Good first contributions:
 
 - English (and other) translations of the UI
 - Signed builds for Windows and Intel Macs
-- Support for more camera-specific formats (GoPro, Insta360, iPhone Live Photos, more RAW formats)
+- Support for more camera-specific formats (GoPro, Insta360, more RAW formats)
 
 If PhotoSwipe saved you an evening of sorting photos, please **⭐ star the repo**. It helps other
 people find it!
