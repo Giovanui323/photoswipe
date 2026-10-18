@@ -40,7 +40,7 @@ from scanner import Item, mp4_duration, raw_preview, scan
 from i18n import HELP, LANG, tr
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.3.7"
+APP_VERSION = "1.4.0"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -49,6 +49,7 @@ PREFETCH = 10  # elementi successivi scaricati in anticipo da iCloud, in automat
 STRIP_FILTERS = ((tr('Mostra: tutte'), "all"), (tr('Mostra: da decidere'), "todo"), (tr('Mostra: già decise'), "done"),
                  (tr('Mostra: ✓ Sì'), "yes"), (tr('Mostra: ✗ No'), "no"), (tr('Mostra: ↪ saltate'), "skip"),
                  (tr('Mostra: 🗑 “cancellare”'), "trash"))
+MEDIA_FILTERS = ("all", "photos", "videos")   # filtro di visualizzazione: tutto / solo foto / solo video
 # colore del bordo della miniatura attuale: quello del tipo scelto nel filtro a sinistra
 STRIP_FRAME_COLORS = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng"}
@@ -456,6 +457,7 @@ class OverlayLabel(QLabel):
 class Bridge(QObject):
     """Riporta nel thread dell'interfaccia i risultati dei lavori in background."""
     done = Signal(str, object, object)  # tipo, chiave, risultato (o eccezione)
+    progress = Signal(object, float)    # chiave, avanzamento 0..1 (dal motore di stampa)
 
 
 class ImageView(QGraphicsView):
@@ -1315,6 +1317,7 @@ class MainWindow(QMainWindow):
         self.print_job: str | None = None   # id della foto in preparazione, None = nessun lavoro
         self.bridge = Bridge()
         self.bridge.done.connect(self.on_done)
+        self.bridge.progress.connect(self.on_print_progress)
 
         self.root: Path | None = None
         self.export_dir: Path | None = None
@@ -1355,7 +1358,8 @@ class MainWindow(QMainWindow):
         self.next_thumbs: LruCache = LruCache(120)  # striscia in basso (ne mostra 25): ≤0,7 MB l'una
         self._by_id: dict[str, Item] = {}
         self._trash_view: tuple[str, int, Item] | None = None
-        self.photos_only = self.settings_store.value("filter", "all") == "photos"
+        saved_filter = self.settings_store.value("filter", "all")
+        self.media_filter = saved_filter if saved_filter in MEDIA_FILTERS else "all"
         # Regola / Ritaglia
         self.edit_pool = ThreadPoolExecutor(max_workers=1)
         self.edit_base: QImage | None = None   # foto a schermo, senza modifiche
@@ -1496,7 +1500,7 @@ class MainWindow(QMainWindow):
         self.btn_settings.clicked.connect(self.show_settings)
         self.btn_wand = EP.WandButton()
         self.btn_wand.setObjectName("wand")
-        self.btn_wand.setToolTip(tr('Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Fine per confermare.'))
+        self.btn_wand.setToolTip(tr('Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Conferma le modifiche.'))
         self.btn_wand.clicked.connect(self.auto_enhance)
         self.fav_pill = pill(self.btn_fav, self.btn_wand)
         right = QHBoxLayout()
@@ -1504,16 +1508,11 @@ class MainWindow(QMainWindow):
         right.addStretch(1)
         right.addWidget(self.fav_pill)
         right.addWidget(pill(self.btn_info, self.btn_settings, self.btn_help))
-        # mentre modifichi (Regola o Ritaglia), come in Foto: "Fine" giallo in alto a destra
         self.btn_edit_cancel_top = QPushButton(tr("Annulla"))
         self.btn_edit_cancel_top.setObjectName("toolpill")
         self.btn_edit_cancel_top.setToolTip(tr("Lascia la foto com'era prima di queste modifiche (Esc)."))
         self.btn_edit_cancel_top.clicked.connect(self.cancel_edit)
-        self.btn_done = QPushButton(tr("Fine"))
-        self.btn_done.setObjectName("donepill")
-        self.btn_done.setToolTip(tr("Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata."))
-        self.btn_done.clicked.connect(self.finish_edit)
-        for b in (self.btn_edit_cancel_top, self.btn_done):
+        for b in (self.btn_edit_cancel_top,):
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.setVisible(False)
@@ -1550,8 +1549,9 @@ class MainWindow(QMainWindow):
         for h in range(-12, 15):
             self.tz.addItem(f"Ora: UTC{h:+d}", float(h))
         self.view_filter = QComboBox()
-        self.view_filter.addItems([tr('Mostra: tutto'), tr('Mostra: solo foto (anche Live e panorami)')])
-        self.view_filter.setCurrentIndex(1 if self.photos_only else 0)
+        self.view_filter.addItems([tr('Mostra: tutto'), tr('Mostra: solo foto (anche Live e panorami)'),
+                                   tr('Mostra: solo video (Live escluse)')])
+        self.view_filter.setCurrentIndex(MEDIA_FILTERS.index(self.media_filter))
         self.view_filter.currentIndexChanged.connect(self.on_filter_changed)
         btn_help2 = QPushButton(tr('?  Come funziona'))
         btn_help2.clicked.connect(self.show_help)
@@ -1560,7 +1560,7 @@ class MainWindow(QMainWindow):
             self.btn_export: tr('Cartella dove vengono COPIATE le foto approvate. Gli originali non si toccano.'),
             self.fmt: tr('Formato dei fotogrammi estratti da Live e video.\nJPEG qualità massima: accettato da tutti i siti di stampa.\nPNG 16-bit: senza perdita, file molto grandi (~40 MB).\nFoto e panorami vengono sempre copiati identici.'),
             self.tz: tr("Fuso orario scritto nella data delle foto esportate.\n'Della fotocamera' usa l'ora registrata in ogni file."),
-            self.view_filter: tr("Solo foto: nasconde i video (restano foto, Live e panorami).\nI video nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'."),
+            self.view_filter: tr("Solo foto: nasconde i video (restano foto, Live e panorami).\nSolo video: nasconde foto, Live e panorami.\nGli elementi nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'."),
         }
         for w, t in tips.items():
             w.setToolTip(t)
@@ -1652,9 +1652,12 @@ class MainWindow(QMainWindow):
         self.btn_confirm_foot.setToolTip(tr('Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.'))
         self.btn_confirm_foot.clicked.connect(self.finish_edit)
         self.btn_confirm_foot.setVisible(False)
+        self.btn_confirm_foot.setFixedHeight(40)   # stessa altezza di "Annulla le modifiche"
+        self.btn_confirm_foot.setStyleSheet("border-radius: 20px; font-size: 15px;")   # stessa forma e corpo di "Annulla le modifiche"
         fl.addWidget(self.btn_confirm_foot)
         self.btn_discard = QPushButton(tr('Annulla le modifiche'))
         self.btn_discard.setObjectName("cropbig")
+        self.btn_discard.setFixedHeight(40)
         self.btn_discard.setFocusPolicy(Qt.NoFocus)
         self.btn_discard.setToolTip(tr("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)"))
         self.btn_discard.clicked.connect(self.discard_edits)
@@ -1732,6 +1735,36 @@ class MainWindow(QMainWindow):
         self.btn_print_fix.setObjectName("cropbig")
         self.btn_print_fix.clicked.connect(self.improve_for_print)
         pb.addWidget(self.btn_print_fix)
+        # conferma inline sotto "Migliora per la stampa": Sì avvia la copia, Annulla non fa nulla
+        self.print_ask_row = QFrame()
+        ask = QVBoxLayout(self.print_ask_row)
+        ask.setContentsMargins(0, 0, 0, 0)
+        ask.setSpacing(6)
+        self.print_ask = QLabel("")
+        self.print_ask.setObjectName("details")
+        self.print_ask.setWordWrap(True)
+        ask.addWidget(self.print_ask)
+        ask_btns = QHBoxLayout()
+        btn_yes = QPushButton(tr('Sì'))
+        btn_yes.setObjectName("cropok")
+        btn_yes.setFocusPolicy(Qt.TabFocus)
+        btn_yes.clicked.connect(self.print_yes)
+        btn_no = QPushButton(tr('Annulla'))
+        btn_no.setFocusPolicy(Qt.TabFocus)
+        btn_no.clicked.connect(self.print_no)
+        ask_btns.addWidget(btn_yes)
+        ask_btns.addWidget(btn_no)
+        ask.addLayout(ask_btns)
+        self.print_ask_row.hide()
+        pb.addWidget(self.print_ask_row)
+        # dopo la copia: □|□ per vedere la copia al posto della foto (stessa grandezza a schermo)
+        self.btn_print_cmp = QPushButton(tr('Confronta con la copia per la stampa'))
+        self.btn_print_cmp.setCheckable(True)
+        self.btn_print_cmp.setFocusPolicy(Qt.TabFocus)
+        self.btn_print_cmp.setToolTip(tr('Premuto: mostra la copia per la stampa. Di nuovo: torna alla foto.'))
+        self.btn_print_cmp.toggled.connect(self.set_print_compare)
+        self.btn_print_cmp.hide()
+        pb.addWidget(self.btn_print_cmp)
         # barra a tempo indeterminato: si vede mentre la copia si prepara
         self.print_busy = QProgressBar()
         self.print_busy.setObjectName("progress")
@@ -1781,8 +1814,9 @@ class MainWindow(QMainWindow):
         srow.setContentsMargins(0, 2, 0, 0)
         srow.setSpacing(6)
         for b in (self.btn_save_now, self.btn_show_save, self.btn_side_export):
-            b.setObjectName("textlink")
+            b.setObjectName("small")   # stessa pillola degli altri pulsanti piccoli del pannello
             b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
             srow.addWidget(b)
         srow.addStretch(1)
         sv.addWidget(self.save_row)
@@ -2255,22 +2289,68 @@ class MainWindow(QMainWindow):
         if show:
             level, text = printprep.verdict(*m.size)
             self.print_text.setText(f"<b style='color:#f2f2f7'>{level}</b>  ·  {text}")
+        has_copy = show and self.print_copy(item).is_file()
+        self.btn_print_cmp.setVisible(has_copy)
+        if not has_copy and self.btn_print_cmp.isChecked():
+            self.btn_print_cmp.setChecked(False)   # la copia non c'è (o è un'altra foto): torna l'originale
+
+    def print_copy(self, item) -> Path:
+        """Dove sta la copia per la stampa di questa foto (l'originale non si tocca mai)."""
+        return self.export_dir / "Stampa" / f"{item.main.stem}_stampa.jpg"
 
     def improve_for_print(self):
-        """Migliora per la stampa: scrive una copia in export/Stampa; l'originale non si tocca."""
+        """Migliora per la stampa: chiede conferma sotto il pulsante (Sì / Annulla)."""
         item = self.current()
         src = (item.image or item.raw) if item else None
-        if not src:
+        if not src or self.print_job is not None:   # già in preparazione: non se ne avvia un altro
             return
-        if self.print_job is not None:   # già in preparazione: non se ne avvia un altro
+        self.print_ask.setText(tr("Creo la copia per la stampa in export/Stampa. L'originale non si tocca."))
+        self.print_ask_row.show()
+
+    def print_no(self) -> None:
+        self.print_ask_row.hide()
+
+    def print_yes(self) -> None:
+        """Sì: scrive la copia in export/Stampa in background; l'originale non si tocca."""
+        self.print_ask_row.hide()
+        item = self.current()
+        src = (item.image or item.raw) if item else None
+        if not src or self.print_job is not None:
             return
-        out = self.export_dir / "Stampa" / f"{item.main.stem}_stampa.jpg"
+        out = self.print_copy(item)
         self.print_job = item.id
         self.btn_print_fix.setEnabled(False)
         self.btn_print_fix.setText(tr('Preparo la copia per la stampa…'))
+        self.print_busy.setRange(0, 0)   # finché il motore non dice la sua percentuale: animazione
         self.print_busy.show()
         self.status.setText(tr('Preparo la copia per la stampa… può richiedere qualche minuto'), ms=0)
-        self.submit("print", (item.id, out), printprep.improve, src, out, queue=self.print_q)
+        k = item.id
+        self.submit("print", (item.id, out), printprep.improve, src, out,
+                    lambda f: self.bridge.progress.emit(k, f), queue=self.print_q)
+
+    def on_print_progress(self, key, f: float) -> None:
+        """Avanzamento vero del motore di stampa: barra e percentuale."""
+        if self.print_job != key:
+            return
+        self.print_busy.setRange(0, 1000)
+        self.print_busy.setValue(int(f * 1000))
+        self.status.setText(tr('Preparo la copia per la stampa… {v0}%', v0=int(f * 100)), ms=0)
+
+    def set_print_compare(self, on: bool) -> None:
+        """Confronto con la copia per la stampa: la copia a schermo finché il pulsante è premuto."""
+        item = self.current()
+        path = self.print_copy(item) if item else None
+        if not on or path is None or not path.is_file():
+            self.request_edit_render()   # torna a come è la foto (modificata o originale)
+            self.flash(tr("Originale"))
+            return
+        img = QImage(str(path))
+        if img.isNull():
+            self.btn_print_cmp.setChecked(False)
+            return
+        self.edit_gen += 1   # i calcoli in corso non devono coprire la copia
+        self.image_view.set_image(img, keep_zoom=True)   # stessa grandezza a schermo: si vedono i dettagli
+        self.flash(tr("Copia per la stampa"))
 
     def update_btn_info(self):
         self.btn_info.setProperty("on", "true" if self.side_wanted else "false")
@@ -2464,7 +2544,7 @@ class MainWindow(QMainWindow):
         if e.get("enhanced"):
             self.regola.set_edit(new)
             self.on_regola_changed(new)
-            self.flash(tr('Miglioramento automatico tolto: Fine per confermare'))
+            self.flash(tr('Miglioramento automatico tolto: Conferma le modifiche'))
             return
         img = E.apply_crop(E.geometry_base(self.edit_proxy().convert("RGB"), e), e)
         new.update(E.auto_light(img))
@@ -2473,7 +2553,7 @@ class MainWindow(QMainWindow):
         new["off"] = [x for x in new.get("off", []) if x not in ("light", "color")]
         self.regola.set_edit(new)
         self.on_regola_changed(new)
-        self.flash(tr("✨ Migliorata automaticamente: Fine per tenerla, Annulla per lasciarla com'era"))
+        self.flash(tr("✨ Migliorata automaticamente: Conferma per tenerla, Annulla per lasciarla com'era"))
 
     def set_compare(self, on: bool) -> None:
         """□|□: l'originale a schermo finché il pulsante è premuto."""
@@ -2526,9 +2606,8 @@ class MainWindow(QMainWindow):
         self.side_seg.buttons["ritaglia"].setEnabled(ok and not tone)
         self.side_seg.buttons["info"].setEnabled(not (crop or tone))
         self.btn_discard.setEnabled(has or crop or tone)
-        self.confirm_row.setVisible(False)   # la conferma è "Fine" in alto, come in Foto
+        self.confirm_row.setVisible(False)   # la conferma è "Conferma le modifiche" nel pannello
         editing = ok and (self.crop_draft is not None or tone)
-        self.btn_done.setVisible(editing)
         self.btn_edit_cancel_top.setVisible(crop or tone)
         self.btn_discard.setVisible(has or crop or tone)   # solo se c'è qualcosa da togliere (o da scartare)
         self.btn_confirm_foot.setVisible(ok and (crop or tone))
@@ -2559,6 +2638,9 @@ class MainWindow(QMainWindow):
     def reset_edit_view(self) -> None:
         """Nuovo elemento: pannelli aggiornati sulle sue modifiche."""
         item = self.current()
+        if self.btn_print_cmp.isChecked():   # la copia per la stampa era della foto precedente
+            self.btn_print_cmp.setChecked(False)
+        self.print_ask_row.hide()   # la conferma valeva per la foto precedente
         if self.edit_pending():   # non dovrebbe succedere (si cambia foto solo dopo OK / Annulla)
             self.crop_draft = self.tone_draft = None
             self.image_view.set_crop_mode(False)
@@ -2934,6 +3016,9 @@ class MainWindow(QMainWindow):
             if centered >= thr or not self.btn_restore.isVisible():
                 break
         g = self.top_grid
+        # le colonne laterali non si restringono sotto i propri pulsanti: il titolo non le copre
+        g.setColumnMinimumWidth(0, lw)
+        g.setColumnMinimumWidth(2, rw)
         g.removeWidget(self.title_box)
         if centered >= thr:
             # c'è posto: centrato sulla finestra, come le barre di macOS
@@ -3350,6 +3435,9 @@ class MainWindow(QMainWindow):
                 self.flash(tr('Non riesco a preparare questa foto per la stampa'))
             else:
                 self.flash(tr('Copia per la stampa salvata: {v0}  ({v1})', v0=out.name, v1=res))
+                if self.btn_print_cmp.isChecked():   # confronto aperto: mostra la copia appena fatta
+                    self.set_print_compare(True)
+            self.update_print_box()
         elif kind == "sharpest":
             self._sharp_busy = False
             self.btn_sharp.setEnabled(True)
@@ -3501,6 +3589,13 @@ class MainWindow(QMainWindow):
                               snapshot=d["choice"] == "snap",
                               with_video=d.get("with_video", False))
         self.idx = self.next_index(-1)
+        # tornando dalla home: si riparte dalla foto in cui eri, una volta sola
+        home_root = self.settings_store.value("home_root", "")
+        home_id = self.settings_store.value("home_id", "")
+        self.settings_store.remove("home_root")
+        self.settings_store.remove("home_id")
+        if home_root == str(self.root) and home_id:
+            self.idx = next((i for i, it in enumerate(self.items) if it.id == home_id), self.idx)
         done = sum(1 for it in self.items if self.session.get(it.id) is not None)
         if export_warning:
             self.status.setStyleSheet("color:#f0b860;")
@@ -3533,8 +3628,13 @@ class MainWindow(QMainWindow):
         return self._by_id.get(item_id.split("#")[0])
 
     def visible(self, item: Item) -> bool:
-        """Filtro "solo foto": i video normali si nascondono (le Live sono foto)."""
-        return not (self.photos_only and item.kind == "video")
+        """Filtro "solo foto": i video normali si nascondono (le Live sono foto).
+        Filtro "solo video": si vedono solo i video normali (Live, foto e panorami si nascondono)."""
+        if self.media_filter == "photos":
+            return item.kind != "video"
+        if self.media_filter == "videos":
+            return item.kind == "video"
+        return True
 
     def is_open(self, item: Item) -> bool:
         if not self.visible(item):
@@ -4095,12 +4195,11 @@ class MainWindow(QMainWindow):
             self.player.play()
 
     def update_stamp(self, offset_s: float = 0.0):
-        """Data/ora dello scatto (dal nome del file DJI) in alto a sinistra; nei video avanza.
-        Su un fotogramma fermo di un video non si mostra: resta solo la foto."""
+        """Data/ora dello scatto (dal nome del file DJI) in alto a sinistra; nei video avanza
+        e, fermo su un fotogramma, mostra l'ora di quel fotogramma."""
         item = self.current()
         page = self.stack.currentWidget()
-        paused_clip_frame = item is not None and item.kind == "video" and page is self.image_view
-        if not item or paused_clip_frame or page not in (self.image_view, self.video_widget):
+        if not item or page not in (self.image_view, self.video_widget):
             self.stamp.hide()
             self.place_zoom()
             return
@@ -4296,7 +4395,7 @@ class MainWindow(QMainWindow):
         busy = sum(1 for f in self.export_futures.values() if not f.done())
         extra = tr('   ⏳ export {busy}', busy=busy) if busy else ""
         if hidden:
-            extra += tr('   ({hidden} video nascosti)', hidden=hidden)
+            extra += tr('   ({hidden} nascosti dal filtro)', hidden=hidden)
         self.update_fav_button()
         self.update_next_preview()
         # una riga sola, senza simboli: il numero dell'elemento è già in alto
@@ -4349,7 +4448,7 @@ class MainWindow(QMainWindow):
         head = tr('Sei in fondo, ma {rest} da decidere più indietro.', rest=rest) if left else tr('Finito!')
         self.show_message(f"{head}\n\n✓ {c['yes']} approvate    ✗ {c['no']} scartate    "
                           f"↪ {c['skip']} saltate"
-                          + (tr('\n\n🎬 {hidden} video nascosti dal filtro “solo foto”', hidden=hidden) if hidden else "")
+                          + (tr('\n\n🎬 {hidden} nascosti dal filtro attivo', hidden=hidden) if hidden else "")
                           + tr('\n\n↑ = torna indietro a rivedere'), end=True)
         if left:
             with warnings.catch_warnings():
@@ -4719,8 +4818,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ filtro, indietro, preferite
     def on_filter_changed(self):
-        self.photos_only = self.view_filter.currentIndex() == 1
-        self.settings_store.setValue("filter", "photos" if self.photos_only else "all")
+        self.media_filter = MEDIA_FILTERS[self.view_filter.currentIndex()]
+        self.settings_store.setValue("filter", self.media_filter)
         if not self.session or not self.items:
             return
         cur = self.current()
@@ -4734,6 +4833,11 @@ class MainWindow(QMainWindow):
         if self.edit_pending():
             self.flash(tr('Prima conferma o annulla le modifiche'))
             return
+        # ricordo la foto a cui sei arrivato: "Riprendi" la riapre lì, non alla prima da decidere
+        item = self.current()
+        if self.session and item and self.stack.currentWidget() is not self.setup_page:
+            self.settings_store.setValue("home_root", str(self.root))
+            self.settings_store.setValue("home_id", item.id)
         self.show_setup()
 
     def go_back(self):

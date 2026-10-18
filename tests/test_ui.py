@@ -415,6 +415,18 @@ def test_photos_only_filter_hides_videos(qapp, win, sd):
     win.view_filter.setCurrentIndex(0)
 
 
+def test_videos_only_filter_hides_photos_and_lives(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    win.view_filter.setCurrentIndex(2)
+    pump(qapp, 0.2)
+    assert win.media_filter == "videos"
+    assert all(win.items[e[0]].kind == "video" for e in win.thumbs_strip.entries)
+    assert win.current().kind == "video" and win.idx == 3   # la Live (idx 0) e le foto sono nascoste
+    win.view_filter.setCurrentIndex(0)
+    pump(qapp, 0.2)
+    assert win.media_filter == "all"
+
+
 def test_favorite_goes_to_preferite(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)

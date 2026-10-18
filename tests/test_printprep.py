@@ -48,9 +48,15 @@ def test_windows_without_vc_runtime_falls_back_and_explains(tmp_path, monkeypatc
     monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr(printprep, "realesrgan_bin", lambda: tmp_path / "realesrgan-ncnn-vulkan.exe")
 
-    def fail(*a, **k):
-        raise subprocess.CalledProcessError(-1073741515, a[0])   # 0xC0000135: DLL non trovata
-    monkeypatch.setattr(subprocess, "run", fail)
+    class Missing:   # il motore esce subito con 0xC0000135: DLL non trovata
+        stderr = iter([])
+
+        def wait(self):
+            return -1073741515
+
+        def kill(self):
+            pass
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: Missing())
     monkeypatch.setattr(printprep, "missing_runtime", False)
     text = printprep.improve(src, tmp_path / "out.jpg")
     assert (tmp_path / "out.jpg").exists()

@@ -25,11 +25,16 @@ def tr(text: str, **kw) -> str:
 
 
 EN = {
+    "Confronta con la copia per la stampa": "Compare with the print copy",
+    "Creo la copia per la stampa in export/Stampa. L'originale non si tocca.": "I'll create the print copy in export/Stampa. The original is not touched.",
+    "Premuto: mostra la copia per la stampa. Di nuovo: torna alla foto.": "Pressed: shows the print copy. Press again: back to the photo.",
+    "Copia per la stampa": "Print copy",
+    "Preparo la copia per la stampa… {v0}%": "Preparing the print copy… {v0}%",
     "\n\nIniziato il {v0}\nUltima modifica il {v1}\nExport: {v2}": "\n\nStarted on {v0}\nLast change on {v1}\nExport: {v2}",
     "\n\n↑ = torna indietro a rivedere": "\n\n↑ = go back to review",
-    "\n\n🎬 {hidden} video nascosti dal filtro “solo foto”": "\n\n🎬 {hidden} videos hidden by the “photos only” filter",
+    "\n\n🎬 {hidden} nascosti dal filtro attivo": "\n\n🎬 {hidden} hidden by the active filter",
     "\n📷 {v0} foto prese dai video": "\n📷 {v0} photos taken from videos",
-    "   ({hidden} video nascosti)": "   ({hidden} videos hidden)",
+    "   ({hidden} nascosti dal filtro)": "   ({hidden} hidden by the filter)",
     "   ⏳ export {busy}": "   ⏳ exporting {busy}",
     "   📷 {v0} foto da video": "   📷 {v0} photos from video",
     "<b>In questa cartella c'è un lavoro a metà</b> (interrotto il {when}).<br>Vuoi riprendere da dove eri?":
@@ -113,7 +118,7 @@ EN = {
         "The saved choices will be resumed. The export folder from before ({v0}) isn't on this computer: choose where to copy the next ones with ②, then Start.",
     "Lettura della cartella…": "Reading the folder…",
     "Luminosità": "Brightness",
-    "Miglioramento automatico tolto: Fine per confermare": "Auto enhancement removed: Done to confirm",
+    "Miglioramento automatico tolto: Conferma le modifiche": "Auto enhancement removed: Confirm edits",
     "Modifiche annullate: si vede (ed esporta) l'originale": "Edits discarded: the original is shown (and exported)",
     "Modifiche confermate: ✓ Sì esporta la foto modificata": "Edits confirmed: ✓ Yes exports the edited photo",
     "Modifiche pronte: 📷 Prendi foto (F) salva questo fotogramma modificato":
@@ -127,6 +132,7 @@ EN = {
     "Mostra: da decidere": "Show: undecided",
     "Mostra: già decise": "Show: decided",
     "Mostra: solo foto (anche Live e panorami)": "Show: photos only (also Lives and panoramas)",
+    "Mostra: solo video (Live escluse)": "Show: videos only (Lives excluded)",
     "Mostra: tutte": "Show: all",
     "Mostra: tutto": "Show: everything",
     "Mostra: ↪ saltate": "Show: ↪ skipped",
@@ -221,19 +227,19 @@ EN = {
         "⚠ Export folder not reachable ({v0}): {v1} pending copies will be redone the next time you open the folder",
     "⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)":
         "⚠ copy failed: {v0}\n(will be retried the next time you open the folder)",
-    "✂︎ Ritaglio aperto: Fine per confermare, Annulla per lasciarla com'era":
-        "✂︎ Crop open: Done to confirm, Cancel to leave it as it was",
+    "✂︎ Ritaglio aperto: Conferma per confermare, Annulla per lasciarla com'era":
+        "✂︎ Crop open: Confirm to confirm, Cancel to leave it as it was",
     "✎ Foto {v0} dopo il Sì: premi di nuovo ✓ Sì per esportare questa versione":
         "✎ Photo {v0} after Yes: press ✓ Yes again to export this version",
     "✎ Foto {v0}: ✓ Sì esporta questa versione": "✎ Photo {v0}: ✓ Yes exports this version",
-    "✎ Modifiche da confermare: Fine per tenerle, Annulla per lasciarla com'era":
-        "✎ Edits to confirm: Done to keep them, Cancel to leave it as it was",
+    "✎ Modifiche da confermare: Conferma per tenerle, Annulla per lasciarla com'era":
+        "✎ Edits to confirm: Confirm to keep them, Cancel to leave it as it was",
     "✓ SÌ": "✓ YES",
     "✓ approvata · video non copiato (tenute solo le foto prese)": "✓ approved · video not copied (only the photos taken are kept)",
     "✓ già salvato come foto": "✓ already saved as a photo",
     "✨  Più nitida (P)": "✨  Sharper (P)",
-    "✨ Migliorata automaticamente: Fine per tenerla, Annulla per lasciarla com'era":
-        "✨ Auto-enhanced: Done to keep it, Cancel to leave it as it was",
+    "✨ Migliorata automaticamente: Conferma per tenerla, Annulla per lasciarla com'era":
+        "✨ Auto-enhanced: Confirm to keep it, Cancel to leave it as it was",
     "💽 Cartella su disco (non su iCloud): nessun download, si parte subito.":
         "💽 Folder on disk (not iCloud): no download, starts right away.",
     "📂  Apri cartella…": "📂  Open folder…",
@@ -379,8 +385,8 @@ EN.update({
         "The saved choices will be set aside (the file is renamed, not deleted).\nPhotos already copied to export stay where they are.\n\nContinue?",
     "Luce, colore, bianco e nero, curve, nitidezza…\n✓ Sì esporta la foto modificata (l'originale non si tocca).":
         "Light, color, black & white, curves, sharpness…\n✓ Yes exports the edited photo (the original is not touched).",
-    "Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Fine per confermare.":
-        "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then Done to confirm.",
+    "Migliora automaticamente (bacchetta magica): Luce e Colore automatici.\nDi nuovo = toglie il miglioramento. Poi Conferma le modifiche.":
+        "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then Confirm edits.",
     "Non serve: si salva da solo a ogni scelta.\nSe vuoi esserne sicuro, questo salva subito.":
         "Not needed: it saves itself with every choice.\nIf you want to be sure, this saves right away.",
     "Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.":
@@ -398,14 +404,14 @@ EN.update({
     "Salta (S)": "Skip (S)",
     "Salva SUBITO come foto il fotogramma che stai guardando (F)\ne resta su questo video: puoi prenderne quante vuoi.\nLe foto salvate sono i segni verdi sulla striscia.\nPoi con SÌ / NO decidi se tenere anche il video.":
         "Save the frame you're looking at as a photo RIGHT NOW (F)\nand stay on this video: you can take as many as you like.\nSaved photos are the green marks on the strip.\nThen with YES / NO decide whether to keep the video too.",
-    "Solo foto: nasconde i video (restano foto, Live e panorami).\nI video nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'.":
-        "Photos only: hides videos (photos, Lives and panoramas stay).\nHidden videos are not touched: you'll find them again with 'Show: everything'.",
+    "Solo foto: nasconde i video (restano foto, Live e panorami).\nSolo video: nasconde foto, Live e panorami.\nGli elementi nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'.":
+        "Photos only: hides videos (photos, Lives and panoramas stay).\nVideos only: hides photos, Lives and panoramas.\nHidden items are not touched: you'll find them again with 'Show: everything'.",
     "Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)":
         "Removes adjustments and crop from this photo: back to the original.\n(If you had already approved it, press ✓ Yes again to export it as it was.)",
     "Torna alla prima foto ancora da decidere\n(la prossima da giudicare)":
         "Go back to the first photo still to decide\n(the next one to judge)",
-    "Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi Fine per confermare il ritaglio (o Annulla).":
-        "Drag the corners or sides of the frame on the photo; drag inside to move it.\nThen Done to confirm the crop (or Cancel).",
+    "Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi Conferma le modifiche (o Annulla).":
+        "Drag the corners or sides of the frame on the photo; drag inside to move it.\nThen Confirm edits (or Cancel).",
     "Video: fermati sul fotogramma da salvare (pausa o clic sulla striscia), poi Regola o Ritaglia":
         "Video: stop on the frame to save (pause or click the strip), then Adjust or Crop",
     "Zoom (anche due dita sul trackpad o rotella; doppio clic = foto intera)":
@@ -457,7 +463,7 @@ Con ✓ Sì esporti la foto modificata o ritagliata (JPEG a qualità massima; l'
 
 IMPOSTAZIONI (⚙ in alto a destra)
 Apri cartella: ① la cartella da guardare, ② la cartella export, poi Inizia.
-Mostra: tutto / solo foto. Nasconde i video (restano foto, Live e panorami).
+Mostra: tutto / solo foto / solo video. Solo foto nasconde i video (restano foto, Live e panorami); solo video nasconde tutto il resto.
 Export: cambia la cartella di destinazione. Mostra export: la apre nel Finder.
 JPEG / PNG 16-bit: formato dei fotogrammi estratti da Live e video (JPEG va bene per la stampa).
 Ora: fuso orario da scrivere nella data delle foto esportate.
@@ -505,7 +511,7 @@ With ✓ Yes you export the edited or cropped photo (JPEG at maximum quality; th
 
 SETTINGS (⚙ top right)
 Open folder: ① the folder to browse, ② the export folder, then Start.
-Show: all / photos only. Hides videos (photos, Lives and panoramas stay).
+Show: all / photos only / videos only. Photos only hides videos (photos, Lives and panoramas stay); videos only hides everything else.
 Export: change the destination folder. Show export: opens it in Finder.
 JPEG / 16-bit PNG: format of the frames extracted from Lives and videos (JPEG is fine for printing).
 Time: time zone to write into the dates of the exported photos.

@@ -8,10 +8,12 @@ L'originale non si tocca mai: la copia va in una cartella a parte."""
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps
@@ -84,7 +86,10 @@ _DLL_NOT_FOUND = 0xC0000135
 missing_runtime = False
 
 
-def _enlarge(im: Image.Image, scale: float) -> Image.Image:
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)%")   # il motore scrive "16.67%" su stderr, tessera per tessera
+
+
+def _enlarge(im: Image.Image, scale: float, progress=None) -> Image.Image:
     global missing_runtime
     w, h = round(im.width * scale), round(im.height * scale)
     engine = realesrgan_bin()
@@ -97,7 +102,20 @@ def _enlarge(im: Image.Image, scale: float) -> Image.Image:
                 cmd = [str(engine), "-i", str(src), "-o", str(out), "-n", "realesrgan-x4plus", "-s", "4",
                        "-m", str(engine.parent / "models")]
                 flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0   # niente console su Windows
-                subprocess.run(cmd, check=True, capture_output=True, timeout=600, creationflags=flags)
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                        text=True, creationflags=flags)
+                killer = threading.Timer(600, proc.kill)   # come il vecchio timeout: se il motore si blocca
+                killer.start()
+                try:
+                    for line in proc.stderr:
+                        m = _PERCENT.search(line)
+                        if m and progress:
+                            progress(min(float(m.group(1)) / 100, 1.0))
+                    code = proc.wait()
+                finally:
+                    killer.cancel()
+                if code:
+                    raise subprocess.CalledProcessError(code, cmd)
                 with Image.open(out) as big:
                     big.load()
                     return big.resize((w, h), Image.LANCZOS)
@@ -110,15 +128,16 @@ def _enlarge(im: Image.Image, scale: float) -> Image.Image:
         ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
 
 
-def improve(src: Path, dst: Path) -> str:
-    """Scrive in dst una copia pronta per la stampa (JPEG 300 dpi) e dice cosa è cambiato."""
+def improve(src: Path, dst: Path, progress=None) -> str:
+    """Scrive in dst una copia pronta per la stampa (JPEG 300 dpi) e dice cosa è cambiato.
+    progress(f) riceve l'avanzamento 0..1 quando il motore lo dice (altrimenti niente)."""
     with Image.open(src) as im:
         exif = im.getexif()
         im = ImageOps.exif_transpose(im).convert("RGB")
     w, h = im.size
     scale = _scale(w, h)
     if scale > 1:
-        im = _enlarge(im, scale)
+        im = _enlarge(im, scale, progress)
     else:
         im = im.filter(ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
     exif[274], exif[282], exif[283], exif[296] = 1, 300.0, 300.0, 2   # orientamento, risoluzione 300 dpi
