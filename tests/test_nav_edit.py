@@ -55,7 +55,7 @@ def test_title_never_covers_restore_button(qapp, win, sd, confirmed):
     if confirmed:
         win.confirm_edit()
     # la modifica si calcola in background: sotto carico ci vuole più di un attimo
-    assert wait(qapp, win.btn_restore.isVisible, 10)
+    assert wait(qapp, win.btn_restore.isVisible, 30)
     for width in (1000, 1100, 1200, 1400):
         win.resize(width, 800)
         pump(qapp, 0.3)

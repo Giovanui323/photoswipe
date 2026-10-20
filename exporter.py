@@ -38,9 +38,23 @@ def video_dir(export_dir: Path) -> Path:
     return Path(export_dir) / VIDEO_SUBDIR
 
 
+# date già scritte nel nome dalla fotocamera / dal telefono, in qualsiasi stile: si tolgono, così
+# ogni nome ha UNA data, sempre nello stesso stile, all'inizio. 20240615_123456 (Samsung, Android),
+# 20260730132210 (DJI), 20240615_123456789 (Pixel), 2024-06-15 12.34.56 (Mac, Dropbox)
+_EMBEDDED_DATE = re.compile(
+    r"(?<!\d)(?:(?:19|20)\d{6}[_-]?\d{6}(?:\d{3})?"
+    r"|(?:19|20)\d{2}-\d{2}-\d{2}(?:[ _T]| at | alle )\d{1,2}[.:-]\d{2}[.:-]\d{2})(?!\d)")
+_OLD_NUMBER = re.compile(r"^\d{4}_(?=\d{8}_\d{6})")   # "0001_" della rinomina delle versioni di prima
+
+
 def dated(name: str, when: datetime) -> str:
-    """Nome nell'album: data e ora di scatto davanti al nome originale."""
-    return f"{when:%Y%m%d_%H%M%S}_{name}"
+    """Nome nell'album: data e ora di scatto davanti (20240615_123456_), poi il nome originale
+    senza le date che conteneva già. Rifarlo sullo stesso nome dà lo stesso risultato."""
+    p = Path(_OLD_NUMBER.sub("", name))
+    rest = _EMBEDDED_DATE.sub("_", p.stem)
+    rest = re.sub(r"[_\- .]{2,}", "_", rest).strip("_- .")
+    stamp = f"{when:%Y%m%d_%H%M%S}"
+    return f"{stamp}_{rest}{p.suffix}" if rest else f"{stamp}{p.suffix}"
 
 
 @dataclass
@@ -512,7 +526,6 @@ def rename_by_date(entries: list[tuple[str, datetime, list[str]]], export_dir: P
     favorites = favorites or set()
     out: dict[str, list[list[str]]] = {}
     for item_id, when, files in sorted(entries, key=lambda e: (e[1], e[0])):
-        prefix = f"{when:%Y%m%d_%H%M%S}_"
         for f in files:
             src = Path(f)
             try:
@@ -522,8 +535,7 @@ def rename_by_date(entries: list[tuple[str, datetime, list[str]]], export_dir: P
             if not src.exists():
                 continue
             # rifarlo non aggiunge un secondo prefisso; il vecchio numero 0001_ si toglie
-            base = src.name[len(prefix):] if src.name.startswith(prefix) else _DATE_PREFIX.sub("", src.name)
-            name = dated(base, when)
+            name = dated(src.name, when)   # toglie date vecchie e numero 0001_: mai due date
             if src.suffix.lower() in VIDEO_EXT:
                 folder = video_dir(export_dir)
             elif src.parent == photo_dir(export_dir, True) or src.parent == export_dir / FAV_SUBDIR \

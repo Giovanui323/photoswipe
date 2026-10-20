@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.4.2-blue)
+![Version](https://img.shields.io/badge/version-1.4.3-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
@@ -48,7 +48,7 @@ an `export` folder. Your originals stay exactly where they are.
   and `tools/train_auto.py`.
 - **Grab stills from videos**: scrub frame by frame, jump to the **sharpest nearby frame**, and
   save full-resolution stills (JPEG 4:4:4 q100 or **16-bit PNG** that keeps 10-bit color).
-- **Info panel**: date, GPS location (with "Open in Maps"), camera, aperture/shutter/ISO/focal
+- **Info panel**: date, place name with a 📍 (offline from GeoNames, more precise from OpenStreetMap when online: only the coordinates are sent, can be turned off in Settings), GPS coordinates (with "Open in Maps"), camera, aperture/shutter/ISO/focal
   length, resolution, video codec/fps/bitrate.
 - **Favorites**: one key to also drop a photo into `export/Preferite`.
 - **Smart duplicate skipping**: identical copies (same name and size) are shown only once.

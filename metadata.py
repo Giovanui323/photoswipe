@@ -1,7 +1,8 @@
 """Metadati da mostrare nel pannello Info: data, luogo (GPS), fotocamera, scatto, file.
 
 Si legge solo ciò che è già sul disco (niente download da iCloud) e nulla viene inviato in rete:
-il luogo è dato in coordinate, con un link per aprirlo nella mappa solo se l'utente lo clicca."""
+il luogo è dato in coordinate e col nome dall'elenco incluso (places.py, che con internet lo
+precisa con OpenStreetMap), con un link per aprirlo nella mappa solo se l'utente lo clicca."""
 from __future__ import annotations
 
 import re
@@ -12,7 +13,9 @@ from pathlib import Path
 from PIL import Image
 
 import frames
+import places
 import printprep
+import quality
 from i18n import tr
 
 
@@ -20,8 +23,10 @@ from i18n import tr
 class Meta:
     rows: list[tuple[str, str]] = field(default_factory=list)   # (etichetta, valore), in ordine
     gps: tuple[float, float] | None = None                       # latitudine, longitudine
+    place: str = ""                                              # nome del luogo (vedi places.py)
     altitude: float | None = None
     size: tuple[int, int] | None = None                          # pixel della foto
+    quality: quality.Quality | None = None                       # nitidezza ed esposizione (solo foto)
 
 
 def _ratio(v) -> float | None:
@@ -182,7 +187,11 @@ def read(item, info: frames.VideoInfo | None = None) -> Meta:
             meta.size = img.size
     else:
         meta = read_image(item.image or item.raw)
+    if item.image or item.raw:   # foto (anche quella di una Live iPhone): i video hanno "P", il più nitido
+        meta.quality = quality.assess_file(item.image or item.raw)
     files = [p for p in (item.image, item.raw, item.video) if p]
     meta.rows.append((tr('File'), "\n".join(f"{p.name}  ·  {_size(p)}" for p in files)))
     meta.rows.append((tr('Cartella'), str(item.main.parent)))
+    if meta.gps:
+        meta.place = places.name(*meta.gps)
     return meta

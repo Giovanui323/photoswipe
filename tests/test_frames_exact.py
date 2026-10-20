@@ -36,7 +36,8 @@ def shot_time(name: str) -> datetime:
 
 
 def album(name: str, when: datetime) -> str:
-    return f"{when:%Y%m%d_%H%M%S}_{name}"
+    from album_names import nodate
+    return f"{when:%Y%m%d_%H%M%S}_{nodate(name)}"
 
 
 def photo_rel(name: str) -> str:

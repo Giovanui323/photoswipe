@@ -31,9 +31,10 @@ from test_core import LIVE, LONG, make_clip  # noqa: E402
 PHOTO1 = "DJI_20260730132210_0002_D.JPG"
 PHOTO2 = "DJI_20260730132220_0003_D.JPG"
 # nomi in export: data e ora di scatto davanti (dal nome DJI: le foto finte non hanno EXIF)
-DATED1 = f"20260730_132210_{PHOTO1}"
-DATED2 = f"20260730_132220_{PHOTO2}"
-SNAP31 = f"Foto/20260730_132301_{LONG}_f0031.jpg"
+from album_names import nodate  # noqa: E402
+DATED1 = f"20260730_132210_{nodate(PHOTO1)}"
+DATED2 = f"20260730_132220_{nodate(PHOTO2)}"
+SNAP31 = f"Foto/20260730_132301_{nodate(LONG + '_f0031.jpg')}"
 CAM_FRAME = 40   # fotogramma della Live scelto dalla "fotocamera" (anteprima .SCR)
 
 
@@ -171,7 +172,7 @@ def test_setup_screen_hides_browsing_controls(qapp, win, sd):
 def test_open_folder_shows_first_item_with_info_and_thumbs(qapp, win, sd):
     open_folder(qapp, win, sd)
     assert [it.kind for it in win.items] == ["live", "photo", "photo", "video"] + ["photo"] * 4
-    for w_ in (win.decision_bar, win.nav_pill, win.zoom_pill, win.fav_pill, win.thumbs_strip):
+    for w_ in (win.decision_bar, win.nav_pill, win.fav_pill, win.thumbs_strip):
         assert w_.isVisible()
     assert win.heading.text() == f"{LIVE}.MP4"
     assert win.badge.text() == "LIVE"
@@ -295,7 +296,7 @@ def test_live_yes_exports_the_frame_chosen_on_the_strip(qapp, win, sd):
     d = win.session.get(win.items[0].id)
     assert d["choice"] == "yes" and d["frame"] == CAM_FRAME + 10
     # la foto della Live ha l'ora del fotogramma scelto (50 a 30 fps: +1,7 s dall'inizio)
-    assert exported(win) == [f"Foto/20260730_132205_{LIVE}.jpg"]
+    assert exported(win) == [f"Foto/20260730_132205_{nodate(LIVE + '.jpg')}"]
 
 
 def test_live_reset_goes_back_to_camera_frame(qapp, win, sd):
@@ -313,7 +314,7 @@ def test_live_yes_with_video_copies_the_mp4_too(qapp, win, sd):
     assert win.btn_yes_video.isEnabled()
     click(qapp, win, win.btn_yes_video)
     exports_done(qapp, win)
-    assert exported(win) == [f"Foto/20260730_132205_{LIVE}.jpg", f"Video/20260730_132204_{LIVE}.MP4"]
+    assert exported(win) == [f"Foto/20260730_132205_{nodate(LIVE + '.jpg')}", f"Video/20260730_132204_{nodate(LIVE + '.MP4')}"]
 
 
 def test_live_view_toggles_between_photo_and_video(qapp, win, sd):
@@ -350,7 +351,7 @@ def test_video_yes_without_snapshots_copies_the_video(qapp, win, sd):
     go(qapp, win, f"{LONG}.MP4")
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"Video/20260730_132300_{LONG}.MP4"]
+    assert exported(win) == [f"Video/20260730_132300_{nodate(LONG + '.MP4')}"]
 
 
 def test_undo_snapshot_stays_on_video(qapp, win, sd):

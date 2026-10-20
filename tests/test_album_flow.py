@@ -6,6 +6,7 @@ export a metà, file spariti, rinomina interrotta, cestino svuotato a mano, iClo
 from __future__ import annotations
 
 import ast
+import re
 import hashlib
 import os
 import sys
@@ -257,7 +258,7 @@ def test_album_layout_sorted_by_name_is_capture_order(trip, tmp_path):
         "20240616_080000_IMG_0005.JPG", "Preferite"]
     assert [p.name for p in (foto / exporter.FAV_SUBDIR).iterdir()] == ["20240615_090000_IMG_0003.JPG"]
     assert [p.name for p in (export / exporter.VIDEO_SUBDIR).iterdir()] == \
-        [f"20240615_150000_{clip.name}"]
+        ["20240615_150000_DJI_0007_D.MP4"]   # la data DJI del nome non si ripete
 
     # ordinare la cartella Foto per nome = ordinarla per ora di scatto
     by_file = sorted(p for p in foto.iterdir() if p.is_file())
@@ -266,7 +267,7 @@ def test_album_layout_sorted_by_name_is_capture_order(trip, tmp_path):
     assert [p.name.split("_", 2)[2] for p in by_file] == ["IMG_0002.JPG", "IMG_0001.JPG", "IMG_0005.JPG"]
     for p in by_file:   # copie identiche agli originali
         assert p.read_bytes() == by_name[p.name.split("_", 2)[2]].main.read_bytes()
-    assert (export / exporter.VIDEO_SUBDIR / f"20240615_150000_{clip.name}").read_bytes() == clip.read_bytes()
+    assert (export / exporter.VIDEO_SUBDIR / "20240615_150000_DJI_0007_D.MP4").read_bytes() == clip.read_bytes()
 
 
 def test_rename_by_date_migrates_legacy_export(tmp_path):
@@ -369,27 +370,37 @@ def test_refile_favorite_moves_photos_between_foto_and_preferite(tmp_path):
     assert exporter.refile_favorite([str(outside)], export, True) == [] and outside.exists()
 
 
-def test_camera_name_that_already_starts_with_a_date_is_kept_whole(tmp_path):
-    """Samsung (e altri) chiamano le foto 20240615_123456_001.jpg: il nome originale resta intero
-    dopo il prefisso, e "metti in ordine" non lo scambia per un prefisso già messo."""
+def test_every_name_has_one_date_in_the_same_style(tmp_path):
+    """Una sola data all'inizio, sempre nello stesso stile (20240615_123456_), qualunque cosa
+    scrivesse la fotocamera nel nome: Samsung, Android, Pixel, DJI, schermate del Mac. La data è
+    quella di scatto (EXIF), anche se quella nel nome originale era diversa."""
     root, export = tmp_path / "src", tmp_path / "export"
-    jpeg(root / "20240615_123456_001.jpg", "2024:06:15 12:34:56")
-    jpeg(root / "20240615_123500_002.jpg", "2024:06:15 12:35:01", (9, 9, 9))   # EXIF != nome
+    jpeg(root / "20240615_123456_001.jpg", "2024:06:15 12:34:56")                 # Samsung
+    jpeg(root / "20240615_123500_002.jpg", "2024:06:15 12:35:01", (9, 9, 9))      # EXIF != nome
+    jpeg(root / "IMG_20240615_130000.jpg", "2024:06:15 13:00:00", (1, 9, 9))      # Android
+    jpeg(root / "PXL_20240615_140000123.jpg", "2024:06:15 14:00:00", (9, 1, 9))   # Pixel
+    jpeg(root / "Screenshot 2024-06-15 at 15.00.00.jpg", "2024:06:15 15:00:00", (9, 9, 1))
+    jpeg(root / "DJI_20240615160000_0003_D.JPG", "2024:06:15 16:00:00", (5, 5, 5))
     items = scan(root)
-    out = {it.main.name: exporter.export_item(it, None, export, exporter.Settings()) for it in items}
-    foto = export / exporter.PHOTO_SUBDIR
-    assert out["20240615_123456_001.jpg"] == [foto / "20240615_123456_20240615_123456_001.jpg"]
-    assert out["20240615_123500_002.jpg"] == [foto / "20240615_123501_20240615_123500_002.jpg"]
-    exporter.release_claims([str(p) for v in out.values() for p in v])
-    entries = [(it.id, exporter.album_time([str(it.main)], it.taken), [str(p) for p in out[it.main.name]])
-               for it in items]
-    assert exporter.rename_by_date(entries, export) == {}
-    assert exporter.rename_by_date(entries, export) == {}
-    assert files_in(export) == ["Foto/20240615_123456_20240615_123456_001.jpg",
-                                "Foto/20240615_123501_20240615_123500_002.jpg"]
+    for it in items:
+        exporter.export_item(it, None, export, exporter.Settings())
+    names = files_in(export / exporter.PHOTO_SUBDIR)
+    assert names == ["20240615_123456_001.jpg", "20240615_123501_002.jpg", "20240615_130000_IMG.jpg",
+                     "20240615_140000_PXL.jpg", "20240615_150000_Screenshot.jpg",
+                     "20240615_160000_DJI_0003_D.JPG"]
+    assert all(re.fullmatch(r"\d{8}_\d{6}(_[^\d].*|_\d{3}.*)?\.\w+", n) for n in names), names
+    assert len({n[:15] for n in names}) == len(names), "una data per file, mai ripetuta nel nome"
 
-    # copia numerata di una versione di prima: si toglie solo 0001_<data>_, il nome resta intero
+    # rifare il riordino non cambia niente; una copia numerata delle versioni di prima prende
+    # lo stesso stile (niente 0001_, niente seconda data)
+    entries = [(it.id, exporter.album_time([str(it.main)], it.taken),
+                [str(p) for p in (export / exporter.PHOTO_SUBDIR).iterdir()
+                 if exporter.dated(it.main.name, exporter.album_time([str(it.main)], it.taken)) == p.name])
+               for it in items]
+    exporter.release_claims([str(p) for _, _, fs in entries for p in fs])
+    assert exporter.rename_by_date(entries, export) == {}
     old = export / "0001_20240615_123456_20240615_123456_001.jpg"
     old.write_bytes(b"vecchia copia")
     moved = exporter.rename_by_date([("v", datetime(2024, 6, 15, 12, 34, 56), [str(old)])], export)
-    assert moved == {"v": [[str(old), str(foto / "20240615_123456_20240615_123456_001_2.jpg")]]}
+    foto = export / exporter.PHOTO_SUBDIR
+    assert moved == {"v": [[str(old), str(foto / "20240615_123456_001_2.jpg")]]}

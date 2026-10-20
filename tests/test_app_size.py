@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # Ultimo numero di righe registrato. Si abbassa ogni volta che app.py si accorcia, mai si alza.
-APP_PY_MAX_LINES = 5572
+APP_PY_MAX_LINES = 4397
 
 
 def _lines() -> int:

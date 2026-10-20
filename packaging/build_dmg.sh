@@ -37,7 +37,7 @@ echo "Versione: $OLD -> $VER"
 rm -rf build/work build/dist build/dmg
 build/venv/bin/pyinstaller --noconfirm --clean --windowed --name PhotoSwipe \
   --icon "$PWD/packaging/PhotoSwipe.icns" --osx-bundle-identifier io.github.giovanui323.photoswipe \
-  --collect-binaries imageio_ffmpeg --collect-all rawpy --collect-all pi_heif --add-data "$PWD/engines/macos:engines/macos" --add-data "$PWD/THIRD_PARTY_NOTICES.txt:." --add-data "$PWD/packaging/licenses:licenses" --exclude-module pytest \
+  --collect-binaries imageio_ffmpeg --collect-all rawpy --collect-all pi_heif --add-data "$PWD/engines/macos:engines/macos" --add-data "$PWD/data:data" --add-data "$PWD/THIRD_PARTY_NOTICES.txt:." --add-data "$PWD/packaging/licenses:licenses" --exclude-module pytest \
   --exclude-module tkinter --distpath build/dist --workpath build/work --specpath build "$PWD/app.py"
 APP=build/dist/PhotoSwipe.app
 plutil -replace CFBundleShortVersionString -string "$VER" "$APP/Contents/Info.plist"

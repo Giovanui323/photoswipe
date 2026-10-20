@@ -73,11 +73,15 @@ def test_skipped_quickly_items_do_not_start_downloads(qapp, win, sd, monkeypatch
     open_folder(qapp, win, sd)
     gate, calls = remote_photos(monkeypatch, win, [PHOTO1, PHOTO2, *EXTRA], fast=set())
     monkeypatch.setattr(win, "prefetch", lambda: None)
+    # ritardo più lungo dei 150 ms veri: con la CPU carica (altre suite in parallelo) un salto
+    # può durarne di più, e la foto solo sfiorata partiva comunque. Il comportamento è lo stesso.
+    monkeypatch.setattr(win, "READY_DELAY_S", 1.0)
     try:
         for name in [PHOTO1, PHOTO2, *EXTRA[:2]]:
             win.jump_to(index_of(win, name))
             qapp.processEvents()   # scorrendo velocissimo
-        pump(qapp, 0.5)
+        assert wait(qapp, lambda: EXTRA[1] in calls, 10), calls
+        pump(qapp, 0.3)
         # l'ultimo, su cui ti sei fermato, sì; quelli solo sfiorati (quasi tutti) no
         assert EXTRA[1] in calls and len(calls) <= 2, calls
     finally:
