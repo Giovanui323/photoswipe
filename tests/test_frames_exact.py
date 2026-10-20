@@ -7,8 +7,10 @@ vince il più simile, con un margine netto sul secondo."""
 from __future__ import annotations
 
 import random
+import re
 import shutil
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,37 @@ from test_ui import (PHOTO1, click, exported, exports_done, go, open_folder, pre
                      pump, qapp, sd, sd_template, wait, win)
 
 SMALL = (160, 90)
+
+
+# ------------------------------------------------------------------ nomi attesi in export
+# export/Foto e export/Video, ogni nome con data e ora di scatto davanti: calcolati qui
+# dal nome DJI (ora della fotocamera) e dal fotogramma, senza chiedere all'app.
+
+def shot_time(name: str) -> datetime:
+    """Ora di scatto scritta nel nome DJI (DJI_YYYYMMDDHHMMSS_...)."""
+    return datetime.strptime(re.search(r"DJI_(\d{14})_", name).group(1), "%Y%m%d%H%M%S")
+
+
+def album(name: str, when: datetime) -> str:
+    return f"{when:%Y%m%d_%H%M%S}_{name}"
+
+
+def photo_rel(name: str) -> str:
+    """Foto copiata così com'è: export/Foto/<data ora>_<nome>."""
+    return f"{exporter.PHOTO_SUBDIR}/{album(name, shot_time(name))}"
+
+
+def video_rel(name: str) -> str:
+    """Video copiato: export/Video/<ora d'inizio>_<nome>."""
+    return f"{exporter.VIDEO_SUBDIR}/{album(name, shot_time(name))}"
+
+
+def frame_rel(clip: Path, n: int, snapshot: bool = True) -> str:
+    """Fotogramma n (da 0) del video: export/Foto/<ora esatta del fotogramma>_<nome>.
+    snapshot (Prendi foto): <video>_fNNNN.jpg; Live: <video>.jpg."""
+    when = shot_time(clip.name) + timedelta(seconds=float(n / frames.probe(clip).fps))
+    name = f"{clip.stem}_f{n + 1:04d}.jpg" if snapshot else f"{clip.stem}.jpg"
+    return f"{exporter.PHOTO_SUBDIR}/{album(name, when)}"
 
 
 def decode_all(clip: Path) -> list[Image.Image]:
@@ -47,10 +80,15 @@ def which(img: Image.Image, ref: list[Image.Image]) -> int:
     return order[0]
 
 
+def clip_of(w, stem: str) -> Path:
+    return w.root / "DCIM" / "DJI_001" / f"{stem}.MP4"
+
+
 def snap_file(w, n: int) -> Path:
-    files = list(w.export_dir.rglob(f"{LONG}_f{n + 1:04d}.jpg"))
-    assert len(files) == 1, files
-    return files[0]
+    """La foto presa dal fotogramma n del video LONG, col suo nome esatto in export/Foto."""
+    f = w.export_dir / frame_rel(clip_of(w, LONG), n)
+    assert f.is_file(), (f, exported(w))
+    return f
 
 
 def shown_image(qa, w) -> Image.Image:
@@ -92,6 +130,7 @@ def test_video_snapshots_are_exactly_the_frames_shown(qapp, win, sd, video_ref):
     press(qapp, win, Qt.Key_F)
     exports_done(qapp, win)
     assert taken == [30, 35, 45]
+    assert exported(win) == sorted(frame_rel(clip_of(win, LONG), n) for n in taken)
     for n in taken:
         assert which(Image.open(snap_file(win, n)), video_ref) == n
     assert sorted(win.strip.marks) == taken
@@ -194,8 +233,9 @@ def test_sharpest_on_live_changes_the_photo_that_yes_saves(qapp, win, sd, live_r
     assert found == expected
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    jpg = next(win.export_dir.rglob(f"{LIVE}.jpg"))
-    assert which(Image.open(jpg), live_ref) == found
+    rel = frame_rel(sd / "DCIM" / "DJI_001" / f"{LIVE}.MP4", found, snapshot=False)
+    assert exported(win) == [rel]
+    assert which(Image.open(win.export_dir / rel), live_ref) == found
 
 
 # ------------------------------------------------------------------ scelte cambiate
@@ -216,8 +256,28 @@ def test_video_back_and_take_another_frame_then_remove_the_first(qapp, win, sd, 
     assert which(Image.open(snap_file(win, 80)), video_ref) == 80
     win.remove_snap(f"{win.current().id}#f30")     # ✕ sulla prima foto presa
     exports_done(qapp, win)
-    assert exported(win) == [f"{LONG}_f0081.jpg"]
+    assert exported(win) == [frame_rel(clip_of(win, LONG), 80)]
     assert which(Image.open(snap_file(win, 80)), video_ref) == 80
+
+
+def test_video_snapshots_taken_backwards_sort_in_frame_order(qapp, win, sd, video_ref):
+    """Foto prese dallo stesso video al contrario (prima la più avanti): in export/Foto,
+    in ordine di nome, sono comunque in ordine di fotogramma (anche due nello stesso secondo)."""
+    open_folder(qapp, win, sd)
+    go(qapp, win, f"{LONG}.MP4")
+    order = [80, 40, 35]                           # 13:23:02, 13:23:01, 13:23:01
+    for n in order:
+        win.on_strip_picked(n)
+        pump(qapp, 0.2)
+        assert wait(qapp, lambda: win.current_frame() == n)
+        press(qapp, win, Qt.Key_F)
+    exports_done(qapp, win)
+    expected = [frame_rel(clip_of(win, LONG), n) for n in sorted(order)]
+    assert exported(win) == expected               # exported() è già in ordine di nome
+    names = sorted(p.name for p in (win.export_dir / exporter.PHOTO_SUBDIR).iterdir())
+    assert names == [Path(r).name for r in expected]
+    assert [which(Image.open(win.export_dir / exporter.PHOTO_SUBDIR / f), video_ref) for f in names] \
+        == sorted(order)
 
 
 def test_video_snapshots_stay_when_video_is_rejected(qapp, win, sd):
@@ -229,7 +289,7 @@ def test_video_snapshots_stay_when_video_is_rejected(qapp, win, sd):
     press(qapp, win, Qt.Key_F)
     click(qapp, win, win.btn_no)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LONG}_f0013.jpg"]
+    assert exported(win) == [frame_rel(clip_of(win, LONG), 12)]
 
 
 def test_video_yes_then_back_and_no_removes_the_video(qapp, win, sd):
@@ -237,7 +297,7 @@ def test_video_yes_then_back_and_no_removes_the_video(qapp, win, sd):
     go(qapp, win, f"{LONG}.MP4")
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"{exporter.VIDEO_SUBDIR}/{LONG}.MP4"]
+    assert exported(win) == [video_rel(f"{LONG}.MP4")]
     go(qapp, win, f"{LONG}.MP4")
     click(qapp, win, win.btn_no)
     exports_done(qapp, win)
@@ -252,7 +312,7 @@ def test_live_yes_then_changed_mind_removes_the_photo(qapp, win, sd, button):
     pump(qapp, 0.2)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LIVE}.jpg"]
+    assert exported(win) == [frame_rel(clip_of(win, LIVE), 20, snapshot=False)]
     go(qapp, win, f"{LIVE}.MP4")
     click(qapp, win, getattr(win, button))
     exports_done(qapp, win)
@@ -271,12 +331,14 @@ def test_live_yes_back_new_frame_yes_then_undo_restores_the_first(qapp, win, sd,
     pump(qapp, 0.2)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LIVE}.jpg"]
-    assert which(Image.open(win.export_dir / f"{LIVE}.jpg"), live_ref) == 70
+    f70, f20 = (frame_rel(clip_of(win, LIVE), n, snapshot=False) for n in (70, 20))
+    assert f70 != f20                                # ore diverse: 13:22:06 e 13:22:04
+    assert exported(win) == [f70]
+    assert which(Image.open(win.export_dir / f70), live_ref) == 70
     press(qapp, win, Qt.Key_Z)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LIVE}.jpg"]
-    assert which(Image.open(win.export_dir / f"{LIVE}.jpg"), live_ref) == 20
+    assert exported(win) == [f20]
+    assert which(Image.open(win.export_dir / f20), live_ref) == 20
 
 
 @pytest.mark.parametrize("button", ["btn_no", "btn_skip"])
@@ -285,7 +347,7 @@ def test_photo_yes_then_changed_mind_removes_the_copy(qapp, win, sd, button):
     go(qapp, win, PHOTO1)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [PHOTO1]
+    assert exported(win) == [photo_rel(PHOTO1)]
     go(qapp, win, PHOTO1)
     click(qapp, win, getattr(win, button))
     exports_done(qapp, win)
@@ -308,5 +370,5 @@ def test_photo_yes_then_trash_moves_original_and_removes_copy_undo_restores(qapp
     press(qapp, win, Qt.Key_Z)                      # annulla: torna al Sì
     exports_done(qapp, win)
     assert original.read_bytes() == data            # originale al suo posto, identico
-    assert exported(win) == [PHOTO1]
-    assert (win.export_dir / PHOTO1).read_bytes() == data
+    assert exported(win) == [photo_rel(PHOTO1)]
+    assert (win.export_dir / photo_rel(PHOTO1)).read_bytes() == data

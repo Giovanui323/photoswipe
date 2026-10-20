@@ -33,7 +33,7 @@ EN = {
     "Copia per la stampa": "Print copy",
     "Preparo la copia per la stampa… {v0}%": "Preparing the print copy… {v0}%",
     "\n\nIniziato il {v0}\nUltima modifica il {v1}\nExport: {v2}": "\n\nStarted on {v0}\nLast change on {v1}\nExport: {v2}",
-    "\n\n↑ = torna indietro a rivedere": "\n\n↑ = go back to review",
+    "\n\n← = torna indietro a rivedere": "\n\n← = go back to review",
     "\n\n🎬 {hidden} nascosti dal filtro attivo": "\n\n🎬 {hidden} hidden by the active filter",
     "\n📷 {v0} foto prese dai video": "\n📷 {v0} photos taken from videos",
     "   ({hidden} nascosti dal filtro)": "   ({hidden} hidden by the filter)",
@@ -178,7 +178,7 @@ EN = {
     "Sfocatura: la foto è già nitida": "Blur: the photo is already sharp",
     "Specchia la foto da sinistra a destra.": "Mirrors the photo from left to right.",
     "Spostamento non riuscito: {e}": "Move failed: {e}",
-    "Successivo (↓): vai all'elemento dopo senza decidere.": "Next (↓): go to the next item without deciding.",
+    "Successivo (→): vai all'elemento dopo senza decidere.": "Next (→): go to the next item without deciding.",
     "Sì (Y)": "Yes (Y)",
     "Sì + video (⇧Y)": "Yes + video (⇧Y)",
     "Tieni le foto (Y)": "Keep the photos (Y)",
@@ -187,7 +187,7 @@ EN = {
         "Removes all edits (Adjust and Crop): back to the original photo.",
     "Toglie tutte le regolazioni di questa foto (il ritaglio resta).": "Removes all adjustments for this photo (the crop stays).",
     "Tonalità": "Hue",
-    "Torna alla foto da cui sei tornato indietro (con ↑ o B).": "Back to the photo you came back from (with ↑ or B).",
+    "Torna alla foto da cui sei tornato indietro (con ← o B).": "Back to the photo you came back from (with ← or B).",
     "analisi del video…": "analyzing the video…",
     "anteprima 720p · originale scaricato al SÌ": "720p preview · original downloaded on YES",
     "anteprima non letta": "preview not read",
@@ -205,8 +205,8 @@ EN = {
     "meno di 10×15": "smaller than 10×15",
     "raddrizzata di {a:+.1f}°": "straightened by {a:+.1f}°",
     "scelta da te": "your choice",
-    "trascina sulla striscia o usa ← → per cambiarla  ·  SÌ salva questa":
-        "drag on the strip or use ← → to change it  ·  YES saves this one",
+    "trascina sulla striscia o usa ↑ ↓ per cambiarla  ·  SÌ salva questa":
+        "drag on the strip or use ↑ ↓ to change it  ·  YES saves this one",
     "trascina sulla striscia per sceglierne un'altra": "drag on the strip to choose another one",
     "{state}<br><span style='color:#98989f'>Si salvano da soli a ogni scelta: puoi chiudere quando vuoi e riprendere da qui.</span><table cellspacing='0' style='margin-top:6px'><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Progressi</td><td>{v1}/{v2}</td></tr><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Foto scelte</td><td>{v3}</td></tr></table>":
         "{state}<br><span style='color:#98989f'>Saved automatically with every choice: you can close at any time and resume from here.</span><table cellspacing='0' style='margin-top:6px'><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Progress</td><td>{v1}/{v2}</td></tr><tr><td style='color:#98989f; padding:2px 10px 2px 0'>Photos chosen</td><td>{v3}</td></tr></table>",
@@ -277,8 +277,8 @@ EN = {
     "Finito!": "Done!",
     "Forma libera": "Free form",
     "Foto annullata": "Photo discarded",
-    "Fotogramma precedente (←, Maiusc+← = 10 indietro)": "Previous frame (←, Shift+← = 10 back)",
-    "Fotogramma successivo (→, Maiusc+→ = 10 avanti)": "Next frame (→, Shift+→ = 10 forward)",
+    "Fotogramma precedente (↑, Maiusc+↑ = 10 indietro)": "Previous frame (↑, Shift+↑ = 10 back)",
+    "Fotogramma successivo (↓, Maiusc+↓ = 10 avanti)": "Next frame (↓, Shift+↓ = 10 forward)",
     "Fuso orario": "Time zone",
     "Lavoro completato": "Work completed",
     "Modifiche annullate": "Edits discarded",
@@ -358,8 +358,8 @@ EN.update({
         "The original spot already had a file with the same name: nothing was overwritten. Restored as:\n",
     "Annulla l'ultima scelta e torna indietro (Z).\nSe era un Sì, toglie anche i file copiati in export.":
         "Undo the last choice and go back (Z).\nIf it was a Yes, it also removes the files copied to export.",
-    "Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ← → un fotogramma alla volta.":
-        "Click or drag on the strip to choose the frame.\nLive: the one you pick becomes the photo (YES saves it).\nLive: the yellow dot is the photo chosen by the camera (R to go back to it).\nVideo: it stops there, then 📷 Take photo.  ← → one frame at a time.",
+    "Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ↑ ↓ un fotogramma alla volta.":
+        "Click or drag on the strip to choose the frame.\nLive: the one you pick becomes the photo (YES saves it).\nLive: the yellow dot is the photo chosen by the camera (R to go back to it).\nVideo: it stops there, then 📷 Take photo.  ↑ ↓ one frame at a time.",
     "Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.":
         "How it works (? or H): explains all buttons and keys.\nFrom here you can also open the log file.",
     "Formato dei fotogrammi estratti da Live e video.\nJPEG qualità massima: accettato da tutti i siti di stampa.\nPNG 16-bit: senza perdita, file molto grandi (~40 MB).\nFoto e panorami vengono sempre copiati identici.":
@@ -391,10 +391,10 @@ EN.update({
         "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then Confirm edits.",
     "Non serve: si salva da solo a ogni scelta.\nSe vuoi esserne sicuro, questo salva subito.":
         "Not needed: it saves itself with every choice.\nIf you want to be sure, this saves right away.",
-    "Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.":
-        "Previous (↑ or B): go back to the previous item, even if already decided\n(approved, discarded, in “cancellare”). A new choice replaces the old one.",
-    "Preferita (.): le preferite approvate vengono copiate in\nexport/Preferite invece che in export.":
-        "Favorite (.): approved favorites are copied to\nexport/Preferite instead of export.",
+    "Precedente (← o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.":
+        "Previous (← or B): go back to the previous item, even if already decided\n(approved, discarded, in “cancellare”). A new choice replaces the old one.",
+    "Preferita (.): le preferite approvate vengono copiate in\nexport/Foto/Preferite invece che in export/Foto.":
+        "Favorite (.): approved favorites are copied to\nexport/Foto/Preferite instead of export/Foto.",
     "Quali miniature mostrare nella striscia in basso.\nQuella che stai guardando resta sempre visibile.":
         "Which thumbnails to show in the strip at the bottom.\nThe one you're looking at always stays visible.",
     "Questo elemento è già stato deciso. Premi un'altra scelta per cambiarla:\nla nuova sostituisce la vecchia e i file tornano a posto (Z annulla).":
@@ -423,9 +423,95 @@ EN.update({
 })
 
 
+EN.update({
+    "PANORAMA": "PANORAMA", "Sì": "Yes", "Selezione": "Selection", "Salvataggio": "Saving",
+    "Modificata": "Edited", "Ripeti": "Loop", "Disattiva": "Off", "✗ NO": "✗ NO",
+    "Capovolgi": "Flip", "Proporzioni": "Aspect ratio",
+    "Raddrizza l'orizzonte e le linee verticali da solo.": "Straightens the horizon and vertical lines by itself.",
+    "Clic di nuovo per passare da orizzontale a verticale": "Click again to switch between landscape and portrait",
+    "Crea una copia per la stampa in export/Stampa: ingrandisce con Real-ESRGAN (se installato) o Lanczos, e aggiunge nitidezza. L'originale non si tocca.":
+        "Creates a print copy in export/Stampa: upscales with Real-ESRGAN (if installed) or Lanczos and adds sharpening. The original is never touched.",
+    " (ingrandimento semplice: per la qualità migliore installa il Visual C++ Redistributable gratuito di Microsoft: {url})":
+        " (simple upscaling: for the best quality install Microsoft's free Visual C++ Redistributable: {url})",
+    "Rinomina per data": "Rename by date",
+    "Rinomina le copie approvate in export in ordine di data e ora di scatto. Gli originali non si toccano.":
+        "Renames the approved copies in export in order of capture date and time. The originals are never touched.",
+    "Rinomino {v0} foto approvate in export in ordine di data e ora.\nGli originali non si toccano.\n\nContinuare?":
+        "I'll rename {v0} approved photos in export in order of date and time.\nThe originals are never touched.\n\nContinue?",
+    "Copie rinominate: {v0}": "Copies renamed: {v0}",
+    "Aspetta che finiscano le copie in corso, poi rinomina": "Wait for the copies in progress to finish, then rename",
+    "Cartella export non raggiungibile": "Export folder not reachable",
+    "Nessuna copia da rinominare": "No copies to rename",
+    "Rinomina non riuscita: {e}": "Rename failed: {e}",
+    "Alcune copie non si sono potute rinominare e sono rimaste com'erano:\n":
+        "Some copies could not be renamed and were left as they were:\n",
+    "Questi file non sono più in “cancellare” e non si possono rimettere a posto:\n":
+        "These files are no longer in “cancellare” and can't be put back:\n",
+    "Audio acceso / spento (Live e video)": "Sound on / off (Live and videos)",
+    "Come si riproduce la Live quando fai clic sulla foto": "How the Live plays when you click the photo",
+    "Foto prese da questo video.\nClic: il video torna su quel fotogramma per rivederlo.\nDoppio clic: mostra la foto intera, con stampabilità e correzioni.\n✕: toglie la foto da export (puoi riprenderla con F).":
+        "Photos taken from this video.\nClick: the video goes back to that frame to review it.\nDouble-click: shows the whole photo, with print check and fixes.\n✕: removes the photo from export (you can take it again with F).",
+    "Preparo la copia per la stampa…": "Preparing the print copy…",
+    "Preparo la copia per la stampa… può richiedere qualche minuto": "Preparing the print copy… it may take a few minutes",
+    "<span style='color:#7fe3b4'>✓ Salvato alle {when}</span>": "<span style='color:#7fe3b4'>✓ Saved at {when}</span>",
+    "<span style='color:#ffb340'>Non ancora salvato</span>": "<span style='color:#ffb340'>Not saved yet</span>",
+    "Si salva da solo a ogni scelta: puoi chiudere quando vuoi e riprendere da qui.\nProgressi: {v1}/{v2}\nFoto scelte: {v3}":
+        "It saves by itself at every choice: you can quit any time and resume from here.\nProgress: {v1}/{v2}\nPhotos chosen: {v3}",
+    "Elemento {pos} di {v1}": "Item {pos} of {v1}", "{pos} di {total}": "{pos} of {total}",
+    "Durata: {d}": "Duration: {d}",
+    "Stai guardando l'originale: clic per la versione modificata": "You're viewing the original: click for the edited version",
+    "Stai guardando la versione modificata: clic per l'originale": "You're viewing the edited version: click for the original",
+    "Modificata dopo il Sì: premi di nuovo ✓ per esportare questa versione": "Edited after Yes: press ✓ again to export this version",
+    "Foto non ancora salvata: riprova tra un attimo": "Photo not saved yet: try again in a moment",
+    "<span style='font-size:13px; font-weight:600; color:#f2f2f7;'>{done} di {v1} già fatte</span>":
+        "<span style='font-size:13px; font-weight:600; color:#f2f2f7;'>{done} of {v1} done</span>",
+    "Foto {v0} / {v1} · {who}": "Photo {v0} / {v1} · {who}",
+    "Live disattivata: scegli Live nel menu della barra per farla partire col clic":
+        "Live is off: choose Live in the bar menu to play it on click",
+    "📷 {k} foto prese": "📷 {k} photos taken", "Clic sulla striscia per fermarti": "Click the strip to stop",
+    " · <a style='color:#0a84ff' href='{url}'>Mappa</a>": " · <a style='color:#0a84ff' href='{url}'>Map</a>",
+    "{v2} approvate · {v3} scartate · {v4} saltate": "{v2} approved · {v3} discarded · {v4} skipped",
+    " · {v0} dai video": " · {v0} from videos", " · {v0} in “cancellare”": " · {v0} in “cancellare”",
+    "Fotogramma {v0} / {v1}": "Frame {v0} / {v1}", "✓ già salvato": "✓ already saved",
+    "F = salva come foto": "F = save as photo",
+    "Nuova selezione": "New selection", "(proposta)": "(suggested)", "Come funziona": "How it works",
+    "☁️ Questa cartella ha file su iCloud: ogni originale verrà scaricato quando lo apri (qualità sempre massima, ma con attesa). Per andare veloci usa una cartella su disco.":
+        "☁️ This folder has files on iCloud: each original will be downloaded when you open it (always full quality, but with a wait). For speed, use a folder on disk.",
+    "↻  Riprendi l'ultima sessione:  {v0}  →  {v1}": "↻  Resume the last session:  {v0}  →  {v1}",
+    "Il lavoro salvato in questa cartella era danneggiato e non si è potuto leggere.\nÈ stato conservato come:\n{v0}\n\nSi riparte senza le scelte precedenti. I file in “cancellare” sono ancora lì.":
+        "The saved work in this folder was damaged and could not be read.\nIt was kept as:\n{v0}\n\nStarting without the previous choices. The files in “cancellare” are still there.",
+    "Scelta confermata: {v0}": "Choice confirmed: {v0}",
+    "Scelta cambiata: {v0}   (Z annulla)": "Choice changed: {v0}   (Z undoes)",
+    ", tasto ": ", key ",
+    "Scelta non salvata: {e}": "Choice not saved: {e}",
+    "Video non leggibile: {v0}": "Unreadable video: {v0}",
+})
+
+
+EN.update({
+    "Non riesco a salvare il lavoro ({v0}). L'ultima scelta non è salvata.":
+        "I can't save the work ({v0}). The last choice is not saved.",
+    "{e} — e non riesco a rimettere a posto gli originali ({e2}): sono in “{TRASH_DIR}”:\n{v0}":
+        "{e} — and I can't put the originals back ({e2}): they are in “{TRASH_DIR}”:\n{v0}",
+    "Non riesco a salvare il lavoro ({v0}). Scegli un'altra cartella export.":
+        "I can't save the work ({v0}). Choose another export folder.",
+    "La cartella non è scrivibile: il lavoro si salva in\n{v0}":
+        "The folder isn't writable: the work is saved in\n{v0}",
+})
+
+
+EN.update({
+    "♥ Preferita: le copie vanno in export/Foto/Preferite": "♥ Favorite: the copies go to export/Foto/Preferite",
+    "Export in ordine: {v0} copie spostate in Foto / Video con la data nel nome":
+        "Export tidied: {v0} copies moved into Foto / Video with the date in the name",
+    "{v0} copie in export non si sono potute rinominare: restano com'erano":
+        "{v0} copies in export could not be renamed: they were left as they were",
+})
+
+
 HELP = {
     "it": """PULSANTI PRINCIPALI
-✓ SÌ (Y o Invio): approva e copia nella cartella export.
+✓ SÌ (Y o Invio): approva e copia nella cartella export: le foto in export/Foto, i video in export/Video. Ogni copia comincia con data e ora di scatto (es. 20240615_123456_IMG_0001.JPG), così la cartella è già in ordine cronologico.
    • Foto e panorami: copia identica dell'originale.
    • Live: salva come foto il fotogramma scelto sulla striscia (all'inizio, quello della fotocamera), a piena risoluzione.
    • Video: copia il video nella sottocartella "Video". Se hai preso delle foto con 📷, SÌ tiene solo quelle.
@@ -434,18 +520,18 @@ HELP = {
 ↪ Salta (S): decidi dopo. A fine giro puoi rivedere le saltate.
 🗑 Cancellare (X): sposta l'originale nella cartella "cancellare", dentro quella che stai guardando. Non cancella davvero: la svuoti tu a mano.
 ↩ Annulla (Z): torna all'ultima scelta. Se era un Sì, toglie anche i file copiati.
-‹ Precedente (↑ o B) / Successivo › (↓): rivedi anche le foto già decise o in "cancellare". Una nuova scelta sostituisce la vecchia e rimette a posto i file.
-♡ Preferita (.): le preferite approvate finiscono anche in export/Preferite.
+‹ Precedente (← o B) / Successivo › (→): rivedi anche le foto già decise o in "cancellare". Una nuova scelta sostituisce la vecchia e rimette a posto i file.
+♡ Preferita (.): le preferite approvate finiscono in export/Foto/Preferite.
 Le miniature in basso mostrano quelle prima e dopo: clic per andarci. Il pallino colorato indica la scelta fatta.
 A destra c'è il pannello Info (ⓘ o I per nasconderlo): data, luogo, fotocamera, scatto e file.
 
 LIVE
-La Live si apre come foto. Sotto c'è la striscia dei fotogrammi: clic o trascina per scegliere, ← → per spostarti di uno alla volta. Il riquadro bianco è la foto che SÌ salverà.
+La Live si apre come foto. Sotto c'è la striscia dei fotogrammi: clic o trascina per scegliere, ↑ ↓ per spostarti di uno alla volta. Il riquadro bianco è la foto che SÌ salverà.
 ▶ Vedi Live (L): riguarda il video.   ↺ Originale (R): torna alla foto della fotocamera.
 ✨ Più nitida (P): cerca il fotogramma meno mosso lì vicino.
 
 VIDEO
-Clic sulla striscia (o Spazio, ← →) per fermarti sul fotogramma esatto.
+Clic sulla striscia (o Spazio, ↑ ↓) per fermarti sul fotogramma esatto.
 Video: fermati sul fotogramma (pausa o clic sulla striscia), poi Regola / Ritaglia e OK: 📷 Prendi foto salva il fotogramma modificato (se l'avevi già preso, viene rifatto).
 📷 Prendi foto (F): salva il fotogramma come foto. Compare un segno verde sulla striscia. Ne puoi prendere quante vuoi; Z annulla l'ultima.
 ⟲ Rivedi (V): dall'inizio, con l'audio.   ▶ / ⏸ (Spazio): riproduci o metti in pausa.
@@ -473,7 +559,7 @@ Ora: fuso orario da scrivere nella data delle foto esportate.
 SALVATAGGIO
 Ogni scelta viene salvata subito in un file nascosto dentro la cartella che apri (.photoswipe-session.json). Riaprendo la cartella, l'app ti dice se il lavoro era a metà o completato e ti chiede se riprendere. I file su iCloud si scaricano da soli, e i 10 successivi in anticipo.""",
     "en": """MAIN BUTTONS
-✓ YES (Y or Enter): approves and copies to the export folder.
+✓ YES (Y or Enter): approves and copies to the export folder: photos into export/Foto, videos into export/Video. Each copy starts with the capture date and time (e.g. 20240615_123456_IMG_0001.JPG), so the folder is already in chronological order.
    • Photos and panoramas: an exact copy of the original.
    • Live: saves the frame you picked on the strip as a photo (at first, the camera's pick), at full resolution.
    • Video: copies the video into the "Video" subfolder. If you took photos with 📷, YES keeps only those.
@@ -482,18 +568,18 @@ Ogni scelta viene salvata subito in un file nascosto dentro la cartella che apri
 ↪ Skip (S): decide later. At the end you can review the skipped items.
 🗑 Trash (X): moves the original into the "cancellare" folder, inside the folder you're browsing. Nothing is really deleted: you empty that folder yourself.
 ↩ Undo (Z): goes back to your last choice. If it was a Yes, it also removes the copied files.
-‹ Previous (↑ or B) / Next › (↓): review photos you already decided or put in "cancellare". A new choice replaces the old one and puts the files back in place.
-♡ Favorite (.): approved favorites also end up in export/Preferite.
+‹ Previous (← or B) / Next › (→): review photos you already decided or put in "cancellare". A new choice replaces the old one and puts the files back in place.
+♡ Favorite (.): approved favorites end up in export/Foto/Preferite.
 The thumbnails at the bottom show the ones before and after: click to go there. The colored dot shows your choice.
 The Info panel is on the right (ⓘ or I to hide it): date, place, camera, shot and file details.
 
 LIVE
-A Live opens as a photo. The frame strip below lets you choose: click or drag, ← → to move one frame at a time. The white box is the photo that YES will save.
+A Live opens as a photo. The frame strip below lets you choose: click or drag, ↑ ↓ to move one frame at a time. The white box is the photo that YES will save.
 ▶ Show Live (L): replays the video.   ↺ Original (R): back to the camera's photo.
 ✨ Sharper (P): looks for the least blurry frame nearby.
 
 VIDEO
-Click the strip (or Space, ← →) to stop on the exact frame.
+Click the strip (or Space, ↑ ↓) to stop on the exact frame.
 Video: stop on the frame (pause or click the strip), then Adjust / Crop and OK: 📷 Take photo saves the edited frame (if you already took it, it is redone).
 📷 Take photo (F): saves the frame as a photo. A green mark appears on the strip. You can take as many as you like; Z undoes the last one.
 ⟲ Replay (V): from the start, with sound.   ▶ / ⏸ (Space): play or pause.

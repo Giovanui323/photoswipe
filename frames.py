@@ -14,6 +14,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from fractions import Fraction
@@ -36,9 +37,44 @@ def ffmpeg_exe() -> str:
         return exe
 
 
+# ffmpeg in corso: all'uscita dell'app si fermano (kill_running), non restano orfani
+_procs: set[subprocess.Popen] = set()
+_procs_lock = threading.Lock()
+
+
 def _run(args: list[str], timeout: float = 120) -> subprocess.CompletedProcess:
-    return subprocess.run([ffmpeg_exe(), "-hide_banner", *args], capture_output=True,
-                          timeout=timeout, creationflags=_NO_WINDOW)
+    cmd = [ffmpeg_exe(), "-hide_banner", *args]
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, creationflags=_NO_WINDOW)
+    with _procs_lock:
+        _procs.add(p)
+    try:
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out, err = p.communicate()
+            raise subprocess.TimeoutExpired(cmd, timeout, out, err) from None
+        except BaseException:
+            p.kill()
+            p.wait()
+            raise
+    finally:
+        with _procs_lock:
+            _procs.discard(p)
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def kill_running() -> int:
+    """Ferma tutti i processi ffmpeg ancora in corso (uscita dall'app). Ritorna quanti erano."""
+    with _procs_lock:
+        procs = list(_procs)
+    for p in procs:
+        try:
+            p.kill()
+        except OSError:
+            pass
+    return len(procs)
 
 
 # Frequenze "NTSC" scritte arrotondate da ffmpeg (29.97 = 30000/1001)
@@ -60,6 +96,7 @@ class VideoInfo:
     encoder: str = ""
     source: Path | None = None                     # video usato per l'anteprima, se diverso (LRF)
     original_dims: tuple[int, int] | None = None   # dimensioni dell'MP4 originale, se note
+    created_local: datetime | None = None          # iPhone: ora dello scatto con il suo fuso
 
     @property
     def megapixels(self) -> float:
@@ -77,15 +114,52 @@ class VideoInfo:
         return max(0, min(self.frames - 1, int(seconds * self.fps + Fraction(1, 2))))
 
 
+def _video_line(err: str) -> str | None:
+    """La riga del flusso video vero (non la copertina "attached pic", se ce n'è un altro)."""
+    lines = re.findall(r"Stream #\d+:\d+[^\n]*Video: [^\n]*", err)
+    real = [ln for ln in lines if "attached pic" not in ln]
+    return (real or lines or [None])[0]
+
+
+def _apple_created(err: str) -> datetime | None:
+    """com.apple.quicktime.creationdate (iPhone): ora locale dello scatto con il suo fuso."""
+    m = re.search(r"com\.apple\.quicktime\.creationdate\s*:\s*"
+                  r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?\s*(Z|[+-]\d\d:?\d\d)", err)
+    if not m:
+        return None
+    tz = m.group(2)
+    try:
+        if tz == "Z":
+            off = timedelta(0)
+        else:
+            sign = -1 if tz[0] == "-" else 1
+            digits = tz[1:].replace(":", "")
+            off = sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+        return datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone(off))
+    except ValueError:
+        return None
+
+
 def probe(path: Path) -> VideoInfo:
     err = _run(["-i", str(path)], timeout=60).stderr.decode(errors="replace")
-    m = re.search(r"Stream #0:\d+[^\n]*Video: [^\n]*", err)
-    if not m:
+    line = _video_line(err)
+    if not line:
         raise RuntimeError(tr('Nessun video in {v0}', v0=path.name))
-    line = m.group(0)
-    w, h = map(int, re.search(r", (\d{2,5})x(\d{2,5})", line).groups())
-    fps_m = re.search(r", ([\d.]+) fps", line)
-    fps_f = float(fps_m.group(1)) if fps_m else 30.0
+    dims = re.search(r", (\d{2,5})x(\d{2,5})\b", line) or re.search(r"(?<![\dx])(\d{2,5})x(\d{2,5})\b", line)
+    if not dims:
+        raise RuntimeError(tr('Video non leggibile: {v0}', v0=path.name))
+    w, h = map(int, dims.groups())
+    fps_f = 0.0
+    for pat in (r", ([\d.]+) fps", r", ([\d.]+) tbr"):
+        fps_m = re.search(pat, line)
+        try:
+            fps_f = float(fps_m.group(1)) if fps_m else 0.0
+        except ValueError:
+            fps_f = 0.0
+        if fps_f > 0:
+            break
+    if not 0 < fps_f < 10000:
+        fps_f = 30.0
     fps = _NTSC.get(round(fps_f, 2), Fraction(fps_f).limit_denominator(1001))
     pix = re.search(r"Video: [^,]+(?:\([^)]*\))*[^,]*, (\w+)(?:\(([^)]*)\))?", line)
     pix_fmt = pix.group(1) if pix else ""
@@ -96,19 +170,35 @@ def probe(path: Path) -> VideoInfo:
         transfer = transfer.split("/")[-1]
     bits = 10 if "10" in pix_fmt else 12 if "12" in pix_fmt else 8
     rot = re.search(r"rotation of (-?[\d.]+) degrees", err)
-    if rot and round(abs(float(rot.group(1)))) % 180 == 90:
-        w, h = h, w
+    try:
+        if rot and round(abs(float(rot.group(1)))) % 180 == 90:
+            w, h = h, w
+    except ValueError:
+        pass
     d = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
-    duration = (int(d.group(1)) * 3600 + int(d.group(2)) * 60 + float(d.group(3))) if d else 0.0
+    try:
+        duration = (int(d.group(1)) * 3600 + int(d.group(2)) * 60 + float(d.group(3))) if d else 0.0
+    except ValueError:
+        duration = 0.0
     from scanner import mp4_duration  # più preciso del valore arrotondato di ffmpeg
-    duration = mp4_duration(path) or duration
+    try:
+        duration = mp4_duration(path) or duration
+    except Exception:  # noqa: BLE001 - resta quella di ffmpeg
+        pass
     created = None
     c = re.search(r"creation_time\s*:\s*(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)", err)
     if c:
-        created = datetime.strptime(c.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        try:
+            created = datetime.strptime(c.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            created = None
+    local = _apple_created(err)
+    if created is None and local is not None:
+        created = local.astimezone(timezone.utc)
     enc = re.search(r"encoder\s*:\s*(.+)", err)
     return VideoInfo(w, h, fps, duration, max(1, int(duration * fps + Fraction(1, 2))),
-                     transfer, bits, created, enc.group(1).strip() if enc else "")
+                     transfer, bits, created, enc.group(1).strip() if enc else "",
+                     created_local=local)
 
 
 def spotlight_dims(path: Path) -> tuple[int, int] | None:
@@ -228,13 +318,24 @@ def _sharpness(img: Image.Image) -> float:
 
 
 def sharpest_near(video: Path, info: VideoInfo, n: int, radius: int = 6) -> int:
+    """Il fotogramma più nitido entro radius da n. Il numero di fotogrammi è stimato dalla durata:
+    verso la fine possono essercene meno; si ritorna sempre un fotogramma che si è letto davvero."""
+    n = max(0, min(n, info.frames - 1))
+    w = 1280 if info.width >= info.height else 720
+    h = max(2, int(info.height * w / max(1, info.width)) // 2 * 2)
     start = max(0, n - radius)
     count = min(info.frames, n + radius + 1) - start
-    w = 1280 if info.width >= info.height else 720
-    h = int(info.height * w / info.width) // 2 * 2
-    frames = _gray_frames(video, info, start, count, w, h)
+    frames = _gray_frames(video, info, start, count, w, h) if count > 0 else []
+    span = 2 * radius + 1
+    back = span
+    while not frames and start > 0:
+        # oltre l'ultimo fotogramma vero (stima dalla durata): si torna indietro finché se ne
+        # leggono, sempre al massimo span alla volta (memoria)
+        start = max(0, n - back)
+        frames = _gray_frames(video, info, start, span, w, h)
+        back *= 2
     if not frames:
-        return n
+        return 0
     scores = [_sharpness(f) for f in frames]
     best = max(range(len(scores)), key=scores.__getitem__)
     return start + best
@@ -257,15 +358,28 @@ class FrameMeta:
 def capture_times(name_time: datetime, info: VideoInfo,
                   tz_override_hours: float | None) -> tuple[datetime, timedelta | None]:
     """Ora locale + fuso. L'orologio della fotocamera può essere rimasto sul fuso di casa:
-    con tz_override_hours si usa l'ora UTC registrata nel video con il fuso del viaggio."""
+    con tz_override_hours si usa l'ora UTC registrata nel video con il fuso del viaggio.
+
+    iPhone: il video dice ora e fuso dello scatto (com.apple.quicktime.creationdate) e vale
+    quello, non il fuso del Mac. Senza: il fuso è quello valido in quel giorno (ora legale),
+    non quello di oggi."""
+    if tz_override_hours is not None and info.created_utc is not None:
+        offset = timedelta(hours=tz_override_hours)
+        return (info.created_utc + offset).replace(tzinfo=None), offset
+    local = info.created_local
+    if local is not None and local.utcoffset() is not None:
+        return local.replace(tzinfo=None), local.utcoffset()
     if info.created_utc is None:
         return name_time, None
+    # name_time dal video convertito all'ora del Mac (scanner.mp4_created): il fuso del Mac
+    # valido in quell'istante, che con l'ora legale può essere diverso da quello di adesso
+    mac = info.created_utc.astimezone()
+    if abs((mac.replace(tzinfo=None) - name_time).total_seconds()) < 120:
+        return name_time, mac.utcoffset()
+    # orologio della fotocamera (nome del file DJI): la differenza con l'UTC registrato
     camera_offset = timedelta(minutes=round((name_time - info.created_utc.replace(tzinfo=None))
                                             .total_seconds() / 900) * 15)
-    if tz_override_hours is None:
-        return name_time, camera_offset
-    offset = timedelta(hours=tz_override_hours)
-    return (info.created_utc + offset).replace(tzinfo=None), offset
+    return name_time, camera_offset
 
 
 def _fmt_offset(off: timedelta) -> str:
@@ -306,6 +420,7 @@ def save_png16(video: Path, info: VideoInfo, n: int, out: Path) -> None:
                 "-frames:v", "1", "-update", "1", "-vf", f"{_SCALE_EXACT},format=rgb48be",
                 str(tmp)])
     if res.returncode != 0 or not tmp.exists():
+        tmp.unlink(missing_ok=True)   # interrotto (uscita) o fallito: niente file a metà
         raise RuntimeError(res.stderr.decode(errors="replace")[-400:])
     os.replace(tmp, out)
 

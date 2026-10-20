@@ -120,7 +120,9 @@ def test_export_png16_and_video_copy(sd, tmp_path):
 def test_long_video_without_scene_copies_mp4(sd, tmp_path):
     item = next(i for i in scan(sd) if i.kind == "video" and cloud.is_local(i.video))
     out = exporter.export_item(item, None, tmp_path, exporter.Settings())
-    assert out == [tmp_path / exporter.VIDEO_SUBDIR / item.video.name]
+    # in export/Video, con data e ora di inizio del video davanti al nome
+    assert out == [tmp_path / exporter.VIDEO_SUBDIR / f"20260730_132300_{item.video.name}"]
+    assert out[0].read_bytes() == item.video.read_bytes()
 
 
 def test_unique_names(tmp_path):
@@ -171,7 +173,10 @@ def test_snapshot_from_long_video(sd, tmp_path):
     s = exporter.Settings(copy_video=True)
     a = exporter.export_item(item, 30, tmp_path, s, snapshot=True)
     b = exporter.export_item(item, 120, tmp_path, s, snapshot=True)
-    assert [p.name for p in a + b] == [f"{item.video.stem}_f0031.jpg", f"{item.video.stem}_f0121.jpg"]
+    # in export/Foto, ciascuna con l'ora esatta del suo fotogramma (30 / 29,97 fps = +1 s)
+    foto = tmp_path / exporter.PHOTO_SUBDIR
+    assert a + b == [foto / f"20260730_132301_{item.video.stem}_f0031.jpg",
+                     foto / f"20260730_132304_{item.video.stem}_f0121.jpg"]
     assert not (tmp_path / exporter.VIDEO_SUBDIR).exists()   # la foto presa non copia il video
     exif = Image.open(b[0]).getexif().get_ifd(0x8769)
     assert exif[0x9003] == "2026:07:30 13:23:04"            # 120 / 29,97 fps = +4 s

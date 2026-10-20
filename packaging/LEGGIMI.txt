@@ -1,9 +1,26 @@
 PhotoSwipe — installazione
 
-1. Trascina PhotoSwipe nella cartella Applicazioni.
-2. La prima volta: clic destro (o Ctrl+clic) su PhotoSwipe → Apri → Apri.
-   (L'app non è firmata con un certificato Apple a pagamento: macOS lo chiede una volta sola.)
-   Se non compare "Apri": Impostazioni di Sistema → Privacy e sicurezza → "Apri comunque".
-
 Requisiti: Mac con chip Apple (M1 o successivi), macOS 12 (Monterey) o successivo.
 Tutto è incluso (anche ffmpeg): non serve installare altro.
+
+1. Trascina PhotoSwipe nella cartella Applicazioni.
+2. Aprila con doppio clic. La prima volta macOS la blocca, perché l'app non è
+   firmata con un certificato Apple Developer né "notarizzata" da Apple
+   (è firmata solo localmente, "ad-hoc"): è normale, non è un virus.
+
+   Per sbloccarla (una volta sola):
+   a. Chiudi l'avviso ("Fine" / "OK", NON "Sposta nel Cestino").
+   b. Apri Impostazioni di Sistema → Privacy e sicurezza.
+   c. Scorri fino alla sezione "Sicurezza": c'è la riga
+      "PhotoSwipe è stata bloccata…". Clicca "Apri comunque"
+      e conferma con la password del Mac (o Touch ID).
+   d. Nella finestra che compare scegli di nuovo "Apri comunque".
+
+   Su macOS 12–14 (Monterey, Ventura, Sonoma) funziona anche:
+   clic destro (o Ctrl+clic) su PhotoSwipe → Apri → Apri.
+   Da macOS 15 (Sequoia) in poi questa scorciatoia non c'è più: usa i passi a–d.
+
+   In alternativa, dal Terminale (toglie il blocco "scaricato da Internet"):
+       xattr -dr com.apple.quarantine /Applications/PhotoSwipe.app
+
+Licenze dei componenti inclusi: vedi THIRD_PARTY_NOTICES.txt (anche dentro l'app).

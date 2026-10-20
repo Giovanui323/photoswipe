@@ -48,14 +48,14 @@ def test_title_never_covers_restore_button(qapp, win, sd, confirmed):
     """Live con modifiche: il badge LIVE e il nome non devono coprire "Ripristina originale"."""
     from PySide6.QtCore import QRect
     from test_core import LIVE
-    from test_ui import go as _go, pump
+    from test_ui import go as _go, pump, wait
     open_folder(qapp, win, sd)
     _go(qapp, win, f"{LIVE}.MP4")
     win.auto_enhance()
     if confirmed:
         win.confirm_edit()
-    pump(qapp, 0.3)
-    assert win.btn_restore.isVisible()
+    # la modifica si calcola in background: sotto carico ci vuole più di un attimo
+    assert wait(qapp, win.btn_restore.isVisible, 10)
     for width in (1000, 1100, 1200, 1400):
         win.resize(width, 800)
         pump(qapp, 0.3)

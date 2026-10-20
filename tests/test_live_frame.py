@@ -16,7 +16,9 @@ from PySide6.QtGui import QColor
 
 import frames
 from test_core import FF, LIVE
-from test_ui import click, exports_done, go, open_folder, press, pump, qapp, wait, win  # noqa: F401
+from test_frames_exact import frame_rel
+from test_ui import (click, exported, exports_done, go, open_folder, press, pump, qapp,  # noqa: F401
+                     wait, win)
 
 CAM_FRAME = 40   # fotogramma che la "fotocamera" mostra come foto (anteprima .SCR)
 W, H = 320, 180
@@ -67,10 +69,12 @@ def nsd(numbered_sd, tmp_path) -> Path:
     return root
 
 
-def exported_live(w) -> Image.Image:
-    jpgs = sorted(w.export_dir.rglob(f"{LIVE}*.jpg"))
-    assert len(jpgs) == 1, jpgs
-    return Image.open(jpgs[0])
+def exported_live(w, n: int) -> Image.Image:
+    """La foto della Live in export: l'unico file, in export/Foto, col nome che comincia con
+    l'ora esatta del fotogramma n (Foto/20260730_1322SS_<video>.jpg)."""
+    rel = frame_rel(w.root / "DCIM" / "DJI_001" / f"{LIVE}.MP4", n, snapshot=False)
+    assert exported(w) == [rel]
+    return Image.open(w.export_dir / rel)
 
 
 def shown(qa, w) -> int:
@@ -92,7 +96,7 @@ def test_live_without_changes_exports_the_camera_frame(qapp, win, nsd):
     assert win.camera_frames[win.current().id] == CAM_FRAME
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert frame_of(exported_live(win)) == CAM_FRAME
+    assert frame_of(exported_live(win, CAM_FRAME)) == CAM_FRAME
 
 
 @pytest.mark.parametrize("how, expected", [
@@ -121,7 +125,7 @@ def test_live_exports_exactly_the_frame_chosen_and_shown(qapp, win, nsd, how, ex
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
     assert win.session.get(win.items[0].id)["frame"] == expected
-    assert frame_of(exported_live(win)) == expected           # e in export pure
+    assert frame_of(exported_live(win, expected)) == expected  # e in export pure
 
 
 def test_live_changing_frame_after_yes_replaces_the_copy(qapp, win, nsd):
@@ -132,10 +136,10 @@ def test_live_changing_frame_after_yes_replaces_the_copy(qapp, win, nsd):
     pump(qapp, 0.2)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert frame_of(exported_live(win)) == 20
+    assert frame_of(exported_live(win, 20)) == 20
     go(qapp, win, f"{LIVE}.MP4")
     win.strip.picked.emit(60)
     pump(qapp, 0.2)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert frame_of(exported_live(win)) == 60                 # una sola copia, quella nuova
+    assert frame_of(exported_live(win, 60)) == 60             # una sola copia, quella nuova

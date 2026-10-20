@@ -30,6 +30,10 @@ from test_core import LIVE, LONG, make_clip  # noqa: E402
 
 PHOTO1 = "DJI_20260730132210_0002_D.JPG"
 PHOTO2 = "DJI_20260730132220_0003_D.JPG"
+# nomi in export: data e ora di scatto davanti (dal nome DJI: le foto finte non hanno EXIF)
+DATED1 = f"20260730_132210_{PHOTO1}"
+DATED2 = f"20260730_132220_{PHOTO2}"
+SNAP31 = f"Foto/20260730_132301_{LONG}_f0031.jpg"
 CAM_FRAME = 40   # fotogramma della Live scelto dalla "fotocamera" (anteprima .SCR)
 
 
@@ -197,8 +201,8 @@ def test_yes_button_copies_photo_identical_and_advances(qapp, win, sd):
     go(qapp, win, PHOTO1)
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [PHOTO1]
-    assert (win.export_dir / PHOTO1).read_bytes() == next(sd.rglob(PHOTO1)).read_bytes()
+    assert exported(win) == [f"Foto/{DATED1}"]
+    assert (win.export_dir / "Foto" / DATED1).read_bytes() == next(sd.rglob(PHOTO1)).read_bytes()
     assert win.current().main.name == PHOTO2
     assert "1 approvate" in win.counter.text()
 
@@ -245,7 +249,7 @@ def test_going_back_shows_choice_and_new_choice_replaces_it(qapp, win, sd):
     click(qapp, win, win.btn_yes)                  # cambio idea: NO -> SÌ
     exports_done(qapp, win)
     assert win.session.get(win.items[1].id)["choice"] == "yes"
-    assert exported(win) == [PHOTO1]
+    assert exported(win) == [f"Foto/{DATED1}"]
     assert "Scelta cambiata" in win.status.text()
     click(qapp, win, win.btn_undo)                 # annulla: di nuovo NO, copia tolta
     exports_done(qapp, win)
@@ -290,7 +294,8 @@ def test_live_yes_exports_the_frame_chosen_on_the_strip(qapp, win, sd):
     exports_done(qapp, win)
     d = win.session.get(win.items[0].id)
     assert d["choice"] == "yes" and d["frame"] == CAM_FRAME + 10
-    assert exported(win) == [f"{LIVE}.jpg"]
+    # la foto della Live ha l'ora del fotogramma scelto (50 a 30 fps: +1,7 s dall'inizio)
+    assert exported(win) == [f"Foto/20260730_132205_{LIVE}.jpg"]
 
 
 def test_live_reset_goes_back_to_camera_frame(qapp, win, sd):
@@ -308,7 +313,7 @@ def test_live_yes_with_video_copies_the_mp4_too(qapp, win, sd):
     assert win.btn_yes_video.isEnabled()
     click(qapp, win, win.btn_yes_video)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LIVE}.jpg", f"{exporter.VIDEO_SUBDIR}/{LIVE}.MP4"]
+    assert exported(win) == [f"Foto/20260730_132205_{LIVE}.jpg", f"Video/20260730_132204_{LIVE}.MP4"]
 
 
 def test_live_view_toggles_between_photo_and_video(qapp, win, sd):
@@ -330,13 +335,13 @@ def test_video_snapshot_marks_strip_and_yes_keeps_only_photos(qapp, win, sd):
     pump(qapp, 0.2)
     click(qapp, win, win.btn_snap)
     exports_done(qapp, win)
-    assert exported(win) == [f"{LONG}_f0031.jpg"]
+    assert exported(win) == [SNAP31]   # fotogramma 30: 1 s dopo l'inizio
     assert win.strip.marks == [30]
     assert "1 foto salvata" in win.snaps_label.text()
     assert win.btn_yes_video.isEnabled()
     click(qapp, win, win.btn_yes)                    # Sì = solo le foto, niente video
     exports_done(qapp, win)
-    assert exported(win) == [f"{LONG}_f0031.jpg"]
+    assert exported(win) == [SNAP31]
     assert win.session.get(win.items[3].id).get("noexport")
 
 
@@ -345,7 +350,7 @@ def test_video_yes_without_snapshots_copies_the_video(qapp, win, sd):
     go(qapp, win, f"{LONG}.MP4")
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"{exporter.VIDEO_SUBDIR}/{LONG}.MP4"]
+    assert exported(win) == [f"Video/20260730_132300_{LONG}.MP4"]
 
 
 def test_undo_snapshot_stays_on_video(qapp, win, sd):
@@ -434,7 +439,17 @@ def test_favorite_goes_to_preferite(qapp, win, sd):
     assert win.btn_fav.text() == "♥" and win.btn_fav.property("on") == "true"
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [f"{exporter.FAV_SUBDIR}/{PHOTO1}"]
+    assert exported(win) == [f"Foto/Preferite/{DATED1}"]
+
+
+def test_export_names_sort_in_capture_order_whatever_the_approval_order(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO2)                        # prima la foto scattata dopo
+    click(qapp, win, win.btn_yes)
+    go(qapp, win, PHOTO1)
+    click(qapp, win, win.btn_yes)
+    exports_done(qapp, win)
+    assert sorted(os.listdir(exporter.photo_dir(win.export_dir))) == [DATED1, DATED2]
 
 
 def test_zoom_slider_and_double_click(qapp, win, sd):

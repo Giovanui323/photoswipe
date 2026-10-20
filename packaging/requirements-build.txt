@@ -1,0 +1,21 @@
+# Versioni esatte del venv di build (build/venv) usato da packaging/build_dmg.sh.
+# Si installa con packaging/setup_build_venv.sh (NON con un semplice pip install -r):
+# lo script sostituisce numpy con la wheel macosx_11_0 (OpenBLAS), perché quella
+# che pip sceglie su macOS 14+ (Accelerate) fa crashare l'app su macOS 12-13.
+# PySide6 resta a 6.8.x: è l'ultima serie che gira su macOS 12 (6.9+ chiede macOS 13/14+).
+# Rigenerare dopo un aggiornamento: build/venv/bin/pip list --format=freeze
+altgraph==0.17.5
+imageio-ffmpeg==0.6.0
+macholib==1.16.4
+numpy==2.5.4
+packaging==26.3
+pi_heif==1.4.0
+pillow==13.0.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
+PySide6==6.8.3
+PySide6_Addons==6.8.3
+PySide6_Essentials==6.8.3
+rawpy==0.27.1
+setuptools==84.0.0
+shiboken6==6.8.3

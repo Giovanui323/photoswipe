@@ -6,6 +6,7 @@ import re
 import struct
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +18,8 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 RAW_EXT = {".dng"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v"}
 # MISC = file di sistema DJI; PANORAMA = singoli scatti già uniti dalla fotocamera
-SKIP_DIRS = {"MISC", tr('PANORAMA')}
+SKIP_DIRS = {"MISC", "PANORAMA"}
+TRASH_DIR = "cancellare"   # originali messi da parte da PhotoSwipe: mai da riproporre
 
 RAW_PREVIEW_MIN_PX = 1000  # anteprima DNG incorporata più piccola: si sviluppa il RAW
 LIVE_MAX_SECONDS = 3.5  # le Live della Pocket 4 durano 3,04 s
@@ -148,51 +150,64 @@ def _find_mvhd(f, start: int, end: int) -> tuple[float, int]:
     return 0.0, 0
 
 
+def _mdls_call(attr: str, paths: list[str]) -> list[str] | None:
+    """Una chiamata a mdls -raw: un valore per file, separati da NUL. None se il numero di
+    valori non torna (mdls si ferma al primo file che non trova, scrivendo un errore)."""
+    try:
+        res = subprocess.run(["mdls", "-raw", "-name", attr, *paths], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    values = res.stdout.decode(errors="replace").split("\0")
+    return values if len(values) == len(paths) else None
+
+
+def _mdls(attr: str, paths: list[Path]) -> list[str | None]:
+    """Valore Spotlight (testo) per ogni file, None se non c'è. Solo i file che esistono
+    (uno stub iCloud ".nome.icloud" non ha i dati della foto: si salta); se il blocco non
+    torna si chiede file per file, così un solo file sparito non fa perdere gli altri."""
+    out: list[str | None] = [None] * len(paths)
+    present = [i for i, p in enumerate(paths) if p is not None and os.path.exists(p)]
+    for k in range(0, len(present), 200):
+        idx = present[k:k + 200]
+        values = _mdls_call(attr, [str(paths[i]) for i in idx])
+        if values is None:
+            values = []
+            for i in idx:
+                one = _mdls_call(attr, [str(paths[i])])
+                values.append(one[0] if one else None)
+        for i, v in zip(idx, values):
+            out[i] = v
+    return out
+
+
 def spotlight_durations(paths: list[Path]) -> list[float]:
     if sys.platform != "darwin" or not paths:
         return [0.0] * len(paths)
     out: list[float] = []
-    for i in range(0, len(paths), 200):
-        chunk = paths[i:i + 200]
+    for text in _mdls("kMDItemDurationSeconds", paths):
         try:
-            res = subprocess.run(["mdls", "-raw", "-name", "kMDItemDurationSeconds", *map(str, chunk)],
-                                 capture_output=True, timeout=60)
-            values = res.stdout.decode(errors="replace").split("\0")
-        except (OSError, subprocess.SubprocessError):
-            values = []
-        for j in range(len(chunk)):
-            try:
-                out.append(float(values[j]))
-            except (IndexError, ValueError):
-                out.append(0.0)
+            out.append(float(text.strip()) if text else 0.0)
+        except ValueError:   # "(null)": non indicizzato
+            out.append(0.0)
     return out
+
+
+def _parse_mdls_date(text: str | None) -> datetime | None:
+    text = (text or "").strip()
+    try:   # "2026-07-23 21:54:08 +0200": con il fuso, convertito all'ora locale
+        return datetime.strptime(text[:25], "%Y-%m-%d %H:%M:%S %z").astimezone().replace(tzinfo=None)
+    except ValueError:
+        try:
+            return datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
 
 
 def spotlight_dates(paths: list[Path]) -> list[datetime | None]:
     """Data di creazione dal sistema (macOS, Spotlight): serve per HEIC, PNG, DNG e video senza data."""
     if sys.platform != "darwin" or not paths:
         return [None] * len(paths)
-    out: list[datetime | None] = []
-    for i in range(0, len(paths), 200):
-        chunk = paths[i:i + 200]
-        try:
-            res = subprocess.run(["mdls", "-raw", "-name", "kMDItemContentCreationDate", *map(str, chunk)],
-                                 capture_output=True, timeout=60)
-            values = res.stdout.decode(errors="replace").split("\0")
-        except (OSError, subprocess.SubprocessError):
-            values = []
-        for j in range(len(chunk)):
-            text = values[j].strip() if j < len(values) else ""
-            when = None
-            try:   # "2026-07-23 21:54:08 +0200": con il fuso, convertito all'ora locale
-                when = datetime.strptime(text[:25], "%Y-%m-%d %H:%M:%S %z").astimezone().replace(tzinfo=None)
-            except ValueError:
-                try:
-                    when = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    pass
-            out.append(when)
-    return out
+    return [_parse_mdls_date(t) for t in _mdls("kMDItemContentCreationDate", paths)]
 
 
 def capture_time(path: Path, local: bool) -> datetime | None:
@@ -227,6 +242,23 @@ def file_time(path: Path, local: bool) -> datetime:
         return datetime.fromtimestamp(path.stat().st_mtime)
     except OSError:
         return datetime.fromtimestamp(cloud.stub_for(path).stat().st_mtime)
+
+
+def refresh_capture_time(item: Item) -> bool:
+    """Dopo il download da iCloud: rilegge la data di scatto vera (nome DJI, EXIF, data nel video,
+    poi Spotlight) e aggiorna item.taken. Alla scansione, per un file non ancora scaricato, c'era
+    solo la data del file. True se è cambiata; False se il file non è ancora in locale o se non
+    si trova niente di meglio (taken resta com'è)."""
+    main = item.main
+    if main is None or not cloud.is_local(main):
+        return False
+    when = capture_time(main, True)
+    if when is None:
+        when = spotlight_dates([main])[0]
+    if when is None or when == item.taken:
+        return False
+    item.taken = when
+    return True
 
 
 def raw_preview(path: Path):
@@ -273,7 +305,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     for dirpath, dirnames, filenames in os.walk(root):
         d = Path(dirpath)
         for n in dirnames:
-            if n.upper() == tr('PANORAMA'):
+            if n.upper() == "PANORAMA":
                 try:
                     subs = os.listdir(d / n)
                 except OSError:   # non leggibile: si salta, senza far fallire tutta la lettura
@@ -285,6 +317,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
         dirnames[:] = sorted(
             n for n in dirnames
             if not n.startswith(".") and n.upper() not in SKIP_DIRS
+            and n != TRASH_DIR   # anche quella di una sottocartella, aprendo la cartella madre
             and (d / n).resolve() not in excluded
             and not (d == root and n == "export")   # l'export proposto: mai riletto come sorgente
         )
@@ -306,7 +339,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
                 free[slot] = p
 
     items: list[Item] = []
-    seen: set[tuple[str, int]] = set()  # doppioni: stesso nome e stessa dimensione
+    seen: dict[tuple[str, int], Item] = {}  # doppioni: stesso nome e stessa dimensione
     # Prima le cartelle più profonde (DCIM originale), poi le copie fatte a mano
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[0][0].parts), str(kv[0][0])))
     unknown: list[Item] = []
@@ -314,14 +347,24 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     for (folder, stem), files in ((k, g) for k, slots in ordered for g in slots):
         main = files.get("image") or files.get("video") or files["raw"]
         size = _size(main)
-        if (main.name.upper(), size) in seen:
+        kept = seen.get((main.name.upper(), size)) if size else None   # 0 = solo su iCloud, dimensione ignota
+        if kept is not None:
+            # doppione: si tiene il primo, ma se il doppione ha un file in più (es. il DNG, o il
+            # MOV di una Live) lo si aggiunge, altrimenti non si vedrebbe/esporterebbe/sposterebbe mai.
+            # Il file principale è dello stesso tipo (stesso nome), quindi l'id non cambia.
+            for slot in ("raw", "video", "image"):
+                if slot in files and getattr(kept, slot) is None:
+                    setattr(kept, slot, files[slot])
             continue
-        seen.add((main.name.upper(), size))
         local = cloud.is_local(main)
         taken = capture_time(main, local)
-        it = Item(kind="photo", id=main.relative_to(root).as_posix(), image=files.get("image"),
+        # id in Unicode NFC (solo l'id, mai il percorso vero): uguale da qualsiasi disco/sistema
+        rel = unicodedata.normalize("NFC", main.relative_to(root).as_posix())
+        it = Item(kind="photo", id=rel, image=files.get("image"),
                   raw=files.get("raw"), video=files.get("video"),
                   taken=taken or file_time(main, local), size=size)
+        if size:
+            seen[(main.name.upper(), size)] = it
         if taken is None and local:
             undated.append(it)
         if it.image:
