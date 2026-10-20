@@ -530,3 +530,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     (BSD-2-Clause-Patent).
     Source code: FFmpeg 7.1 at https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz,
     and the upstream projects of the libraries listed above.
+==============================================================================
+19. GeoNames — place names (data/places.tsv.gz), https://www.geonames.org/
+    Derived from cities1000, admin1CodesASCII, countryInfo and the Italian
+    alternate names (export/dump, 2026-10-20), reduced to coordinates, names
+    and region codes. Licensed under Creative Commons Attribution 4.0
+    (https://creativecommons.org/licenses/by/4.0/). Data © GeoNames.
+    When online, place names in the Info panel come from OpenStreetMap
+    Nominatim: data © OpenStreetMap contributors, ODbL 1.0
+    (https://www.openstreetmap.org/copyright).

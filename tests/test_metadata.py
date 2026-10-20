@@ -53,3 +53,56 @@ def test_printability():
     # orientamento irrilevante
     assert metadata.print_size(3000, 2000) == metadata.print_size(2000, 3000)
     assert metadata.print_size(800, 600) == "troppo piccola per una stampa di qualità"
+
+
+def test_place_offline(monkeypatch):
+    import places
+    monkeypatch.setattr(places, "LANG", "it")
+    monkeypatch.setattr(places, "_index", None)
+    assert places.offline(45.9853, 9.2611).startswith("Bellagio, Lombardia · Italia")
+    assert places.offline(41.9028, 12.4964).startswith("Trevi, Roma, Lazio · Italia")   # quartiere + città
+    assert places.offline(43.0, 10.0).startswith("vicino a ")   # in mare: la costa più vicina
+    monkeypatch.setattr(places, "_index", None)
+
+
+def test_place_in_meta_and_html(tmp_path, monkeypatch):
+    import places
+    monkeypatch.setattr(places, "online", lambda lat, lon: "")   # i test non vanno in rete
+    p = _photo(tmp_path, gps=True)
+    m = metadata.read(Item("photo", p.name, image=p))
+    assert m.place   # New York: la località più vicina dall'elenco incluso
+    html = places.info_html(m, "#aaa", "#09f", str)
+    assert "📍" in html and m.place in html and "href=" in html
+
+
+def test_place_online_uses_cache(monkeypatch, tmp_path):
+    import places
+    monkeypatch.setattr(places, "_cache_path", lambda: tmp_path / "places.json")
+    monkeypatch.setattr(places, "_cache", None)
+    calls = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"address": {"village": "Bellagio", "state": "Lombardia", "country": "Italia"}}'
+
+    monkeypatch.setattr(places.urllib.request, "urlopen", lambda req, timeout: calls.append(req) or Resp())
+    assert places.online(45.9853, 9.2611) == "Bellagio, Lombardia · Italia"
+    assert places.online(45.98531, 9.26112) == "Bellagio, Lombardia · Italia"   # stesso posto: dalla cache
+    assert len(calls) == 1 and "PhotoSwipe" in calls[0].get_header("User-agent")
+
+
+def test_place_online_switch(monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+    import places
+    QApplication.instance() or QApplication([])
+    store = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    store.setValue("places_online", "0")
+    box = places.online_switch(store)
+    assert not box.isChecked() and not places.ONLINE
+    monkeypatch.setattr(places, "_cache", {})
+    monkeypatch.setattr(places.urllib.request, "urlopen", lambda *a, **k: 1 / 0)   # spento: nessuna richiesta
+    assert places.online(45.0, 9.0) == ""
+    box.setChecked(True)
+    assert places.ONLINE and store.value("places_online") == "1"

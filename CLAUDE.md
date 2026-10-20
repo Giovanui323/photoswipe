@@ -1,6 +1,9 @@
 # PhotoSwipe — regole per chi modifica il codice
 
-## app.py deve solo diminuire
+## app.py deve solo diminuire, con obiettivo 2.000 righe
+
+L'obiettivo è che `app.py` arrivi a **2.000 righe** e non superi mai più quel numero: ogni
+passo deve avvicinarlo a 2.000, mai allontanarlo.
 
 `app.py` è troppo grande (5.777 righe al 20/10/2026, una sola `MainWindow` con ~360 attributi
 e 8 pool di thread). È il punto più fragile dell'app.

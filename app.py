@@ -7,43 +7,50 @@ import os
 import subprocess
 import sys
 import dataclasses
-import inspect
 import threading
 import time
 import uuid
 import warnings
-from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from fractions import Fraction
 from pathlib import Path
 
-from PySide6.QtCore import (QEvent, QObject, QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt, QTimer, QUrl,
-                            Signal)
-from PySide6.QtGui import (QColor, QDesktopServices, QFont, QImage, QImageReader, QKeySequence, QPainter,
-                           QLinearGradient, QPainterPath, QPalette, QPen, QPixmap, QShortcut)
+from PySide6.QtCore import QEvent, QPoint, QSettings, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QFont, QImage, QImageReader, QKeySequence, QPixmap, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame,
-                               QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGridLayout,
-                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QProxyStyle,
-                               QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle, QStyleOption, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider,
+                               QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from PIL import Image
 
+import a11y
 import applog
 import cloud
 import editpanel as EP
 import edits as E
 import exporter
 import frames
+import infopanel
 import metadata
+import places
 import printprep
+import similar
+import stripfilter
+import thumbcache
+from thumbqueue import ThumbQueue
 from scanner import Item, mp4_duration, raw_preview, refresh_capture_time, scan
 from i18n import HELP, LANG, tr
-from theme import CHOICE_COLOR, KIND_COLOR, STRIP_FRAME_COLORS, STYLE
+from theme import CHOICE_COLOR, COLORS as C, KIND_COLOR, STRIP_FRAME_COLORS, STYLE, apply_dark_palette
+from datefmt import _GIORNI_LUNGHI, _MESI_LUNGHI, fmt_datetime  # noqa: F401
+from editjob import EDIT_FULL_MAX, EDIT_PROXY, print_takes_edit, render_edit_job, uncropped_tone_edit  # noqa: F401
+from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, LruCache, OverlayLabel,  # noqa: F401
+                     SnapGallery, StaleResult, ThumbStrip, TipStyle, TrashButton, _MoveFailed, chevron_file,
+                     hide_keep_space, pil_to_qimage, qimage_to_pil, wait_downloads)
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -68,7 +75,7 @@ def help_html(text: str) -> str:
     out = []
     for line in text.split("\n"):
         if line and line.isupper() and len(line) < 40:
-            out.append("<p style='color:#98989f; font-size:11px; font-weight:700; letter-spacing:1px;"
+            out.append(f"<p style='color:{C['text_2']}; font-size:11px; font-weight:700; letter-spacing:1px;"
                        f" margin:16px 0 4px 0'>{escape(line)}</p>")
         elif not line.strip():
             out.append("<p style='margin:6px 0'></p>")
@@ -79,1085 +86,6 @@ def help_html(text: str) -> str:
 
 
 FILE_MANAGER = "Finder" if sys.platform == "darwin" else tr('Esplora file')
-
-
-class TipStyle(QProxyStyle):
-    """Suggerimenti meno frequenti: compaiono dopo un attimo più lungo e, passando da un pulsante
-    all'altro, non si riaprono subito (Qt li farebbe comparire senza attesa entro 2 secondi)."""
-
-    def styleHint(self, hint, option=None, widget=None, returnData=None):
-        if hint == QStyle.SH_ToolTip_WakeUpDelay:
-            return 1000  # ms prima della comparsa (default Qt: 700)
-        if hint == QStyle.SH_ToolTip_FallAsleepDelay:
-            return 0     # nessuna riapertura immediata passando da un pulsante a un altro
-        return super().styleHint(hint, option, widget, returnData)
-
-
-class ElidedLabel(QLabel):
-    """Etichetta su una riga che non allarga mai la finestra: se il testo non ci sta lo accorcia
-    con "…" e lo mostra intero nel suggerimento."""
-
-    def __init__(self, text: str = "", mode=Qt.ElideRight):
-        super().__init__(text)
-        self._mode = mode
-        self._tip = ""
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)  # minimo 0: mai più larga
-
-    def setToolTip(self, tip: str) -> None:
-        self._tip = tip
-        super().setToolTip(tip)
-
-    def minimumSizeHint(self):
-        return QSize(0, super().minimumSizeHint().height())
-
-    def sizeHint(self):
-        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + 8, super().sizeHint().height())
-
-    def paintEvent(self, e):
-        r = self.contentsRect()
-        text = self.fontMetrics().elidedText(self.text(), self._mode, r.width())
-        tip = self.text() if text != self.text() else self._tip
-        if self.toolTip() != tip:
-            QLabel.setToolTip(self, tip)
-        p = QPainter(self)
-        opt = QStyleOption()   # sfondo e bordo del foglio di stile (es. il riquadro del percorso)
-        opt.initFrom(self)
-        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
-        self.style().drawItemText(p, r, int(self.alignment()) | Qt.AlignVCenter, self.palette(),
-                                  self.isEnabled(), text, self.foregroundRole())
-
-
-def trash_pixmap(color: str, size: int = 22, dpr: float = 2.0) -> QPixmap:
-    """Cestino disegnato a linee, di un solo colore come gli altri simboli (l'emoji 🗑 è grigia)."""
-    pm = QPixmap(round(size * dpr), round(size * dpr))
-    pm.setDevicePixelRatio(dpr)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(QColor(color), size / 11)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-    u = size / 22
-    p.drawLine(QPointF(4 * u, 6 * u), QPointF(18 * u, 6 * u))          # coperchio
-    p.drawLine(QPointF(9 * u, 3.5 * u), QPointF(13 * u, 3.5 * u))       # maniglia
-    p.drawLine(QPointF(9 * u, 3.5 * u), QPointF(9 * u, 6 * u))
-    p.drawLine(QPointF(13 * u, 3.5 * u), QPointF(13 * u, 6 * u))
-    body = QPainterPath(QPointF(6 * u, 6 * u))
-    body.lineTo(7 * u, 18.5 * u)
-    body.lineTo(15 * u, 18.5 * u)
-    body.lineTo(16 * u, 6 * u)
-    p.drawPath(body)
-    p.drawLine(QPointF(9.5 * u, 9 * u), QPointF(9.8 * u, 15.5 * u))
-    p.drawLine(QPointF(12.5 * u, 9 * u), QPointF(12.2 * u, 15.5 * u))
-    p.end()
-    return pm
-
-
-def chevron_file() -> str:
-    """Freccia ⌄ dei menu a tendina, disegnata e salvata in un PNG temporaneo (il foglio di stile
-    vuole un file); senza, i menu sembrano normali pulsanti."""
-    import tempfile
-    path = Path(tempfile.gettempdir()) / "photoswipe-chevron.png"
-    pm = QPixmap(20, 12)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(QColor("#98989f"), 2.4)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-    p.drawPolyline([QPointF(3, 3), QPointF(10, 9), QPointF(17, 3)])
-    p.end()
-    pm.save(str(path), "PNG")
-    return path.as_posix()
-
-
-class TrashButton(QPushButton):
-    """Pulsante rotondo con il cestino disegnato: viola (anche col cerchio tinto, al passaggio del
-    mouse o a scelta già fatta), spento se disattivato. Stessi colori del foglio di stile."""
-    COLORS = {"normal": "#b46cff", "filled": "#b46cff", "off": "#6e6e73"}
-
-    def __init__(self, text: str = ""):
-        super().__init__(text)
-        self.setIconSize(QSize(22, 22))
-        self.refresh_icon()
-
-    def refresh_icon(self) -> None:
-        state = ("off" if not self.isEnabled()
-                 else "filled" if self.underMouse() or self.property("chosen") == "true" else "normal")
-        if getattr(self, "_state", None) != state:
-            self._state = state
-            self.setIcon(trash_pixmap(self.COLORS[state], 22, max(2.0, self.devicePixelRatioF())))
-
-    def enterEvent(self, e):
-        super().enterEvent(e)
-        self.refresh_icon()
-
-    def leaveEvent(self, e):
-        super().leaveEvent(e)
-        self.refresh_icon()
-
-    def changeEvent(self, e):
-        super().changeEvent(e)
-        if e.type() == QEvent.EnabledChange:
-            self.refresh_icon()
-
-
-class OverlayLabel(QLabel):
-    """Etichetta sopra la foto (avvisi in alto a destra, messaggi in basso al centro, come le
-    notifiche di Foto). Vuota = nascosta; si riposiziona da sola a ogni testo nuovo.
-    Con hide_after_ms il messaggio sparisce da solo (così non resta sopra la foto)."""
-
-    def __init__(self, parent: QWidget, anchor: str, hide_after_ms: int = 0):
-        super().__init__("", parent)
-        self.anchor = anchor
-        self.hide_after_ms = hide_after_ms
-        self.avoid: list[QWidget] = []   # altre etichette sopra la foto da non coprire (la data)
-        self.setAlignment(Qt.AlignCenter)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(lambda: self.setText(""))
-        self.hide()
-
-    def setText(self, text: str, ms: int | None = None) -> None:
-        super().setText(text)
-        self.place()
-        ms = self.hide_after_ms if ms is None else ms
-        if text and ms:
-            self.timer.start(ms)
-        else:
-            self.timer.stop()
-
-    def place(self) -> None:
-        par = self.parentWidget()
-        if not self.text():
-            self.hide()
-            return
-        self.ensurePolished()
-        maxw = max(160, par.width() - 80)
-        self.setWordWrap(False)
-        hint = self.sizeHint()
-        w = min(hint.width(), maxw)
-        self.setWordWrap(w < hint.width())
-        h = max(hint.height(), self.heightForWidth(w)) if self.wordWrap() else hint.height()
-        self.resize(w, h)
-        if self.anchor == "top-right":
-            x, y = par.width() - w - 14, 12
-            for o in self.avoid:   # se si sovrappone alla data, va sotto
-                if o.isVisible() and o.geometry().intersects(QRect(x, y, w, h)):
-                    y = max(y, o.geometry().bottom() + 8)
-            self.move(x, y)
-        else:
-            self.move((par.width() - w) // 2, par.height() - h - 16)
-        self.show()
-        self.raise_()
-
-
-class StaleResult(Exception):
-    """Risultato di un lavoro chiesto per la cartella aperta prima: si scarta."""
-
-
-class _MoveFailed(OSError):
-    """Gli originali non si sono spostati in “cancellare” (niente è cambiato)."""
-
-
-class AbandonedWait(StaleResult):
-    """Attesa di un download lasciata a metà: l'elemento non è più quello che guardi
-    (o non è più tra i prossimi da anticipare). Si scarta senza mostrare nulla."""
-
-
-def wait_downloads(files: list[Path], abandon: threading.Event, delay: float = 0.0) -> bool:
-    """Scarica i file dell'elemento corrente, ognuno nel suo thread: non si mette mai in coda
-    dietro ai download degli elementi passati di corsa. Se l'elemento viene lasciato
-    (abandon), l'attesa finisce subito; dopo un breve ritardo (delay) per non avviare
-    download per gli elementi solo sfiorati scorrendo veloce."""
-    if delay and abandon.wait(delay):
-        raise AbandonedWait()
-    futs: list[tuple[Path, Future]] = []
-    for p in files:
-        f: Future = Future()
-
-        def run(p=p, f=f):
-            try:
-                f.set_result(cloud.download(p))
-            except BaseException as e:  # noqa: BLE001 - riportato dall'attesa
-                f.set_exception(e)
-        threading.Thread(target=run, name=f"icloud-{p.name}", daemon=True).start()
-        futs.append((p, f))
-    for p, f in futs:
-        while True:
-            if abandon.is_set():
-                raise AbandonedWait()
-            try:
-                ok = f.result(timeout=0.2)
-                break
-            except TimeoutError:
-                continue
-        if not ok:
-            raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
-    return True
-
-
-class Bridge(QObject):
-    """Riporta nel thread dell'interfaccia i risultati dei lavori in background."""
-    done = Signal(str, object, object)  # tipo, chiave, risultato (o eccezione)
-    progress = Signal(object, float)    # chiave, avanzamento 0..1 (dal motore di stampa)
-
-
-class ImageView(QGraphicsView):
-    zoom_changed = Signal(float)   # 0 = adattata, 1 = ingrandimento massimo (per il cursore in alto)
-    view_changed = Signal()        # la foto ha cambiato posto/dimensione a schermo (per la data sopra)
-    crop_changed = Signal(list)    # Ritaglia: nuovo riquadro [x, y, l, a] (0..1 della foto)
-    picked = Signal(float, float)  # Occhi rossi: clic sulla foto (0..1)
-    clicked = Signal()             # clic semplice sulla foto (Live / video: play e stop)
-
-    tr("Foto adattata alla finestra; due dita su/giù o pizzico = zoom, doppio clic = adatta.\n\n    Adattata: l'immagine viene ridotta UNA volta, con filtro di alta qualità, ai pixel reali dello\n    schermo (Retina compreso), invece di lasciarla ridurre al volo (più morbido/scalettato).\n    Con lo zoom si passa all'originale a piena risoluzione.")
-
-    def __init__(self):
-        super().__init__()
-        self.setScene(QGraphicsScene(self))
-        self.item = QGraphicsPixmapItem()
-        self.item.setTransformationMode(Qt.SmoothTransformation)
-        self.scene().addItem(self.item)
-        self.loading = self.scene().addSimpleText("")
-        self.loading.setBrush(QColor("#9a9ca0"))
-        f = self.loading.font()
-        f.setPointSize(16)
-        self.loading.setFont(f)
-        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.full = QImage()
-        self.zoomed = False
-        # Ritaglia: riquadro sopra la foto con angoli e lati da trascinare
-        self.crop_mode = False
-        self.crop = [0.0, 0.0, 1.0, 1.0]
-        self.crop_ratio: float | None = None   # larghezza/altezza in pixel della foto (None = libero)
-        self._crop_drag: tuple[str, QPointF, list[float]] | None = None
-        self.pick_enabled = False              # Occhi rossi: un clic indica l'occhio
-        self._press_pos: QPointF | None = None
-        # clic semplice: si aspetta un attimo, così il doppio clic (foto intera) non lo fa scattare
-        self._click_timer = QTimer(self)
-        self._click_timer.setSingleShot(True)
-        self._click_timer.setInterval(QApplication.doubleClickInterval())
-        self._click_timer.timeout.connect(self.clicked.emit)
-
-    # ---- Ritaglia
-    def set_crop_mode(self, on: bool, crop: list[float] | None = None, ratio: float | None = None) -> None:
-        self.crop_mode = on
-        self.crop = list(crop or [0.0, 0.0, 1.0, 1.0])
-        self.crop_ratio = ratio
-        self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
-        # il riquadro e l'ombra intorno coprono tutta la vista: si ridisegna sempre tutta
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if on
-                                   else QGraphicsView.MinimalViewportUpdate)
-        if on:
-            self.fit()
-        self.viewport().update()
-
-    def _img_rect(self) -> QRectF:
-        """Dove sta la foto nel riquadro della vista (coordinate del viewport)."""
-        return QRectF(self.mapFromScene(self.item.sceneBoundingRect()).boundingRect())
-
-    def _crop_view_rect(self) -> QRectF:
-        r = self._img_rect()
-        x, y, w, h = self.crop
-        return QRectF(r.left() + x * r.width(), r.top() + y * r.height(), w * r.width(), h * r.height())
-
-    def _crop_hit(self, pos: QPointF) -> str | None:
-        c = self._crop_view_rect()
-        m = 12
-        near = lambda a, b: abs(a - b) <= m   # noqa: E731
-        inside_x = c.left() - m <= pos.x() <= c.right() + m
-        inside_y = c.top() - m <= pos.y() <= c.bottom() + m
-        if not (inside_x and inside_y):
-            return None
-        mode = ""
-        if near(pos.y(), c.top()):
-            mode += "t"
-        elif near(pos.y(), c.bottom()):
-            mode += "b"
-        if near(pos.x(), c.left()):
-            mode += "l"
-        elif near(pos.x(), c.right()):
-            mode += "r"
-        if mode:
-            return mode
-        return "move" if c.contains(pos) else None
-
-    def _aspect_n(self) -> float | None:
-        """Rapporto larghezza/altezza in coordinate 0..1 (la foto non è quadrata)."""
-        if not self.crop_ratio or self.full.isNull():
-            return None
-        return self.crop_ratio * self.full.height() / self.full.width()
-
-    def _drag_crop(self, mode: str, d: QPointF, start: list[float]) -> list[float]:
-        r = self._img_rect()
-        dx, dy = d.x() / max(1.0, r.width()), d.y() / max(1.0, r.height())
-        x, y, w, h = start
-        mn = 0.04
-        if mode == "move":
-            x = max(0.0, min(1 - w, x + dx))
-            y = max(0.0, min(1 - h, y + dy))
-            return [x, y, w, h]
-        x0, y0, x1, y1 = x, y, x + w, y + h
-        if "l" in mode:
-            x0 = max(0.0, min(x1 - mn, x0 + dx))
-        if "r" in mode:
-            x1 = min(1.0, max(x0 + mn, x1 + dx))
-        if "t" in mode:
-            y0 = max(0.0, min(y1 - mn, y0 + dy))
-        if "b" in mode:
-            y1 = min(1.0, max(y0 + mn, y1 + dy))
-        a = self._aspect_n()
-        if a:
-            nw, nh = x1 - x0, y1 - y0
-            if mode in ("t", "b"):          # lato orizzontale: la larghezza segue, centrata
-                nw = nh * a
-                cx = (start[0] + start[2] / 2)
-                x0, x1 = cx - nw / 2, cx + nw / 2
-            elif mode in ("l", "r"):        # lato verticale: l'altezza segue, centrata
-                nh = nw / a
-                cy = (start[1] + start[3] / 2)
-                y0, y1 = cy - nh / 2, cy + nh / 2
-            else:                           # angolo: l'angolo opposto resta fermo
-                if nw / max(nh, 1e-6) > a:
-                    nh = nw / a
-                else:
-                    nw = nh * a
-                if "l" in mode:
-                    x0 = x1 - nw
-                else:
-                    x1 = x0 + nw
-                if "t" in mode:
-                    y0 = y1 - nh
-                else:
-                    y1 = y0 + nh
-            # fuori dalla foto: si riduce mantenendo le proporzioni
-            if x0 < 0 or y0 < 0 or x1 > 1 or y1 > 1:
-                return list(start)
-        return [x0, y0, x1 - x0, y1 - y0]
-
-    def drawForeground(self, painter: QPainter, rect) -> None:
-        super().drawForeground(painter, rect)
-        if not self.crop_mode or self.full.isNull():
-            return
-        painter.save()
-        painter.resetTransform()
-        vr = QRectF(self.viewport().rect())
-        c = self._crop_view_rect()
-        outside = QPainterPath()
-        outside.addRect(vr)
-        hole = QPainterPath()
-        hole.addRect(c)
-        painter.fillPath(outside.subtracted(hole), QColor(0, 0, 0, 150))
-        painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
-        for i in (1, 2):   # regola dei terzi
-            painter.drawLine(QPointF(c.left() + c.width() * i / 3, c.top()),
-                             QPointF(c.left() + c.width() * i / 3, c.bottom()))
-            painter.drawLine(QPointF(c.left(), c.top() + c.height() * i / 3),
-                             QPointF(c.right(), c.top() + c.height() * i / 3))
-        painter.setPen(QPen(QColor("#ffffff"), 1.5))
-        painter.drawRect(c)
-        painter.setPen(QPen(QColor("#ffffff"), 4, Qt.SolidLine, Qt.SquareCap))
-        L = min(22.0, c.width() / 3, c.height() / 3)
-        for (px, py, sx, sy) in ((c.left(), c.top(), 1, 1), (c.right(), c.top(), -1, 1),
-                                 (c.left(), c.bottom(), 1, -1), (c.right(), c.bottom(), -1, -1)):
-            painter.drawLine(QPointF(px, py), QPointF(px + sx * L, py))
-            painter.drawLine(QPointF(px, py), QPointF(px, py + sy * L))
-        painter.restore()
-
-    def mousePressEvent(self, e):
-        self._press_pos = e.position()
-        if self.crop_mode and e.button() == Qt.LeftButton:
-            mode = self._crop_hit(e.position())
-            if mode:
-                self._crop_drag = (mode, e.position(), list(self.crop))
-            return
-        super().mousePressEvent(e)
-
-    def mouseMoveEvent(self, e):
-        if self.crop_mode:
-            if self._crop_drag:
-                mode, p0, start = self._crop_drag
-                self.crop = self._drag_crop(mode, e.position() - p0, start)
-                self.viewport().update()
-            else:
-                hit = self._crop_hit(e.position())
-                cur = {"move": Qt.SizeAllCursor, "t": Qt.SizeVerCursor, "b": Qt.SizeVerCursor,
-                       "l": Qt.SizeHorCursor, "r": Qt.SizeHorCursor, "tl": Qt.SizeFDiagCursor,
-                       "br": Qt.SizeFDiagCursor, "tr": Qt.SizeBDiagCursor, "bl": Qt.SizeBDiagCursor}
-                self.viewport().setCursor(cur.get(hit, Qt.ArrowCursor))
-            return
-        super().mouseMoveEvent(e)
-
-    def mouseReleaseEvent(self, e):
-        if self.crop_mode:
-            if self._crop_drag:
-                self._crop_drag = None
-                self.crop_changed.emit(list(self.crop))
-            return
-        super().mouseReleaseEvent(e)
-        still = self._press_pos is not None and (e.position() - self._press_pos).manhattanLength() < 4
-        if self.pick_enabled and still and not self.full.isNull():
-            sp = self.mapToScene(e.position().toPoint())
-            br = self.item.sceneBoundingRect()
-            if br.contains(sp):
-                self.picked.emit((sp.x() - br.left()) / br.width(), (sp.y() - br.top()) / br.height())
-        elif still and e.button() == Qt.LeftButton:
-            self._click_timer.start()
-
-    def set_loading(self, text: str) -> None:
-        self.full = QImage()
-        self.zoomed = False  # la prossima immagine arriva adattata, non ingrandita
-        self.item.setPixmap(QPixmap())
-        self.loading.setText(text)
-        self.resetTransform()
-        self.scene().setSceneRect(self.loading.boundingRect())
-        self.centerOn(self.loading)
-
-    def set_image(self, img: QImage, keep_zoom: bool = False) -> None:
-        self.loading.setText("")
-        self.full = img
-        if keep_zoom and self.zoomed:
-            # stessa grandezza a schermo anche se cambia la risoluzione (anteprima -> 4K)
-            same = self.item.pixmap().size() == img.size()
-            self._show_full(keep_view=same)
-        else:
-            self.fit()
-
-    def _show_full(self, keep_view: bool = False) -> None:
-        if self.full.isNull():
-            return
-        if not keep_view:  # stessa dimensione a schermo di prima, ma con tutti i pixel
-            shown_w = self.item.boundingRect().width() * self.transform().m11()
-            self.item.setPixmap(QPixmap.fromImage(self.full))
-            self.resetTransform()
-            k = shown_w / self.full.width() if self.full.width() else 1
-            self.scale(k, k)
-        else:
-            self.item.setPixmap(QPixmap.fromImage(self.full))
-        self.scene().setSceneRect(self.item.boundingRect())
-
-    def _fit_k(self) -> float:
-        """Scala (punti per pixel dell'immagine) che riempie la finestra: ingrandisce anche le
-        foto piccole, come Foto. Nessun limite a 1 pixel fisico per pixel."""
-        return min(self.viewport().width() / self.full.width(),
-                   self.viewport().height() / self.full.height())
-
-    def _limits(self) -> tuple[float, float]:
-        """Zoom minimo (adattata) e massimo: 4 pixel dello schermo per pixel della foto."""
-        dpr = self.devicePixelRatioF()
-        fit_k = self._fit_k()
-        return fit_k, max(fit_k * 2, 4 / dpr)
-
-    def zoom_level(self) -> float:
-        if self.full.isNull() or not self.zoomed:
-            return 0.0
-        lo, hi = self._limits()
-        k = self.transform().m11() * self.item.pixmap().width() / max(1, self.full.width())
-        return 0.0 if hi <= lo else max(0.0, min(1.0, math.log(k / lo) / math.log(hi / lo)))
-
-    def set_zoom_level(self, t: float) -> None:
-        """Cursore dello zoom: 0 = foto intera, 1 = 4 pixel dello schermo per pixel. Centro fisso."""
-        if self.full.isNull():
-            return
-        if t <= 0:
-            self.fit()
-            return
-        lo, hi = self._limits()
-        anchor = self.transformationAnchor()
-        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-        if not self.zoomed:
-            self.zoomed = True
-            self._show_full()
-        k = lo * (hi / lo) ** t
-        self.scale(k / self.transform().m11(), k / self.transform().m11())
-        self.setTransformationAnchor(anchor)
-        self.view_changed.emit()
-
-    def fit(self) -> None:
-        self.zoomed = False
-        self.zoom_changed.emit(0.0)
-        self.resetTransform()
-        if self.full.isNull():
-            return
-        dpr = self.devicePixelRatioF()
-        k = self._fit_k()
-        target_w = max(1, round(self.full.width() * k * dpr))
-        target_h = max(1, round(self.full.height() * k * dpr))
-        pm = QPixmap.fromImage(self.full.scaled(target_w, target_h, Qt.KeepAspectRatio,
-                                                Qt.SmoothTransformation))
-        pm.setDevicePixelRatio(dpr)
-        self.item.setPixmap(pm)
-        # il pixmap è già alla dimensione della finestra: niente fitInView, che aggiunge un margine
-        # e lascia la foto qualche pixel più piccola della misura calcolata
-        self.scene().setSceneRect(self.item.boundingRect())
-        self.view_changed.emit()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if not self.zoomed:
-            self.fit()
-
-    MAX_STEP = 1.08   # ogni evento (scatto di rotella, pezzo di pizzico) cambia al massimo l'8%
-
-    def wheelEvent(self, e):
-        if self.crop_mode:
-            return
-        self.zoom_by(1.0015 ** e.angleDelta().y())
-
-    def event(self, e):
-        if e.type() == QEvent.NativeGesture and e.gestureType() == Qt.ZoomNativeGesture:
-            if self.crop_mode:
-                return True
-            self.zoom_by(1.0 + e.value() * 0.5)  # pizzico sul trackpad, più dolce
-            return True
-        return super().event(e)
-
-    def zoom_by(self, factor: float) -> None:
-        if self.full.isNull():
-            return
-        factor = max(1 / self.MAX_STEP, min(self.MAX_STEP, factor))
-        if not self.zoomed:
-            if factor <= 1:
-                return  # già adattata: non si rimpicciolisce oltre
-            self.zoomed = True
-            self._show_full()
-        fit_k = self._fit_k()
-        k = min(self.transform().m11() * factor, self._limits()[1])
-        if k <= fit_k:
-            self.fit()  # tornati alla dimensione intera: di nuovo adattata
-            return
-        self.scale(k / self.transform().m11(), k / self.transform().m11())
-        self.zoom_changed.emit(self.zoom_level())
-        self.view_changed.emit()
-
-    def mouseDoubleClickEvent(self, e):
-        self._click_timer.stop()   # era un doppio clic: niente play / stop
-        if not self.crop_mode:
-            self.fit()
-
-
-class FilmStrip(QWidget):
-    """Striscia di fotogrammi come in Foto di macOS: clic o trascina per scegliere il momento.
-
-    Il riquadro bianco è il fotogramma scelto/mostrato, la linea sottile segue il video mentre va,
-    i segni verdi sono le foto già salvate con 📷."""
-    picked = Signal(int)
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedHeight(72)   # in alto c'è posto per il pallino della foto originale
-        self.setMinimumWidth(200)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.owner: str | None = None
-        self.frames = 0
-        self.thumbs: list[QImage] = []
-        self.selected: int | None = None
-        self.playhead: int | None = None
-        self.marks: list[int] = []
-        self.original: int | None = None   # Live: foto scelta dalla fotocamera (pallino)
-        self._drag = False
-        self._last: int | None = None
-
-    def set_video(self, frames_: int, owner: str | None = None) -> None:
-        self.owner, self.frames, self.thumbs = owner, frames_, []
-        self.selected = self.playhead = self.original = None
-        self.marks = []
-        self.update()
-
-    def set_thumbs(self, thumbs: list[QImage]) -> None:
-        self.thumbs = thumbs
-        self.update()
-
-    def set_state(self, selected: int | None, marks: list[int], original: int | None = None) -> None:
-        self.selected, self.marks, self.original = selected, marks, original
-        if selected is not None:
-            self.playhead = None   # fermi su una foto: niente linea di riproduzione
-        self.update()
-
-    def set_playhead(self, n: int | None) -> None:
-        self.playhead = n
-        self.update()
-
-    def _strip(self) -> QRectF:
-        return QRectF(5, 10, max(1, self.width() - 10), self.height() - 16)   # attaccata alle parentesi
-
-    def frame_at_x(self, x: float) -> int:
-        r = self._strip()
-        t = min(1.0, max(0.0, (x - r.left()) / r.width()))
-        return round(t * (self.frames - 1))
-
-    def x_of(self, n: int) -> float:
-        r = self._strip()
-        return r.left() + (n / max(1, self.frames - 1)) * r.width()
-
-    def _emit(self, x: float) -> None:
-        if self.frames <= 0:
-            return
-        n = self.frame_at_x(x)
-        if n != self._last:
-            self._last = n
-            self.picked.emit(n)
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self._drag, self._last = True, None
-            self._emit(e.position().x())
-
-    def mouseMoveEvent(self, e):
-        if self._drag:
-            self._emit(e.position().x())
-
-    def mouseReleaseEvent(self, e):
-        self._drag = False
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        r = self._strip()
-        clip = QPainterPath()
-        clip.addRoundedRect(r, 6, 6)
-        p.fillPath(clip, QColor("#26292d"))
-        if self.thumbs:
-            p.save()
-            p.setClipPath(clip)
-            w = r.width() / len(self.thumbs)
-            for i, im in enumerate(self.thumbs):  # ogni miniatura riempie la sua casella (ritaglio centrale)
-                cell = QRectF(r.left() + i * w, r.top(), w + 0.5, r.height())
-                k = max(cell.width() / im.width(), cell.height() / im.height())
-                sw, sh = cell.width() / k, cell.height() / k
-                p.drawImage(cell, im, QRectF((im.width() - sw) / 2, (im.height() - sh) / 2, sw, sh))
-            p.restore()
-        if self.frames <= 0:
-            return
-        for n in self.marks:  # foto già salvate
-            x = self.x_of(n)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#3fd17a"))
-            p.drawRoundedRect(QRectF(x - 2, r.bottom() - 9, 4, 12), 2, 2)
-        if self.original is not None:  # pallino sopra la striscia, come la "foto chiave" di Foto
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#ffffff") if self.original == self.selected else QColor("#ffd60a"))
-            p.drawEllipse(QPointF(self.x_of(self.original), 2.75), 2.25, 2.25)
-        if self.playhead is not None and self.selected is None:
-            x = self.x_of(self.playhead)
-            p.setPen(QPen(QColor("#ffffff"), 2))
-            p.drawLine(int(x), int(r.top()) - 3, int(x), int(r.bottom()) + 3)
-        if self.selected is not None:
-            x = self.x_of(self.selected)
-            bw = r.height() * 0.75
-            box = QRectF(x - bw / 2, r.top() - 4, bw, r.height() + 8)
-            p.setPen(QPen(QColor("#ffffff"), 3))
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(box, 5, 5)
-
-
-class LruCache(OrderedDict):
-    """Dizionario con un numero massimo di elementi: quando è pieno toglie quello usato meno di
-    recente. Per le miniature: si rifanno da sole se servono di nuovo, la memoria resta limitata."""
-
-    def __init__(self, maxsize: int):
-        super().__init__()
-        self.maxsize = maxsize
-
-    def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
-
-    def get(self, key, default=None):
-        return self[key] if key in self else default
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        self.move_to_end(key)
-        while len(self) > self.maxsize:
-            self.popitem(last=False)
-
-
-class SnapGallery(QWidget):
-    """Le foto prese dal video che stai guardando, in miniatura (pannello a destra, in basso).
-    Clic = il video torna su quel fotogramma per rivederlo; doppio clic = la foto intera, con la
-    stampabilità e le correzioni; ✕ sulla miniatura = la toglie da export."""
-    picked = Signal(int)        # fotogramma
-    viewed = Signal(str)        # chiave della foto (id#fN): doppio clic
-    removed = Signal(str)       # chiave della foto (id#fN)
-    COLS, GAP, CAP = 2, 8, 16
-
-    def __init__(self):
-        super().__init__()
-        self.setMouseTracking(True)
-        self.setCursor(Qt.PointingHandCursor)
-        self.entries: list[tuple[str, int, str | None]] = []   # (chiave, fotogramma, file)
-        self.current: int | None = None
-        self._hover: int | None = None
-        self._cache: LruCache = LruCache(40)   # ~0,5 MB l'una
-        self.setFixedHeight(0)
-
-    def set_entries(self, entries: list[tuple[str, int, str | None]], current: int | None) -> None:
-        self.entries, self.current = sorted(entries, key=lambda e: e[1]), current
-        rows = math.ceil(len(self.entries) / self.COLS)
-        self.setFixedHeight(rows * (self._cell_h() + self.CAP + self.GAP) if rows else 0)
-        self.update()
-
-    def _cell_w(self) -> float:
-        return (self.width() - self.GAP * (self.COLS - 1)) / self.COLS
-
-    def _cell_h(self) -> int:
-        return round((max(200, self.width()) - self.GAP * (self.COLS - 1)) / self.COLS * 9 / 16)
-
-    def _rect(self, i: int) -> QRectF:
-        r, c = divmod(i, self.COLS)
-        return QRectF(c * (self._cell_w() + self.GAP), r * (self._cell_h() + self.CAP + self.GAP),
-                      self._cell_w(), self._cell_h())
-
-    def _close_rect(self, i: int) -> QRectF:
-        r = self._rect(i)
-        return QRectF(r.right() - 24, r.top() + 4, 20, 20)
-
-    def _at(self, pos) -> int | None:
-        for i in range(len(self.entries)):
-            if self._rect(i).adjusted(0, 0, 0, self.CAP).contains(pos):
-                return i
-        return None
-
-    def _thumb(self, path: str | None) -> QImage | None:
-        if not path:
-            return None
-        if path not in self._cache:
-            reader = QImageReader(path)
-            reader.setAutoTransform(True)
-            size = reader.size()
-            if size.isValid():   # JPEG: si decodifica già ridotto, è veloce anche col 4K
-                reader.setScaledSize(size.scaled(QSize(480, 270), Qt.KeepAspectRatioByExpanding))
-            im = reader.read()
-            if im.isNull():
-                return None      # export non ancora finito: si riprova al prossimo aggiornamento
-            self._cache[path] = im
-        return self._cache[path]
-
-    def mouseMoveEvent(self, e):
-        i = self._at(e.position())
-        if i != self._hover:
-            self._hover = i
-            self.update()
-
-    def leaveEvent(self, e):
-        self._hover = None
-        self.update()
-
-    def mousePressEvent(self, e):
-        i = self._at(e.position())
-        if i is None or e.button() != Qt.LeftButton:
-            return
-        key, frame, _ = self.entries[i]
-        if self._close_rect(i).contains(e.position()):
-            self.removed.emit(key)
-        else:
-            self.picked.emit(frame)
-
-    def mouseDoubleClickEvent(self, e):
-        i = self._at(e.position())
-        if i is not None and self.entries[i][2] and not self._close_rect(i).contains(e.position()):
-            self.viewed.emit(self.entries[i][0])
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        for i, (key, frame, path) in enumerate(self.entries):
-            r = self._rect(i)
-            clip = QPainterPath()
-            clip.addRoundedRect(r, 6, 6)
-            p.fillPath(clip, QColor("#2c2c2e"))
-            im = self._thumb(path)
-            if im is not None:
-                k = max(r.width() / im.width(), r.height() / im.height())
-                sw, sh = r.width() / k, r.height() / k
-                p.save()
-                p.setClipPath(clip)
-                p.drawImage(r, im, QRectF((im.width() - sw) / 2, (im.height() - sh) / 2, sw, sh))
-                p.restore()
-            else:
-                p.setPen(QColor("#8e8e93"))
-                p.drawText(r, Qt.AlignCenter, tr('salvo…'))
-            if frame == self.current:  # è il fotogramma che stai guardando
-                p.setPen(QPen(QColor("#ffffff"), 2.5))
-                p.setBrush(Qt.NoBrush)
-                p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 6, 6)
-            if i == self._hover:
-                c = self._close_rect(i)
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor(0, 0, 0, 170))
-                p.drawEllipse(c)
-                p.setPen(QPen(QColor("#ffffff"), 1.6))
-                p.drawLine(c.center() + QPointF(-4, -4), c.center() + QPointF(4, 4))
-                p.drawLine(c.center() + QPointF(-4, 4), c.center() + QPointF(4, -4))
-            p.setPen(QColor("#98989f"))
-            f = p.font()
-            f.setPixelSize(11)
-            p.setFont(f)
-            p.drawText(QRectF(r.left(), r.bottom() + 2, r.width(), self.CAP - 2),
-                       Qt.AlignLeft | Qt.AlignVCenter, tr('fotogramma {v0}', v0=frame + 1))
-
-
-class ThumbStrip(QWidget):
-    """Miniature degli elementi prima e dopo quello che guardi, come la striscia in fondo a Foto.
-    Quella attuale è al centro, più grande e con il bordo; un pallino colorato dice la scelta già
-    fatta. Clic = vai a quell'elemento."""
-    picked = Signal(int)
-    CELL_W, CELL_H, GAP = 74, 52, 6
-    THUMB_SIDE = 184   # lato corto delle miniature: copre la casella grande (×1,18) su Retina (×2)
-    DOT = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff", "snap": "#2ad48e"}
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedHeight(self.CELL_H + 18)
-        self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.entries: list[tuple[int, QImage | None, str | None, bool, str]] = []
-        self.current: int | None = None
-        self._rects: list[tuple[QRectF, int]] = []
-        self.frame_color = "#0a84ff"   # bordo della miniatura attuale (vedi update_thumb_strip)
-        self.pan = 0.0            # spostamento attuale (pixel): la striscia si muove da qui
-        self._target = 0.0        # dove deve arrivare: lo scorrimento è morbido, come in Foto
-        self._vel = 0.0           # velocità del trascinamento, poi l'inerzia la fa decrescere
-        self._press = None        # (x iniziale, pan iniziale, x precedente) mentre si trascina
-        self._timer = QTimer(self)
-        self._timer.setInterval(16)
-        self._timer.timeout.connect(self._tick)
-
-    def set_entries(self, entries, current: int | None) -> None:
-        """entries: (indice, miniatura o None, scelta o None, è un video/Live, nome file)."""
-        if current != self.current:
-            self.pan = self._target = 0.0   # cambia la foto guardata: la striscia torna centrata
-            self._vel = 0.0
-        self.entries, self.current = entries, current
-        self.update()
-
-    def _limit(self) -> float:
-        """Quanto si può spostare: fino all'ultima miniatura da una parte e dall'altra."""
-        return max(0.0, (len(self.entries) * (self.CELL_W + self.GAP) - self.width()) / 2 + self.CELL_W)
-
-    def _clamp(self, v: float) -> float:
-        lim = self._limit()
-        return max(-lim, min(lim, v))
-
-    def _start(self) -> None:
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def _tick(self) -> None:
-        """Un passo di animazione: inerzia dopo il trascinamento, e avvicinamento al punto di arrivo."""
-        if self._press is None:
-            if abs(self._vel) > 0.2:
-                self._target = self._clamp(self._target + self._vel)
-                self._vel *= 0.92                  # l'inerzia si spegne piano, come sul trackpad
-            else:
-                self._vel = 0.0
-        self.pan += (self._target - self.pan) * 0.22   # arriva al punto con un movimento morbido
-        self.update()
-        if self._press is None and abs(self._target - self.pan) < 0.3 and self._vel == 0.0:
-            self.pan = self._target
-            self._timer.stop()
-            self.update()
-
-    def nudge(self, px: float) -> None:
-        """Sposta la striscia di px pixel (positivo = verso destra), con movimento morbido."""
-        self._target = self._clamp(self._target + px)
-        self._vel = 0.0
-        self._start()
-
-    def recenter(self) -> None:
-        """Riporta la striscia centrata sulla foto che stai guardando."""
-        self._target = 0.0
-        self._vel = 0.0
-        self._start()
-
-    def wheelEvent(self, e):
-        pd = e.pixelDelta()
-        if not pd.isNull():                        # trackpad: segue le dita, l'inerzia la dà il sistema
-            d = pd.x() or pd.y()
-            self._target = self.pan = self._clamp(self.pan + d)
-            self._vel = 0.0
-            self.update()
-        else:                                      # rotella: uno scatto = una finestra di miniature
-            steps = (e.angleDelta().x() or e.angleDelta().y()) / 120
-            self.nudge(-steps * 2.5 * (self.CELL_W + self.GAP))
-        self._start()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            x = e.position().x()
-            self._press = (x, self.pan, x)
-            self._vel = 0.0
-
-    def mouseMoveEvent(self, e):
-        if self._press is None:
-            return
-        x0, pan0, last = self._press
-        x = e.position().x()
-        if abs(x - x0) > 3:                        # trascinamento: la striscia segue il dito
-            self.pan = self._target = self._clamp(pan0 + (x - x0))
-            self._vel = x - last                   # serve per l'inerzia al rilascio
-            self._press = (x0, pan0, x)
-            self.update()
-
-    def mouseReleaseEvent(self, e):
-        if self._press is None:
-            return
-        x0, _, _ = self._press
-        self._press = None
-        if abs(e.position().x() - x0) <= 3:        # un clic, non un trascinamento
-            self._vel = 0.0
-            for r, i in self._rects:
-                if r.contains(e.position()):
-                    self.picked.emit(i)
-                    break
-        self._vel = max(-60.0, min(60.0, self._vel * 1.5))
-        self._start()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        self._rects = []
-        if not self.entries:
-            return
-        cw, ch, gap = self.CELL_W, self.CELL_H, self.GAP
-        big = 1.18
-        cx = self.width() / 2 + self.pan
-        cy = self.height() / 2
-        pos = [k for k, en in enumerate(self.entries) if en[0] == self.current]
-        center_k = pos[0] if pos else len(self.entries) - 0.5
-        for k, (i, img, choice, clip, name) in enumerate(self.entries):
-            scale = big if i == self.current else 1.0
-            w, h = cw * scale, ch * scale
-            off = (k - center_k) * (cw + gap)
-            if pos and k != center_k:  # spazio in più attorno a quella grande
-                off += (cw * (big - 1) / 2 + 2) * (1 if k > center_k else -1)
-            r = QRectF(cx + off - w / 2, cy - h / 2, w, h)
-            if r.right() < 0 or r.left() > self.width():
-                continue
-            self._rects.append((r, i))
-            path = QPainterPath()
-            path.addRoundedRect(r, 6, 6)
-            p.fillPath(path, QColor("#2c2c2e"))
-            if img is not None and not img.isNull():
-                p.save()
-                p.setClipPath(path)
-                k_ = max(r.width() / img.width(), r.height() / img.height())
-                sw, sh = r.width() / k_, r.height() / k_
-                p.drawImage(r, img, QRectF((img.width() - sw) / 2, (img.height() - sh) / 2, sw, sh))
-                p.restore()
-            else:
-                p.setPen(QColor("#8e8e93"))
-                f = p.font()
-                f.setPixelSize(10)
-                p.setFont(f)
-                p.drawText(r.adjusted(4, 4, -4, -4), Qt.AlignCenter | Qt.TextWrapAnywhere, name)
-            if i != self.current:
-                p.fillPath(path, QColor(0, 0, 0, 70 if choice is None else 120))  # già decise: più scure
-            if clip:   # ▶ su un dischetto scuro: leggibile anche su miniature chiare
-                disc = QRectF(r.left() + 4, r.bottom() - 18, 14, 14)
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor(0, 0, 0, 140))
-                p.drawEllipse(disc)
-                p.setPen(QColor("#ffffff"))
-                f = p.font()
-                f.setPixelSize(8)
-                p.setFont(f)
-                p.drawText(disc.adjusted(1, 0, 1, 0), Qt.AlignCenter, "▶")
-            if choice in self.DOT:
-                p.setPen(QPen(QColor("#1c1c1e"), 1.5))
-                p.setBrush(QColor(self.DOT[choice]))
-                p.drawEllipse(QRectF(r.right() - 13, r.top() + 4, 9, 9))
-            if i == self.current:   # miniatura attuale: bordo del colore del tipo scelto
-                p.setPen(QPen(QColor(self.frame_color), 2.5))
-                p.setBrush(Qt.NoBrush)
-                p.drawRoundedRect(r.adjusted(-1, -1, 1, 1), 7, 7)
-        # ai bordi le miniature sfumano nello sfondo invece di finire tagliate di netto
-        fade = 40
-        for x0, x1 in ((0, fade), (self.width(), self.width() - fade)):
-            g = QLinearGradient(x0, 0, x1, 0)
-            g.setColorAt(0, QColor(28, 28, 30, 255))
-            g.setColorAt(1, QColor(28, 28, 30, 0))
-            p.fillRect(QRectF(min(x0, x1), 0, fade, self.height()), g)
-
-
-_GIORNI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
-_GIORNI_LUNGHI = [tr('lunedì'), tr('martedì'), tr('mercoledì'), tr('giovedì'), tr('venerdì'), tr('sabato'), tr('domenica')]
-_MESI_LUNGHI = [tr('gennaio'), tr('febbraio'), tr('marzo'), tr('aprile'), tr('maggio'), tr('giugno'), tr('luglio'), tr('agosto'),
-                tr('settembre'), tr('ottobre'), tr('novembre'), tr('dicembre')]
-_MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"]
-
-
-def fmt_datetime(d) -> str:
-    return f"{_GIORNI[d.weekday()]} {d.day} {_MESI[d.month - 1]} {d.year}   {d:%H:%M:%S}"
-
-
-def qimage_to_pil(q: QImage) -> "Image.Image":
-    q = q.convertToFormat(QImage.Format_RGB888)
-    w, h, bpl = q.width(), q.height(), q.bytesPerLine()
-    buf = bytes(q.constBits())[:bpl * h]
-    return Image.frombuffer("RGB", (w, h), buf, "raw", "RGB", bpl, 1)
-
-
-EDIT_PROXY = 1600          # Regola / Ritaglia: anteprima veloce, poi la foto intera
-EDIT_FULL_MAX = 30_000_000  # oltre (panorami enormi) a schermo resta l'anteprima; l'export è sempre intero
-
-
-def print_takes_edit() -> bool:
-    """printprep.improve accetta le modifiche (parametro edit)? Le versioni vecchie no."""
-    try:
-        return "edit" in inspect.signature(printprep.improve).parameters
-    except (TypeError, ValueError):
-        return False
-
-
-def render_edit_job(img, e: dict, crop_mode: bool):
-    """In Ritaglia si vede la foto intera (raddrizzata) con il riquadro sopra; altrimenti finita."""
-    if crop_mode:
-        base = E.geometry_base(img.convert("RGB"), e)
-        return E.render_tone(base, uncropped_tone_edit(e, *base.size))
-    return E.render(img, e)
-
-
-def uncropped_tone_edit(e: dict, w: int, h: int) -> dict:
-    """Le regolazioni per la foto intera (Ritaglia mostra tutto, con il riquadro sopra).
-    Gli occhi rossi sono segnati nel riquadro di quel momento: si riportano sulla foto intera,
-    nello stesso posto e della stessa misura in cui finiranno nella foto ritagliata."""
-    t = dict(e)
-    t.pop("crop", None)
-    pts = e.get("redeye") or []
-    if pts:
-        c = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
-        k = max(c[2] * w, c[3] * h) / max(1, w, h)   # misura relativa al lato lungo del ritaglio
-        flip = 1.0 if e.get("flip") else 0.0
-        t["redeye"] = []
-        for p in pts:
-            x, y = E.redeye_point(p, e)          # nel riquadro di adesso
-            size = p[2] if len(p) > 2 else E.get(e, "redeye_size")
-            t["redeye"].append([c[0] + x * c[2], c[1] + y * c[3], size * k,
-                                flip, 0.0, 0.0, 1.0, 1.0])
-    return t
-
-
-def pil_to_qimage(img) -> QImage:
-    img = img.convert("RGB")
-    data = img.tobytes()
-    return QImage(data, img.width, img.height, img.width * 3, QImage.Format_RGB888).copy()
 
 
 class MainWindow(QMainWindow):
@@ -1193,6 +121,8 @@ class MainWindow(QMainWindow):
         self.frames_q = ThreadPoolExecutor(max_workers=2)
         # copia per la stampa (Real-ESRGAN può metterci minuti): coda sua, non blocca il resto
         self.print_q = ThreadPoolExecutor(max_workers=1)
+        self.thumb_q = ThumbQueue()   # miniature della striscia: dal centro, annullabili, riprovate
+        self._strip_idx: dict[str, int] = {}   # id -> indice, per le miniature ora nella striscia
         self.print_job: str | None = None   # id della foto in preparazione, None = nessun lavoro
         self.bridge = Bridge()
         self.bridge.done.connect(self.on_done)
@@ -1234,6 +164,7 @@ class MainWindow(QMainWindow):
         self._preview_busy = False
         self._preview_again = False
         self.meta: dict[str, metadata.Meta] = {}    # metadati per il pannello Info
+        self.burst_ids: set[str] = set()            # vicini guardati per la raffica (similar.py)
         # miniature con un tetto, così la memoria non cresce scorrendo migliaia di foto
         self.thumbs: LruCache = LruCache(12)        # striscia dei fotogrammi: ~1,4 MB per video
         self.next_thumbs: LruCache = LruCache(120)  # striscia in basso (ne mostra 25): ≤0,7 MB l'una
@@ -1260,6 +191,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_shortcuts()
+        a11y.setup(self)   # VoiceOver: nomi dei pulsanti con sola icona; focus solo con Tab
         self.show_setup()
 
     # ------------------------------------------------------------------ interfaccia
@@ -1363,10 +295,15 @@ class MainWindow(QMainWindow):
         self.title = ElidedLabel()
         self.title.setObjectName("subtitle")
         self.title.setAlignment(Qt.AlignCenter)
+        self.stamp = ElidedLabel()   # data e ora dello scatto, accanto a "1 di 14": non copre la foto
+        self.stamp.setObjectName("subtitle")
+        title_row = QHBoxLayout()
+        for w, k in ((None, 1), (self.title, 0), (self.stamp, 0), (None, 1)):
+            title_row.addStretch(1) if w is None else title_row.addWidget(w, k)
         center = QVBoxLayout()
         center.setSpacing(1)
         center.addLayout(head_row)
-        center.addWidget(self.title)
+        center.addLayout(title_row)
 
         self.btn_fav = QPushButton("♡")
         self.btn_fav.setObjectName("fav")
@@ -1460,7 +397,7 @@ class MainWindow(QMainWindow):
         cv.setContentsMargins(16, 8, 16, 16)
         cv.setSpacing(7)
         for head, widgets in ((tr('CARTELLE'), (self.btn_open, self.btn_export, self.btn_show_export)),
-                              (tr('VISUALIZZA'), (self.view_filter,)),
+                              (tr('VISUALIZZA'), (self.view_filter, places.online_switch(self.settings_store))),
                               (tr('FOTOGRAMMI ESPORTATI'), (self.fmt, self.tz)),
                               (tr('AIUTO'), (btn_help2,))):
             lab = QLabel(head)
@@ -1571,8 +508,9 @@ class MainWindow(QMainWindow):
         sv.setContentsMargins(18, 10, 18, 18)   # come Regola e Ritaglia
         sv.setSpacing(8)
         self.side_layout = sv
-        self.side_info = QLabel(tr('INFO'))   # stesso titolo di REGOLA e RITAGLIA
+        self.side_info = QLabel("")   # titolo solo per le foto prese da un video: la linguetta dice già Info
         self.side_info.setObjectName("panelhead")
+        self.side_info.hide()
         sv.addWidget(self.side_info)
         self.side_details = QLabel("")
         self.side_details.setObjectName("details")
@@ -1605,7 +543,7 @@ class MainWindow(QMainWindow):
         pb = QVBoxLayout(self.print_box)
         pb.setContentsMargins(0, 0, 0, 0)
         pb.setSpacing(8)
-        ph = QLabel(tr('Stampa'))
+        ph = QLabel(tr('Stampa').upper())
         ph.setObjectName("subhead")
         pb.addWidget(ph)
         self.print_text = QLabel("")
@@ -1616,7 +554,7 @@ class MainWindow(QMainWindow):
         self.btn_print_fix = QPushButton(tr('Migliora per la stampa'))
         self.btn_print_fix.setToolTip(tr('Crea una copia per la stampa in export/Stampa: ingrandisce con Real-ESRGAN (se installato) o Lanczos, e aggiunge nitidezza. L\'originale non si tocca.'))
         self.btn_print_fix.setFocusPolicy(Qt.TabFocus)
-        self.btn_print_fix.setObjectName("cropbig")
+        self.btn_print_fix.setObjectName("textlink")   # azione secondaria: un link, non il pulsante più grande
         self.btn_print_fix.clicked.connect(self.improve_for_print)
         pb.addWidget(self.btn_print_fix)
         # conferma inline sotto "Migliora per la stampa": Sì avvia la copia, Annulla non fa nulla
@@ -1659,7 +597,7 @@ class MainWindow(QMainWindow):
         self.print_box.hide()
         sv.addWidget(self.print_box)
         self.side_slot = sv.count()   # qui arrivano le foto prese da un video
-        sel = QLabel(tr('Selezione'))
+        sel = QLabel(tr('Selezione').upper())
         sel.setObjectName("subhead")
         sv.addWidget(sel)
         # quante già fatte: in evidenza (numero grande e barra), poi il dettaglio
@@ -1676,7 +614,7 @@ class MainWindow(QMainWindow):
         sv.addWidget(self.counter)
         self.side_sel = sel
         # salvataggio: deve essere chiaro che è automatico, quando è avvenuto e dove sta
-        self.save_head = QLabel(tr('Salvataggio'))
+        self.save_head = QLabel(tr('Salvataggio').upper())
         self.save_head.setObjectName("subhead")
         sv.addWidget(self.save_head)
         self.save_info = QLabel("")
@@ -1693,22 +631,17 @@ class MainWindow(QMainWindow):
         self.btn_side_export = QPushButton(tr('Export'))
         self.btn_side_export.setToolTip(tr('Apre in {FILE_MANAGER} la cartella con le foto approvate.', FILE_MANAGER=FILE_MANAGER))
         self.btn_side_export.clicked.connect(self.open_export)
-        # due righe: in una sola i quattro pulsanti superano i 280 px del pannello e tutto il
-        # contenuto veniva allargato e tagliato a destra
+        # una riga di link: si salva da solo, questi servono di rado e non devono pesare
         self.save_row = QWidget()
-        srows = QVBoxLayout(self.save_row)
-        srows.setContentsMargins(0, 2, 0, 0)
-        srows.setSpacing(6)
-        for group in ((self.btn_save_now, self.btn_show_save, self.btn_side_export),):
-            srow = QHBoxLayout()
-            srow.setSpacing(6)
-            for b in group:
-                b.setObjectName("small")   # stessa pillola degli altri pulsanti piccoli del pannello
-                b.setFocusPolicy(Qt.NoFocus)
-                b.setCursor(Qt.PointingHandCursor)
-                srow.addWidget(b)
-            srow.addStretch(1)
-            srows.addLayout(srow)
+        srow = QHBoxLayout(self.save_row)
+        srow.setContentsMargins(0, 0, 0, 0)
+        srow.setSpacing(12)
+        for b in (self.btn_save_now, self.btn_show_save, self.btn_side_export):
+            b.setObjectName("textlink")
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            srow.addWidget(b)
+        srow.addStretch(1)
         sv.addWidget(self.save_row)
         sv.addStretch(1)
         outer.addWidget(self.side)   # la versione è nel titolo della finestra e in Aiuto
@@ -1730,7 +663,7 @@ class MainWindow(QMainWindow):
         self.image_view.zoom_changed.connect(self.on_zoom_changed)
         self.image_view.view_changed.connect(lambda: self.place_stamp())
         self.video_widget = QVideoWidget()
-        self.video_widget.setStyleSheet("background: #1c1c1e;")
+        self.video_widget.setStyleSheet(f"background: {C['bg_window']};")
         self.message = QLabel("")
         self.message.setObjectName("big")
         self.message.setAlignment(Qt.AlignCenter)
@@ -1775,13 +708,10 @@ class MainWindow(QMainWindow):
             b.setToolTip(tr(tip))
             b.clicked.connect(lambda _=False, fn=fn: self.nav_unless_editing(fn))
             b.hide()
-        self.stamp = QLabel("", self.stack)
-        self.stamp.setObjectName("stamp")
-        self.stamp.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.stamp.hide()
         self.warn = OverlayLabel(self.stack, "top-right")
         self.warn.setObjectName("chip")
-        self.warn.avoid = [self.stamp, self.zoom_pill]
+        self.warn.avoid = [self.zoom_pill]
         self.status = OverlayLabel(self.stack, "bottom", hide_after_ms=8000)   # errori: un po' di più
         self.status.setObjectName("toast")
         # foto presa dal video, vista a schermo intero (doppio clic sulla miniatura)
@@ -2027,6 +957,8 @@ class MainWindow(QMainWindow):
         self.thumbs_strip = ThumbStrip()
         self.thumbs_strip.setToolTip(tr('Le foto prima e dopo questa. Clic per andarci.\nIl pallino colorato è la scelta già fatta.'))
         self.thumbs_strip.picked.connect(self.jump_to)
+        self.thumbs_strip.wanted.connect(self.request_strip_thumbs)
+        self.bg.submit(thumbcache.prune)   # la cache delle miniature su disco non cresce all'infinito
         # filtro della striscia: mostra solo le miniature con una certa scelta (o ancora da fare)
         # Pulsante che apre un popup personalizzato (il QComboBox nativo è brutto su macOS)
         self._strip_filter_key = self.settings_store.value("strip_filter", "all")
@@ -2149,6 +1081,7 @@ class MainWindow(QMainWindow):
         self.zoom_slider.blockSignals(True)
         self.zoom_slider.setValue(round(t * 100))
         self.zoom_slider.blockSignals(False)
+        self.place_zoom()   # a foto ingrandita lo zoom resta visibile
 
     def show_settings(self):
         pop = self.settings_pop
@@ -2177,7 +1110,7 @@ class MainWindow(QMainWindow):
         # schermata iniziale: niente pannello Info vuoto, così il riquadro resta al centro
         self.side.setVisible(browsing and self.side_wanted)
         self.update_btn_info()
-        for w in (self.side_info, self.side_details, self.side_sel, self.counter, self.snaps_label,
+        for w in (self.side_details, self.side_sel, self.counter, self.snaps_label,
                   self.snap_gallery, self.save_head, self.save_info, self.save_row,
                   self.thumbs_strip, self.strip_filter):
             w.setVisible(browsing)
@@ -2194,7 +1127,7 @@ class MainWindow(QMainWindow):
         self.print_box.setVisible(show)
         if show:
             level, text = printprep.verdict(*m.size)
-            self.print_text.setText(f"<b style='color:#f2f2f7'>{level}</b>  ·  {text}")
+            self.print_text.setText(f"<span style='color:{C['text_detail']}; font-weight:600'>{level.capitalize()}</span>  ·  {text}")
         has_copy = show and self.print_copy(item).is_file()
         self.btn_print_cmp.setVisible(has_copy)
         if not has_copy and self.btn_print_cmp.isChecked():
@@ -2556,6 +1489,7 @@ class MainWindow(QMainWindow):
         else:
             self.edit_badge.setText("")
         self.edit_badge.setVisible(bool(self.edit_badge.text()))
+        self.place_zoom()   # Ritaglia aperto o chiuso: lo zoom sparisce o torna
 
     def reset_edit_view(self) -> None:
         """Nuovo elemento: pannelli aggiornati sulle sue modifiche."""
@@ -2815,6 +1749,9 @@ class MainWindow(QMainWindow):
                   self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn,
                   self.btn_return, self.zoom_pill):
             w.setEnabled(not on)
+        for w in (self.decision_bar, self.thumbs_strip, self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn):
+            hide_keep_space(w, on)
+        self.update_photo_arrows()
         self.update_locate_btn()
         self.btn_locate.setEnabled(not on and not self.locate_is_here())
         self.update_edit_ui()
@@ -2991,6 +1928,9 @@ class MainWindow(QMainWindow):
             self.on_media_click()
         if e.type() == QEvent.EnabledChange and obj in getattr(self, "cap_of", {}):
             self.cap_of[obj].setEnabled(obj.isEnabled())
+        if obj is self.stack and e.type() in (QEvent.Enter, QEvent.Leave):
+            self._over_photo = e.type() == QEvent.Enter
+            self.place_zoom()
         if obj is self.stack and e.type() == QEvent.Resize:
             self.warn.place()
             self.status.place()
@@ -3011,7 +1951,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(box)
         v.setContentsMargins(28, 24, 28, 24)
         v.setSpacing(10)
-        title = QLabel(tr('Nuova selezione') + "   <span style='font-size:13px; color:#9a9ca0; font-weight:400'>"
+        title = QLabel(tr('Nuova selezione') + f"   <span style='font-size:13px; color:{C['text_2']}; font-weight:400'>"
                        f"{APP_TITLE}</span>")
         title.setObjectName("h1")
         v.addWidget(title)
@@ -3387,12 +2327,17 @@ class MainWindow(QMainWindow):
         elif kind == "meta":
             self.pending.discard(("meta", key))
             self.meta[key] = res if not isinstance(res, Exception) else metadata.Meta()
-            if cur and cur.id == key:
+            if cur and (cur.id == key or key in self.burst_ids):   # anche un vicino: la raffica
                 self.update_item_labels()
         elif kind == "thumb":
-            self.pending.discard(("thumb", key))
-            self.next_thumbs[key] = res if not isinstance(res, Exception) else QImage()
-            self.update_next_preview()
+            ok = not isinstance(res, Exception) and not res.isNull()
+            self.thumb_q.arrived(key, ok)
+            if ok:
+                self.next_thumbs[key] = res
+                if key in self._strip_idx:   # solo lei nella striscia, senza ricostruirla
+                    self.thumbs_strip.set_thumb(self._strip_idx[key], res)
+            elif not self.thumb_q.gave_up(key):   # riprova tra poco (file ancora a metà, iCloud…)
+                QTimer.singleShot(int(ThumbQueue.RETRY_S * 1000) + 50, self.thumbs_strip.ask_shown)
         elif kind == "rename":
             self.on_renamed(res)
         elif kind == "relocate":
@@ -3470,7 +2415,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(dlg)
         text = QTextBrowser()
         text.setHtml(help_html(HELP_TEXT))
-        text.setStyleSheet("QTextBrowser { background: #232325; border: 1px solid #3a3a3c;"
+        text.setStyleSheet(f"QTextBrowser {{ background: {C['bg_panel']}; border: 1px solid {C['line_divider']};"
                            " border-radius: 10px; padding: 10px; font-size: 13px; }")
         v.addWidget(text, 1)
         row = QHBoxLayout()
@@ -3541,7 +2486,7 @@ class MainWindow(QMainWindow):
         for k in list(self._ready_jobs):   # download chiesti per la cartella di prima
             self.drop_ready_job(k)
         for cache in (self.infos, self.camera_frames, self.meta, self.thumbs, self.next_thumbs,
-                      self.exact_cache, self.proxy_frames, self.pending):
+                      self.exact_cache, self.proxy_frames, self.pending, self.thumb_q):
             cache.clear()
         self.export_q.submit(self.copy_paths.clear)   # copy_paths: solo dalla coda export
         # copie finite: l'esito è già nel salvataggio; un id uguale nella cartella nuova non è lo stesso
@@ -3609,10 +2554,10 @@ class MainWindow(QMainWindow):
                 self.came_from_home = True   # "Torna all'analisi" e frecce compaiono solo da qui
         done = sum(1 for it in self.items if self.session.get(it.id) is not None)
         if export_warning:
-            self.status.setStyleSheet("color:#f0b860;")
+            self.status.setStyleSheet(f"color:{C['text_warn']};")
             self.status.setText(export_warning, ms=0)   # importante: resta finché non si cambia elemento
         elif done:
-            self.status.setStyleSheet("color:#7fd19a;")
+            self.status.setStyleSheet(f"color:{C['text_ok']};")
             self.status.setText(tr('Ripreso da dove eri: {done} già decise', done=done))
         self.show_item(keep_status=bool(done or export_warning))
 
@@ -3919,10 +2864,11 @@ class MainWindow(QMainWindow):
         rows = []
         for k, v in m.rows:
             hot = k == tr('Stampabilità')   # il dato che si cerca: in verde
-            vs = f"<span style='color:#7fe3b4; font-weight:700'>{esc(v)}</span>" if hot else esc(v)
-            rows.append(f"<tr><td width='78' style='color:#98989f; padding:3px 10px 3px 0; vertical-align:top'>"
-                        f"{esc(k)}</td><td style='color:#f2f2f7; padding:3px 0'>{vs}</td></tr>")
+            vs = f"<span style='color:{C['text_ok']}; font-weight:700'>{esc(v)}</span>" if hot else esc(v)
+            rows.append(f"<tr><td width='78' style='color:{C['text_2']}; padding:3px 10px 3px 0; vertical-align:top'>"
+                        f"{esc(k)}</td><td style='color:{C['text']}; padding:3px 0'>{vs}</td></tr>")
         self.side_info.setText(tr('FOTO PRESA · FOTOGRAMMA {v0}', v0=d["frame"] + 1))
+        self.side_info.show()
         self.side_details.setText("<table cellspacing='0'>" + "".join(rows) + "</table>")
         self.side_seg.set_current("info")
         self.side_tab = "info"
@@ -4006,8 +2952,8 @@ class MainWindow(QMainWindow):
         from datetime import date
         if saved and day != date.today().isoformat():
             when = f"{day[8:10]}/{day[5:7]} {when}"
-        state = (tr("<span style='color:#7fe3b4'>✓ Salvato alle {when}</span>", when=when) if saved else
-                 tr("<span style='color:#ffb340'>Non ancora salvato</span>"))
+        state = (tr("<span style='color:{c}'>✓ Salvato alle {when}</span>", c=C["text_ok"], when=when) if saved else
+                 tr("<span style='color:{c}'>Non ancora salvato</span>", c=C["text_warn"]))
         where = self.short_folder(str(ses.path.parent))
         self.save_info.setText(state)
         self.save_info.setToolTip(tr('Si salva da solo a ogni scelta: puoi chiudere quando vuoi e riprendere da qui.\nProgressi: {v1}/{v2}\nFoto scelte: {v3}', v1=where, v2=ses.path.name, v3=self.short_path(self.export_dir)))
@@ -4015,7 +2961,7 @@ class MainWindow(QMainWindow):
     def file_status(self, item: Item, d: dict | None) -> tuple[str, str, list[tuple[str, str]]]:
         """Cosa è successo AI FILE di questo elemento: copiato in export, spostato in “cancellare”,
         o niente. (colore, testo, link "Apri …") per il pannello Info: niente percorsi lunghi."""
-        grey = "#98989f"
+        grey = C["text_2"]
         if not d:
             return grey, tr('da decidere · niente copiato né spostato'), []
         choice = d["choice"]
@@ -4030,10 +2976,10 @@ class MainWindow(QMainWindow):
         if choice == "yes" and d.get("noexport"):
             return CHOICE_COLOR["yes"], tr('✓ approvata · video non copiato (tenute solo le foto prese)'), []
         if d.get("export_failed"):
-            return ("#ffb340", tr('⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)', v0=d['export_failed']), [])
+            return (C["text_warn"], tr('⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)', v0=d['export_failed']), [])
         files = d.get("files") or []
         if not files:
-            return "#ffb340", tr('⏳ copia in export in corso…'), []
+            return C["text_warn"], tr('⏳ copia in export in corso…'), []
         return (CHOICE_COLOR["yes"], tr("✓ approvata · COPIATA in export (l'originale resta al suo posto)"),
                 self.open_links(files))
 
@@ -4103,7 +3049,7 @@ class MainWindow(QMainWindow):
             self.flash(tr('Export in ordine: {v0} copie spostate in Foto / Video con la data nel nome', v0=n))
         if errors:
             log.warning("export: copie non riordinate: %s", errors)
-            self.status.setStyleSheet("color:#f0b860;")
+            self.status.setStyleSheet(f"color:{C['text_warn']};")
             self.status.setText(tr('{v0} copie in export non si sono potute rinominare: restano com\'erano', v0=len(errors)), ms=0)
 
     def save_now(self):
@@ -4112,7 +3058,7 @@ class MainWindow(QMainWindow):
         try:
             self.session.save()
         except OSError as e:
-            self.status.setStyleSheet("color:#f0b860;")
+            self.status.setStyleSheet(f"color:{C['text_warn']};")
             self.status.setText(tr('Salvataggio non riuscito: {e}', e=e))
             return
         self.flash(tr('💾 Progressi salvati'))
@@ -4127,7 +3073,7 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.session.path.parent)))
 
     def flash(self, text: str):
-        self.status.setStyleSheet("color:#7fd19a;")
+        self.status.setStyleSheet(f"color:{C['text_ok']};")
         self.status.setText(text, ms=3500)
 
     def replay(self):
@@ -4306,36 +3252,29 @@ class MainWindow(QMainWindow):
             self.place_zoom()
             return
         from datetime import timedelta
-        self.stamp.setText("🕒  " + fmt_datetime(item.taken + timedelta(seconds=offset_s)))
-        self.stamp.adjustSize()
+        self.stamp.setText("·  " + fmt_datetime(item.taken + timedelta(seconds=offset_s)))
         self.stamp.show()
         self.place_stamp()
-        self.stamp.raise_()
 
     def place_stamp(self):
-        """La data sta nell'angolo in alto a sinistra DELLA FOTO (o del video), non sul bordo
-        scuro accanto: si calcola dove viene disegnata l'immagine adattata alla finestra."""
-        if not hasattr(self, "stamp") or self.stamp.isHidden():
-            return
-        # fissa: sempre nello stesso punto (in alto a sinistra dell'area della foto), anche quando
-        # si ingrandisce o si sposta la foto; non segue l'immagine
-        area = self.stack.rect()
-        x, y = 14, 12
-        self.stamp.move(min(x, max(14, area.width() - self.stamp.width() - 14)), y)
-        self.place_zoom()
-        self.warn.place()
+        """La data è nella barra in alto: sulla foto restano solo zoom e avvisi."""
+        if hasattr(self, "stamp") and not self.stamp.isHidden():
+            self.place_zoom()
+            self.warn.place()
 
     def place_zoom(self):
-        """Cursore dello zoom subito sotto la data, sopra la foto (solo per foto e panorami)."""
+        """Zoom in alto a sinistra sulla foto (foto e panorami), come i comandi di Foto: solo col
+        mouse sopra la foto o a foto ingrandita, mai in Ritaglia (coprirebbe la maniglia)."""
         if not hasattr(self, "stamp"):
             return
         item = self.current()
         show = (self.stack.currentWidget() is self.image_view and not self.stamp.isHidden()
-                and item is not None and item.kind != "video")   # foto, panorami e Live ferma
+                and item is not None and item.kind != "video" and not self.image_view.crop_mode
+                and (getattr(self, "_over_photo", False) or self.zoom_slider.value() > 0))
         self.zoom_pill.setVisible(show)
         if show:
             self.zoom_pill.adjustSize()
-            self.zoom_pill.move(self.stamp.x(), self.stamp.y() + self.stamp.height() + 6)
+            self.zoom_pill.move(14, 12)
             self.zoom_pill.raise_()
 
     def place_photo_arrows(self):
@@ -4411,59 +3350,29 @@ class MainWindow(QMainWindow):
             self.pending.add(("meta", item.id))
             self.submit("meta", item.id, metadata.read, item, info)
         m = self.meta.get(item.id)
-        t = item.taken
-        esc = lambda x: (str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                         .replace("\n", "<br>").replace("_", "_\u200b").replace("/", "/\u200b"))
         color, status, links = self.file_status(item, d)   # copiata, spostata o lasciata lì
-        link_html = "".join(f" · <a style='color:#0a84ff' href='{QUrl.fromLocalFile(f).toString()}'>"
-                            f"{label}</a>" for label, f in links)
-        self.side_details.setText(
-            f"<div style='font-size:17px; font-weight:700; color:#f2f2f7'>"
-            f"{_GIORNI_LUNGHI[t.weekday()]} {t.day} {_MESI_LUNGHI[t.month - 1]} {t.year}</div>"
-            f"<div style='color:#98989f; margin-top:2px'>{t:%H:%M:%S}  ·  {KIND_LABEL[item.kind].capitalize()}</div>"
-            f"<div style='color:{color}; margin-top:6px; font-size:12px'>{esc(status)}{link_html}</div>")
-        # scheda: fotocamera, obiettivo, misure, scatto (come il riquadro dell'Info di Foto)
-        rows = dict(m.rows) if m else {}
-        card = []
-        if rows.get(tr('Fotocamera')):
-            card.append(f"<div style='color:#f2f2f7; font-weight:600'>{esc(rows[tr('Fotocamera')])}</div>")
-        if rows.get(tr('Obiettivo')):
-            card.append(f"<div style='color:#d1d1d6'>{esc(rows[tr('Obiettivo')])}</div>")
-        size = rows.get(tr('Video')) or rows.get(tr('Dimensioni'))
-        if size:
-            card.append(f"<div style='color:#d1d1d6; margin-top:4px'>{esc(size)}</div>")
-        tech = [rows[k] for k in (tr('Scatto'), tr('Durata'), tr('Bitrate'), tr('Audio')) if rows.get(k)]
-        if tech:
-            card.append("<div style='color:#98989f; margin-top:4px; font-size:12px'>"
-                        + esc("  ·  ".join(tech)) + "</div>")
-        if not m and extra:
-            card.append("<div style='color:#98989f; font-size:12px'>" + esc("  ·  ".join(extra)) + "</div>")
-        self.info_card_text.setText("".join(card))
+        links = [(label, QUrl.fromLocalFile(f).toString()) for label, f in links]
+        self.side_info.hide()   # il titolo serve solo per le foto prese da un video
+        tz = dict(m.rows).get(tr('Fuso orario'), "") if m else ""
+        self.side_details.setText(infopanel.details_html(item.taken, KIND_LABEL[item.kind], color, status, links, tz))
+        card = infopanel.card_html(m, extra, self.burst_html)
+        self.info_card_text.setText(card)
         self.info_card.setVisible(bool(card))
-        # sotto la scheda, in piccolo: luogo (solo se c'è), file, cartella, note e avvisi
-        more = []
-        if m and m.gps:
-            lat, lon = m.gps
-            url = (f"https://maps.apple.com/?ll={lat},{lon}&q={lat},{lon}" if sys.platform == "darwin"
-                   else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}")
-            more.append(f"<div style='color:#d1d1d6'>{esc(metadata.fmt_gps(lat, lon))}"
-                        + (f" · {m.altitude:.0f} m" if m.altitude is not None else "")
-                        + tr(" · <a style='color:#0a84ff' href='{url}'>Mappa</a>", url=url) + "</div>")
-        if rows.get(tr('File')):
-            more.append(f"<div style='color:#98989f'>{esc(rows[tr('File')])}</div>")
-        if rows.get(tr('Cartella')):
-            more.append(f"<div style='color:#6e6e73'>{esc(self.short_folder(rows[tr('Cartella')]))}</div>")
-        small = [(k, v) for k, v in rows.items() if k in (tr('Colore'), tr('Fuso orario'))]
-        small += [(tr('Nota'), x) for x in extra if x.startswith("anteprima")]
-        if self.session and item.id in self.session.favorites:
-            small.append((tr('Preferita'), "♥"))
-        if small:
-            more.append("<div style='color:#6e6e73; margin-top:2px'>"
-                        + "  ·  ".join(f"{esc(k)} {esc(v)}" for k, v in small) + "</div>")
-        if warn:
-            more.append("<div style='color:#ffb340; margin-top:6px'>" + "<br>".join(map(esc, warn)) + "</div>")
-        self.side_more.setText("".join(more))
+        favorite = bool(self.session and item.id in self.session.favorites)
+        more = infopanel.more_html(m, extra, warn, self.short_folder, favorite)
+        self.side_more.setText(more)
         self.side_more.setVisible(bool(more))
+
+    def burst_html(self) -> str:
+        """Raffica attorno alla foto: si leggono anche i vicini, solo le foto già sul disco."""
+        near = [self.items[i] for i in similar.neighbors(self.items, self.idx)]
+        self.burst_ids = {it.id for it in near}
+        for it in near:
+            if it.id not in self.meta and ("meta", it.id) not in self.pending and not it.is_clip \
+                    and all(cloud.is_local(p) for p in it.needed_files()):
+                self.pending.add(("meta", it.id))
+                self.submit("meta", it.id, metadata.read, it, None)
+        return similar.info_html(self.items, self.idx, lambda it: getattr(self.meta.get(it.id), "quality", None))
 
     def short_folder(self, folder: str) -> str:
         """Cartella dell'elemento a partire da quella aperta (es. "dji pocket/DCIM/DJI_001"),
@@ -4504,9 +3413,9 @@ class MainWindow(QMainWindow):
         vis = [i for i, it in enumerate(self.items) if self.visible(it)]
         done = sum(1 for i in vis if self.session.get(self.items[i].id) is not None)
         self.done_label.setText(
-            tr("<span style='font-size:13px; font-weight:600; color:#f2f2f7;'>{done} di {v1} già fatte</span>", done=done, v1=len(vis))
-            + (f"<span style='font-size:12px; color:#98989f;'>  ·  ne mancano {len(vis) - done}</span>"
-               if done < len(vis) else "<span style='font-size:12px; color:#2ad48e;'>  ·  tutte decise</span>"))
+            tr("<span style='font-size:13px; font-weight:600; color:{c};'>{done} di {v1} già fatte</span>", c=C["text"], done=done, v1=len(vis))
+            + (f"<span style='font-size:12px; color:{C['text_2']};'>  ·  ne mancano {len(vis) - done}</span>"
+               if done < len(vis) else f"<span style='font-size:12px; color:{C['yes']};'>  ·  tutte decise</span>"))
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, len(vis)))
         self.progress.setValue(done)
@@ -4980,16 +3889,12 @@ class MainWindow(QMainWindow):
         if not self.session or not self.items or self.stack.currentWidget() is self.setup_page:
             return
         i = min(self.idx, len(self.items)) - 1
-        while i >= 0 and not self.visible(self.items[i]):
+        while i >= 0 and not self.in_strip(i):
             i -= 1
         if i < 0:
             self.flash(tr('Sei al primo elemento'))
             return
-        if self.return_idx is None:
-            self.return_idx = self.idx   # la foto da cui si è tornati indietro
-            self.btn_return.setVisible(True)
-        self.idx = i
-        self.show_item()
+        self.go_to(i)
 
     def locate_is_here(self) -> bool:
         """True se la foto selezionata è già la prima ancora da decidere: “Torna all'analisi” non serve."""
@@ -5039,7 +3944,7 @@ class MainWindow(QMainWindow):
         if not self.session or not self.items or self.stack.currentWidget() is self.setup_page:
             return
         i = self.idx + 1
-        while i < len(self.items) and not self.visible(self.items[i]):
+        while i < len(self.items) and not self.in_strip(i):
             i += 1
         self.idx = min(i, len(self.items))
         self.show_item()
@@ -5083,6 +3988,13 @@ class MainWindow(QMainWindow):
         if not self.session or not (0 <= i < len(self.items)) or i == self.idx \
                 or self.stack.currentWidget() is self.setup_page:
             return
+        self.go_to(i)
+
+    def go_to(self, i: int):
+        """Vai all'elemento i; andando indietro (← o miniatura) si ricorda da dove si è partiti."""
+        if i < self.idx and self.return_idx is None:
+            self.return_idx = self.idx   # la foto da cui si è tornati indietro
+            self.btn_return.setVisible(True)
         self.idx = i
         self.show_item()
 
@@ -5113,115 +4025,64 @@ class MainWindow(QMainWindow):
             on = key == self._strip_filter_key
             fb.setText(("✓   " if on else "      ") + label)
             if on:
-                fb.setStyleSheet(base + "QPushButton { background: #3a3a3c; color: #64d2ff; font-weight: 600; }")
+                fb.setStyleSheet(base + f"QPushButton {{ background: {C['bg_hover']}; color: {C['filter_on']}; font-weight: 600; }}")
             else:
-                fb.setStyleSheet(base + "QPushButton { background: transparent; color: #f2f2f7; }"
-                                 "QPushButton:hover { background: #48484a; }")
+                fb.setStyleSheet(base + f"QPushButton {{ background: transparent; color: {C['text']}; }}"
+                                 f"QPushButton:hover {{ background: {C['bg_pressed']}; }}")
 
     def on_strip_filter(self):
         self.settings_store.setValue("strip_filter", self._strip_filter_key)
         self.update_thumb_strip()
+
+    def in_strip(self, i: int) -> bool:
+        """Visibile e dentro il filtro della striscia (quella attuale resta sempre): anche ← → passano solo da qui."""
+        it = self.items[i]
+        return self.visible(it) and (i == self.idx or stripfilter.keeps(
+            self.strip_filter.currentData(), self.session.get(it.id) if self.session else None))
+
+    def index_after_choice(self) -> int:
+        """Dopo una scelta: con un filtro nella striscia la successiva dentro il filtro, altrimenti
+        (o finite quelle del filtro) la prossima da decidere."""
+        if self._strip_filter_key != "all":
+            j = next((k for k in range(self.idx + 1, len(self.items)) if self.in_strip(k)), None)
+            if j is not None:
+                return j
+        return self.next_index(self.idx)
 
     def update_thumb_strip(self):
         """Miniature degli elementi prima e dopo quello attuale (solo quelli visibili col filtro)."""
         if not self.session or not self.items:
             self.thumbs_strip.set_entries([], None)
             return
-        want = self.strip_filter.currentData()
-        def keep(i: int, it: Item) -> bool:
-            if want == "all" or i == self.idx:   # quella attuale resta sempre
-                return True
-            d = self.session.get(it.id)
-            if want == "todo":
-                return d is None
-            if want == "done":
-                return d is not None
-            return d is not None and d["choice"] == want
-        vis = [i for i, it in enumerate(self.items) if self.visible(it) and keep(i, it)]
+        vis = [i for i in range(len(self.items)) if self.in_strip(i)]
         here = next((k for k, i in enumerate(vis) if i >= self.idx), len(vis))
-        span = 12
+        span = 150   # si scorre lontano: le miniature si chiedono solo per quelle in vista (wanted)
         chosen = vis[max(0, here - span): here + span + 1]
+        self._strip_idx = {self.items[i].id: i for i in chosen}
         entries = []
         for i in chosen:
             it = self.items[i]
             d = self.session.get(it.id)
-            img = self.next_thumbs.get(it.id)
-            if img is None and ("thumb", it.id) not in self.pending \
-                    and all(cloud.is_local(p) for p in it.needed_files()):
-                self.pending.add(("thumb", it.id))
-                self.submit("thumb", it.id, self.make_thumb, it)
-            entries.append((i, img, d["choice"] if d else None, it.is_clip, it.main.name))
-        self.thumbs_strip.frame_color = STRIP_FRAME_COLORS.get(self._strip_filter_key, "#0a84ff")
+            entries.append((i, self.next_thumbs.get(it.id), d["choice"] if d else None, it.is_clip, it.main.name))
+        cur = self.current()
+        self.thumbs_strip.outside = bool(cur) and not stripfilter.keeps(self._strip_filter_key, self.session.get(cur.id))
+        self.thumbs_strip.frame_color = STRIP_FRAME_COLORS.get(self._strip_filter_key, C["selected"])
         self.thumbs_strip.set_entries(entries, self.idx if self.idx < len(self.items) else None)
+
+    def request_strip_thumbs(self, idxs: list[int]):
+        """Miniature in vista nella striscia (dal centro): si chiedono quelle che mancano."""
+        its = [self.items[i] for i in idxs if 0 <= i < len(self.items)]
+        need = {it.id: it for it in its if it.id not in self.next_thumbs
+                and all(cloud.is_local(p) for p in it.needed_files())}
+        self.thumb_q.sync(list(need), lambda k: self.submit("thumb", k, thumbcache.cached_thumb, need[k],
+                                                            queue=self.thumb_q.pool))
 
     def update_next_preview(self):
         """In basso: miniature prima e dopo (prima era un riquadro con il solo successivo)."""
         self.update_thumb_strip()
-        if True:  # il vecchio riquadro "Dopo" resta nascosto
-            self.next_box.hide()
-            return
-        if not self.session or not self.items or self.stack.currentWidget() is self.setup_page:
-            self.next_box.hide()
-            return
-        self.next_box.show()
-        i = self.next_index(self.idx)
-        if i >= len(self.items):
-            self.next_txt.setText(tr('Dopo:  fine 🎉'))
-            self.next_img.setPixmap(QPixmap())
-            self.next_img.setText("")
-            return
-        it = self.items[i]
-        self.next_txt.setText(f"Dopo ▸  {KIND_LABEL[it.kind]}" + (f"  ·  {it.duration:.0f} s" if
-                                                                   it.kind == "video" and it.duration else ""))
-        img = self.next_thumbs.get(it.id)
-        if img is not None and not img.isNull():
-            pm = QPixmap.fromImage(img)
-            dpr = self.devicePixelRatioF()
-            box = self.next_img.size()
-            pm = pm.scaled(int(box.width() * dpr), int(box.height() * dpr), Qt.KeepAspectRatio,
-                           Qt.SmoothTransformation)
-            pm.setDevicePixelRatio(dpr)
-            self.next_img.setPixmap(pm)
-            return
-        self.next_img.setPixmap(QPixmap())
-        if img is not None:
-            self.next_img.setText(it.main.name)
-        elif all(cloud.is_local(p) for p in it.needed_files()):
-            self.next_img.setText("…")
-            if ("thumb", it.id) not in self.pending:
-                self.pending.add(("thumb", it.id))
-                self.submit("thumb", it.id, self.make_thumb, it)
-        else:
-            self.next_img.setText(tr('☁️ in download'))
+        self.next_box.hide()   # il vecchio riquadro "Dopo" resta nascosto
 
-    @staticmethod
-    def make_thumb(item: Item) -> QImage:
-        if item.is_clip:
-            if item.screennail and cloud.is_local(item.screennail):
-                img = QImageReader(str(item.screennail)).read()
-                if not img.isNull():
-                    return img
-            src = item.proxy if item.proxy and cloud.is_local(item.proxy) else item.video
-            ims = frames.strip_thumbs(src, frames.probe(src), count=1, height=208)
-            return pil_to_qimage(ims[0]) if ims else QImage()
-        # la miniatura deve RIEMPIRE la casella (ritaglio centrale) senza essere ingrandita, anche
-        # su Retina: il lato corto arriva a THUMB_SIDE. Quadrato, così vale anche per le foto
-        # ruotate dall'EXIF (la misura si sceglie prima della rotazione) e per i panorami.
-        side = ThumbStrip.THUMB_SIDE
-        r = QImageReader(str(item.image or item.raw))
-        r.setAutoTransform(True)
-        size = r.size()
-        if size.isValid() and min(size.width(), size.height()) > side:
-            r.setScaledSize(size.scaled(side, side, Qt.KeepAspectRatioByExpanding))
-        img = r.read()
-        if img.isNull() and item.raw:
-            pil = raw_preview(item.raw)
-            if pil is not None:
-                k = side / min(pil.size)
-                if k < 1:
-                    pil.thumbnail((max(1, round(pil.width * k)), max(1, round(pil.height * k))))
-                img = pil_to_qimage(pil)
-        return img
+    make_thumb = staticmethod(thumbcache.make_thumb)
 
     # ------------------------------------------------------------------ decisioni
     def decide(self, choice: str, with_video: bool = False):
@@ -5259,7 +4120,7 @@ class MainWindow(QMainWindow):
                                         self.item_edit(item.id)
                                         if self.editable(item) and item.kind != "video" else {})))
             if same:  # niente da cambiare: si va avanti
-                self.idx = self.next_index(self.idx)
+                self.idx = self.index_after_choice()
                 self.show_item()
                 self.flash(tr('Scelta confermata: {v0}', v0=CHOICE_NAME.get(choice, choice)))
                 return
@@ -5275,7 +4136,7 @@ class MainWindow(QMainWindow):
         except OSError as e:   # salvataggio non riuscito (disco pieno, scollegato…)
             self.decision_not_saved(item, prev, moved, e)
             return
-        self.idx = self.next_index(self.idx)
+        self.idx = self.index_after_choice()
         self.show_item()
         if changed:  # tornati indietro e cambiata idea: si dice chiaramente cosa è successo
             self.flash(tr('Scelta cambiata: {v0}   (Z annulla)', v0=changed))
@@ -5478,7 +4339,7 @@ class MainWindow(QMainWindow):
         for k in list(self._ready_jobs):   # le attese dei download finiscono subito
             self.drop_ready_job(k)
         for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q,
-                   self.edit_pool):
+                   self.edit_pool, self.thumb_q.pool):
             ex.shutdown(wait=False, cancel_futures=True)
         stop_child_processes()   # ffmpeg e Real-ESRGAN: non restano orfani né lasciano file a metà
         if self.session:
@@ -5500,52 +4361,16 @@ def stop_child_processes() -> None:
             log.warning("uscita: non riesco a fermare %s: %r", name, e)
 
 
-def selftest(root: Path, out: Path) -> int:
-    """Autodiagnosi senza finestra (per provare l'app impacchettata): scan + export + controlli."""
-    from PIL import Image
-    from PIL.JpegImagePlugin import get_sampling
-    print(APP_TITLE, "| ffmpeg:", frames.ffmpeg_exe())
-    items = scan(root, [out])
-    print("elementi:", len(items), {k: sum(1 for i in items if i.kind == k) for k in KIND_LABEL})
-    ok = True
-    for kind in ("photo", "live"):
-        it = next((i for i in items if i.kind == kind), None)
-        if not it:
-            continue
-        files = exporter.export_item(it, None, out, exporter.Settings())
-        for f in files:
-            if f.suffix.lower() == ".jpg" and kind == "live":
-                im = Image.open(f)
-                good = get_sampling(im) == 0 and bool(im.info.get("icc_profile"))
-                ok &= good
-                print(kind, f.name, im.size, "4:4:4+sRGB" if good else tr('ERRORE qualità'))
-            else:
-                same = f.read_bytes() == (it.image or it.video).read_bytes()
-                ok &= same
-                print(kind, f.name, tr('copia identica') if same else tr('ERRORE copia'))
-    print("ESITO:", "OK" if ok else tr('ERRORE'))
-    return 0 if ok else 1
-
-
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--selftest":
-        sys.exit(selftest(Path(sys.argv[2]), Path(sys.argv[3])))
+        from selftest import selftest
+        sys.exit(selftest(Path(sys.argv[2]), Path(sys.argv[3]), APP_TITLE))
     app = QApplication(sys.argv)
     app.setApplicationName("PhotoSwipe")
     if hasattr(app.styleHints(), "setColorScheme"):
         app.styleHints().setColorScheme(Qt.ColorScheme.Dark)  # finestre di sistema scure
     if sys.platform != "darwin":
-        # Windows/Linux: Fusion scuro, così finestre di dialogo e menu non restano chiari
-        app.setStyle("Fusion")
-        pal = QPalette()
-        for role, col in ((QPalette.Window, "#1c1c1e"), (QPalette.WindowText, "#f2f2f7"),
-                          (QPalette.Base, "#2c2c2e"), (QPalette.AlternateBase, "#232325"),
-                          (QPalette.Text, "#f2f2f7"), (QPalette.Button, "#2c2c2e"),
-                          (QPalette.ButtonText, "#f2f2f7"), (QPalette.Highlight, "#0a84ff"),
-                          (QPalette.HighlightedText, "#ffffff"), (QPalette.ToolTipBase, "#2c2c2e"),
-                          (QPalette.ToolTipText, "#f2f2f7")):
-            pal.setColor(role, QColor(col))
-        app.setPalette(pal)
+        apply_dark_palette(app)   # Windows/Linux: Fusion scuro, finestre di dialogo e menu compresi
     app.setStyle(TipStyle(app.style()))  # stile di base invariato, solo i tempi dei suggerimenti
     app.setStyleSheet(STYLE.replace("__CHEVRON__", chevron_file()))
     w = MainWindow()

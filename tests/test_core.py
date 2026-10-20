@@ -1,6 +1,7 @@
 """Test su una struttura di cartelle che riproduce la scheda SD della Pocket 4."""
 from __future__ import annotations
 
+from album_names import nodate  # noqa: E402
 import shutil
 import subprocess
 import sys
@@ -121,7 +122,7 @@ def test_long_video_without_scene_copies_mp4(sd, tmp_path):
     item = next(i for i in scan(sd) if i.kind == "video" and cloud.is_local(i.video))
     out = exporter.export_item(item, None, tmp_path, exporter.Settings())
     # in export/Video, con data e ora di inizio del video davanti al nome
-    assert out == [tmp_path / exporter.VIDEO_SUBDIR / f"20260730_132300_{item.video.name}"]
+    assert out == [tmp_path / exporter.VIDEO_SUBDIR / ("20260730_132300_" + nodate(item.video.name))]
     assert out[0].read_bytes() == item.video.read_bytes()
 
 
@@ -175,8 +176,8 @@ def test_snapshot_from_long_video(sd, tmp_path):
     b = exporter.export_item(item, 120, tmp_path, s, snapshot=True)
     # in export/Foto, ciascuna con l'ora esatta del suo fotogramma (30 / 29,97 fps = +1 s)
     foto = tmp_path / exporter.PHOTO_SUBDIR
-    assert a + b == [foto / f"20260730_132301_{item.video.stem}_f0031.jpg",
-                     foto / f"20260730_132304_{item.video.stem}_f0121.jpg"]
+    assert a + b == [foto / ("20260730_132301_" + nodate(f"{item.video.stem}_f0031.jpg")),
+                     foto / ("20260730_132304_" + nodate(f"{item.video.stem}_f0121.jpg"))]
     assert not (tmp_path / exporter.VIDEO_SUBDIR).exists()   # la foto presa non copia il video
     exif = Image.open(b[0]).getexif().get_ifd(0x8769)
     assert exif[0x9003] == "2026:07:30 13:23:04"            # 120 / 29,97 fps = +4 s

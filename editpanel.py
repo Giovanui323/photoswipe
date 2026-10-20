@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import copy
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
+import a11y
 import edits as E
 from i18n import tr
+from theme import COLORS as C
 
 # ----------------------------------------------------------------------------- piccoli widget
 class Segmented(QFrame):
@@ -28,7 +30,7 @@ class Segmented(QFrame):
         for key, text in items:
             b = QPushButton(text)
             b.setCheckable(True)
-            b.setFocusPolicy(Qt.NoFocus)
+            b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self.changed.emit(k))
             self.group.addButton(b)
@@ -45,7 +47,34 @@ class Segmented(QFrame):
         return ""
 
 
-class ValueBar(QWidget):
+class KeyboardSlider:
+    """Cursore col focus (Tab): ← / → spostano il valore, ⇧ a passi grandi, ⌥ fini, ⌫ lo azzera."""
+
+    def event(self, e):
+        if e.type() == QEvent.ShortcutOverride and e.key() in a11y.SLIDER_KEYS:
+            e.accept()
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):
+        v = a11y.slider_key_step(e, self.lo, self.hi, self.value, getattr(self, "default", 0.0))
+        if v is None:
+            super().keyPressEvent(e)
+        elif abs(v - self.value) > 1e-9:
+            self.value = v
+            self.update()
+            self.changed.emit(v)
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self.update()
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.update()
+
+
+class ValueBar(KeyboardSlider, QWidget):
     """Cursore a barra di Foto: nome a sinistra, valore a destra, si trascina in orizzontale.
     Doppio clic = valore predefinito."""
     changed = Signal(float)
@@ -58,6 +87,8 @@ class ValueBar(QWidget):
         self.origin = default if origin is None else origin   # da dove parte la parte chiara
         self.fmt = fmt or (lambda v: f"{v:+.2f}".replace("+0.00", "0.00").replace(".", ","))
         self.setFixedHeight(26)
+        self.setFocusPolicy(Qt.TabFocus)
+        self.setAccessibleName(label)
         self.setCursor(Qt.SizeHorCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._press: tuple[float, float] | None = None
@@ -101,26 +132,27 @@ class ValueBar(QWidget):
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
         path.addRoundedRect(r, 6, 6)
-        p.fillPath(path, QColor("#323234" if self.isEnabled() else "#2a2a2c"))
+        p.fillPath(path, QColor(C["bar_bg"] if self.isEnabled() else C["bar_bg_off"]))
         p.setClipPath(path)
         x0 = r.left() + r.width() * self._frac(self.origin)
         x1 = r.left() + r.width() * self._frac(self.value)
-        p.fillRect(QRectF(min(x0, x1), r.top(), abs(x1 - x0), r.height()), QColor("#4a4a4d"))
-        p.setPen(QPen(QColor("#5a5a5e"), 2))            # la tacca dello zero resta ferma, come in Foto
+        p.fillRect(QRectF(min(x0, x1), r.top(), abs(x1 - x0), r.height()), QColor(C["bar_fill"]))
+        p.setPen(QPen(QColor(C["bar_zero"]), 2))            # la tacca dello zero resta ferma, come in Foto
         p.drawLine(QPointF(x0, r.top()), QPointF(x0, r.bottom()))
         if abs(x1 - x0) > 1:
-            p.setPen(QPen(QColor("#a1a1a6"), 2))
+            p.setPen(QPen(QColor(C["bar_mark"]), 2))
             p.drawLine(QPointF(x1, r.top()), QPointF(x1, r.bottom()))
         p.setClipping(False)
-        p.setPen(QColor("#f2f2f7" if self.isEnabled() else "#6e6e73"))
+        p.setPen(QColor(C["text"] if self.isEnabled() else C["text_off"]))
         f = p.font()
         f.setPixelSize(13)
         p.setFont(f)
         p.drawText(r.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignLeft, self.label)
         p.drawText(r.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignRight, self.fmt(self.value))
+        a11y.paint_focus(p, self, 6)
 
 
-class ThumbScrubber(QWidget):
+class ThumbScrubber(KeyboardSlider, QWidget):
     """Le 5 miniature di Luce / Colore / Bianco e nero: si trascina la linea per regolare."""
     changed = Signal(float)
 
@@ -130,6 +162,7 @@ class ThumbScrubber(QWidget):
         self.value = 0.0
         self.thumbs: list[QImage] = []
         self.setFixedHeight(62)
+        self.setFocusPolicy(Qt.TabFocus)
         self.setCursor(Qt.SizeHorCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._drag = False
@@ -178,7 +211,7 @@ class ThumbScrubber(QWidget):
         path = QPainterPath()
         path.addRoundedRect(r, 7, 7)
         p.setClipPath(path)
-        p.fillRect(r, QColor("#2c2c2e"))
+        p.fillRect(r, QColor(C["bg_control"]))
         n = len(self.thumbs)
         if n:
             w = r.width() / n
@@ -195,8 +228,9 @@ class ThumbScrubber(QWidget):
         x = r.left() + r.width() * (self.value - self.lo) / (self.hi - self.lo)
         p.setPen(QPen(QColor(0, 0, 0, 120), 4))
         p.drawLine(QPointF(x, r.top() + 1), QPointF(x, r.bottom() - 1))
-        p.setPen(QPen(QColor("#ffffff"), 2))
+        p.setPen(QPen(QColor(C["text_strong"]), 2))
         p.drawLine(QPointF(x, r.top() + 1), QPointF(x, r.bottom() - 1))
+        a11y.paint_focus(p, self, 7)
 
 
 class WandButton(QPushButton):
@@ -214,7 +248,7 @@ class WandButton(QPushButton):
         super().paintEvent(e)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        col = QColor("#ffd60a" if self.active else ("#f2f2f7" if self.isEnabled() else "#6e6e73"))
+        col = QColor(C["accent"] if self.active else (C["text"] if self.isEnabled() else C["text_off"]))
         cx, cy = self.width() / 2, self.height() / 2
         p.setPen(QPen(col, 1.8, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(cx - 6, cy + 7), QPointF(cx + 3, cy - 2))          # la bacchetta
@@ -222,6 +256,7 @@ class WandButton(QPushButton):
         for (x, y, r) in ((cx + 6, cy - 6, 2.6), (cx - 1, cy - 7, 1.6), (cx + 7, cy + 1, 1.6)):   # stelline
             p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
             p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+        a11y.paint_focus(p, self)
 
 
 class CompareButton(QPushButton):
@@ -235,7 +270,7 @@ class CompareButton(QPushButton):
         super().paintEvent(e)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        col = QColor("#f2f2f7" if self.isEnabled() else "#6e6e73")
+        col = QColor(C["text"] if self.isEnabled() else C["text_off"])
         cx, cy = self.width() / 2, self.height() / 2
         p.setPen(QPen(col, 1.4))
         left, right = QRectF(cx - 10, cy - 5, 8, 10), QRectF(cx + 2, cy - 5, 8, 10)
@@ -244,6 +279,7 @@ class CompareButton(QPushButton):
         p.setBrush(col if self.isChecked() else Qt.NoBrush)
         p.drawRoundedRect(right, 1.5, 1.5)
         p.drawLine(QPointF(cx, cy - 8), QPointF(cx, cy + 8))
+        a11y.paint_focus(p, self)
 
 
 class VolumeButton(QPushButton):
@@ -257,7 +293,7 @@ class VolumeButton(QPushButton):
         super().paintEvent(e)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        col = QColor("#f2f2f7" if self.isEnabled() else "#6e6e73")
+        col = QColor(C["text"] if self.isEnabled() else C["text_off"])
         cx, cy = self.width() / 2 - 4, self.height() / 2
         path = QPainterPath(QPointF(cx - 7, cy - 3))
         path.lineTo(QPointF(cx - 3, cy - 3))
@@ -274,6 +310,7 @@ class VolumeButton(QPushButton):
         else:
             for r in (5.0, 9.0):
                 p.drawArc(QRectF(cx + 2 - r, cy - r, 2 * r, 2 * r), -45 * 16, 90 * 16)
+        a11y.paint_focus(p, self)
 
 
 class CircleToggle(QPushButton):
@@ -282,7 +319,7 @@ class CircleToggle(QPushButton):
     def __init__(self):
         super().__init__()
         self.setFixedSize(22, 22)
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.TabFocus)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("background: transparent; border: none; padding: 0;")
         self.active = False
@@ -295,12 +332,12 @@ class CircleToggle(QPushButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(3, 3, 16, 16)
-        blue = QColor("#0a84ff" if self.isEnabled() else "#3a3a3c")
+        blue = QColor(C["selected"] if self.isEnabled() else C["bg_hover"])
         if self.active:
             p.setBrush(blue)
             p.setPen(Qt.NoPen)
             p.drawEllipse(r)
-            p.setPen(QPen(QColor("#ffffff"), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setPen(QPen(QColor(C["text_strong"]), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             path = QPainterPath(QPointF(7, 11.2))
             path.lineTo(QPointF(9.8, 14))
             path.lineTo(QPointF(15, 8))
@@ -310,6 +347,7 @@ class CircleToggle(QPushButton):
             p.setPen(QPen(blue, 1.6))
             p.setBrush(Qt.NoBrush)
             p.drawEllipse(r)
+        a11y.paint_focus(p, self)
 
 
 class CurvePreview(QWidget):
@@ -328,12 +366,12 @@ class CurvePreview(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.fillRect(r, QColor("#1f1f21"))
-        p.setPen(QPen(QColor("#3a3a3c"), 1))
+        p.fillRect(r, QColor(C["bg_sunken"]))
+        p.setPen(QPen(QColor(C["line_divider"]), 1))
         for i in range(1, 4):
             p.drawLine(QPointF(r.left() + r.width() * i / 4, r.top()), QPointF(r.left() + r.width() * i / 4, r.bottom()))
             p.drawLine(QPointF(r.left(), r.top() + r.height() * i / 4), QPointF(r.right(), r.top() + r.height() * i / 4))
-        p.setPen(QPen(QColor("#545456"), 1, Qt.DashLine))
+        p.setPen(QPen(QColor(C["line_grid"]), 1, Qt.DashLine))
         p.drawLine(r.bottomLeft(), r.topRight())
         if self.lut is None:
             return
@@ -343,7 +381,7 @@ class CurvePreview(QWidget):
             pt = QPointF(r.left() + r.width() * i / (n - 1), r.bottom() - r.height() * float(self.lut[i]))
             path.moveTo(pt) if i == 0 else path.lineTo(pt)
         path.lineTo(QPointF(r.right(), r.bottom() - r.height() * float(self.lut[-1])))
-        p.setPen(QPen(QColor("#f2f2f7"), 2))
+        p.setPen(QPen(QColor(C["text"]), 2))
         p.drawPath(path)
 
 
@@ -365,7 +403,7 @@ class SectionIcon(QWidget):
         from PySide6.QtGui import QConicalGradient, QLinearGradient
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        c = QColor("#d1d1d6" if self.isEnabled() else "#6e6e73")
+        c = QColor(C["text_detail"] if self.isEnabled() else C["text_off"])
         pen = QPen(c, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
@@ -547,7 +585,7 @@ class Section(QWidget):
         self.circle = CircleToggle()
         self.circle.setToolTip(tr('Accendi / spegni questa regolazione (per confrontare)'))
         for b in (self.chev, self.title, self.undo, self.auto):
-            b.setFocusPolicy(Qt.NoFocus)
+            b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
         head.addWidget(self.chev)
         head.addWidget(ic)
@@ -565,7 +603,7 @@ class Section(QWidget):
         v.addWidget(self.body)
         self.line = QFrame()
         self.line.setFixedHeight(1)
-        self.line.setStyleSheet("background: #3a3a3c;")
+        self.line.setStyleSheet(f"background: {C['line_divider']};")
         v.addWidget(self.line)
         self.chev.clicked.connect(self.toggle)
         self.title.clicked.connect(self.toggle)
@@ -640,7 +678,7 @@ class RegolaPanel(QWidget):
         def options(sec: Section, widgets) -> None:
             btn = QPushButton(tr('›  Opzioni'))
             btn.setObjectName("opts")
-            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setFocusPolicy(Qt.TabFocus)
             btn.setCursor(Qt.PointingHandCursor)
             box = QWidget()
             bl = QVBoxLayout(box)
@@ -739,7 +777,7 @@ class RegolaPanel(QWidget):
             b.setObjectName("swatch")
             b.setCheckable(True)
             b.setToolTip(E.SEL_NAMES[h])
-            b.setFocusPolicy(Qt.NoFocus)
+            b.setFocusPolicy(Qt.TabFocus)
             b.setStyleSheet(f"background: {E.SEL_COLORS[h]};")
             b.clicked.connect(lambda _=False, hh=h: self._pick_hue(hh))
             self.swatches.addButton(b)
@@ -774,7 +812,7 @@ class RegolaPanel(QWidget):
         v.addSpacing(6)
         self.btn_reset = QPushButton(tr('Reimposta regolazioni'))
         self.btn_reset.setObjectName("cropbig")   # come Automatico / Reimposta di Ritaglia
-        self.btn_reset.setFocusPolicy(Qt.NoFocus)
+        self.btn_reset.setFocusPolicy(Qt.TabFocus)
         self.btn_reset.setToolTip(tr('Toglie tutte le regolazioni di questa foto (il ritaglio resta).'))
         self.btn_reset.clicked.connect(self.reset_all.emit)
         v.addWidget(self.btn_reset)
@@ -919,7 +957,7 @@ class RitagliaPanel(QWidget):
         frow.addWidget(SectionIcon("flip"))
         self.btn_flip = QPushButton(tr('Capovolgi'))
         self.btn_flip.setObjectName("cropitem")
-        self.btn_flip.setFocusPolicy(Qt.NoFocus)
+        self.btn_flip.setFocusPolicy(Qt.TabFocus)
         self.btn_flip.setCursor(Qt.PointingHandCursor)
         self.btn_flip.setToolTip(tr('Specchia la foto da sinistra a destra.'))
         self.btn_flip.clicked.connect(self._flip)
@@ -939,7 +977,7 @@ class RitagliaPanel(QWidget):
             b = QPushButton(name)
             b.setObjectName("aspect")
             b.setCheckable(True)
-            b.setFocusPolicy(Qt.NoFocus)
+            b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self._set_aspect(k))
             if _r and key != "square":
@@ -971,7 +1009,7 @@ class RitagliaPanel(QWidget):
         self.btn_reset.setToolTip(tr('Toglie ritaglio, rotazione e prospettiva.'))
         for b in (self.btn_auto, self.btn_reset):
             b.setObjectName("cropbig")
-            b.setFocusPolicy(Qt.NoFocus)
+            b.setFocusPolicy(Qt.TabFocus)
             b.setCursor(Qt.PointingHandCursor)
             row.addWidget(b, 1)
         self.btn_auto.clicked.connect(self.auto.emit)

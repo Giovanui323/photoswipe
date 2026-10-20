@@ -3,6 +3,7 @@ salvataggio rotto in una cartella di sola lettura, doppioni con DNG, mdls, date 
 "cancellare" nelle sottocartelle. Gli originali non si modificano né si cancellano mai."""
 from __future__ import annotations
 
+from album_names import nodate  # noqa: E402
 import hashlib
 import json
 import os
@@ -163,17 +164,17 @@ def test_live_frame_adopted_only_if_identical(tmp_path):
     assert item.kind == "live"
     foto = out / exporter.PHOTO_SUBDIR
     first = exporter.export_item(item, 20, out, exporter.Settings())
-    assert first == [foto / f"20260730_132204_{LIVE}.jpg"]      # 20 / 29,97 fps = +0,67 s
+    assert first == [foto / ("20260730_132204_" + nodate(f"{LIVE}.jpg"))]      # 20 / 29,97 fps = +0,67 s
     exporter._claims.clear()
     assert exporter.export_item(item, 20, out, exporter.Settings()) == first   # stesso fotogramma
     exporter._claims.clear()
     # altro fotogramma nello stesso secondo: stesso nome, contenuto diverso -> copia nuova
     other = exporter.export_item(item, 25, out, exporter.Settings())
-    assert other == [foto / f"20260730_132204_{LIVE}_2.jpg"]
+    assert other == [foto / ("20260730_132204_" + nodate(f"{LIVE}_2.jpg"))]
     assert sha(other[0]) != sha(first[0])
     exporter._claims.clear()
     later = exporter.export_item(item, 60, out, exporter.Settings())           # +2 s: altro nome
-    assert later == [foto / f"20260730_132206_{LIVE}.jpg"]
+    assert later == [foto / ("20260730_132206_" + nodate(f"{LIVE}.jpg"))]
     assert not [p for p in out.rglob("*") if ".part" in p.name]
 
 
