@@ -44,15 +44,21 @@ def test_resume_never_touches_exports_already_recorded(tmp_path):
 def test_iphone_live_photo_exports_original_image(tmp_path):
     root = tmp_path / "src"
     root.mkdir()
-    Image.new("RGB", (400, 300), "red").save(root / "IMG_0001.JPG", quality=95)
+    exif = Image.Exif()
+    exif.get_ifd(0x8769)[36867] = "2023:08:01 07:08:09"
+    Image.new("RGB", (400, 300), "red").save(root / "IMG_0001.JPG", quality=95, exif=exif)
     (root / "IMG_0001.MOV").write_bytes(b"mov" * 1000)
     [item] = scan(root)
     assert item.kind == "photo" and item.video is not None
     out = exporter.export_item(item, None, tmp_path / "out", exporter.Settings())
-    assert [p.name for p in out] == ["IMG_0001.JPG"]
+    assert out == [tmp_path / "out" / exporter.PHOTO_SUBDIR / "20230801_070809_IMG_0001.JPG"]
     assert out[0].read_bytes() == item.image.read_bytes()            # l'originale, non un fotogramma
+    assert not (tmp_path / "out" / exporter.VIDEO_SUBDIR).exists()
     out = exporter.export_item(item, None, tmp_path / "out2", exporter.Settings(copy_video=True))
-    assert out[1] == tmp_path / "out2" / exporter.VIDEO_SUBDIR / "IMG_0001.MOV"
+    # il MOV in Video, con lo stesso prefisso della foto (ora di scatto della foto)
+    assert out == [tmp_path / "out2" / exporter.PHOTO_SUBDIR / "20230801_070809_IMG_0001.JPG",
+                   tmp_path / "out2" / exporter.VIDEO_SUBDIR / "20230801_070809_IMG_0001.MOV"]
+    assert out[1].read_bytes() == item.video.read_bytes()
     moved = exporter.move_to_trash(item, root)                         # X sposta anche il MOV
     assert {Path(s).name for s, _ in moved} == {"IMG_0001.JPG", "IMG_0001.MOV"}
 

@@ -57,6 +57,8 @@ def download(path: Path, timeout: float = 900) -> bool:
     """
     if is_local(path):
         return True
+    if not path.exists() and not stub_for(path).exists():
+        return False  # né il file né lo stub iCloud: è stato tolto, inutile aspettare 15 minuti
     t0 = time.monotonic()
     log.info("iCloud: inizio download %s", path)
     if path.exists():

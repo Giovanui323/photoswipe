@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 import dataclasses
+import inspect
+import threading
 import time
 import uuid
 import warnings
@@ -36,11 +38,12 @@ import exporter
 import frames
 import metadata
 import printprep
-from scanner import Item, mp4_duration, raw_preview, scan
+from scanner import Item, mp4_duration, raw_preview, refresh_capture_time, scan
 from i18n import HELP, LANG, tr
+from theme import CHOICE_COLOR, KIND_COLOR, STRIP_FRAME_COLORS, STYLE
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -50,217 +53,11 @@ STRIP_FILTERS = ((tr('Mostra: tutte'), "all"), (tr('Mostra: da decidere'), "todo
                  (tr('Mostra: ✓ Sì'), "yes"), (tr('Mostra: ✗ No'), "no"), (tr('Mostra: ↪ saltate'), "skip"),
                  (tr('Mostra: 🗑 “cancellare”'), "trash"))
 MEDIA_FILTERS = ("all", "photos", "videos")   # filtro di visualizzazione: tutto / solo foto / solo video
-# colore del bordo della miniatura attuale: quello del tipo scelto nel filtro a sinistra
-STRIP_FRAME_COLORS = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng"}
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 KIND_LABEL = {"photo": tr('FOTO'), "pano": tr('PANORAMA'), "live": tr('LIVE'), "video": tr('VIDEO')}
 # scelta già fatta su un elemento (tornando indietro): nome e colore dell'etichetta
-CHOICE_NAME = {"yes": tr('✓ SÌ'), "no": "✗ NO", "skip": tr('↪ Salta'), "trash": tr('🗑 In “cancellare”')}
-CHOICE_COLOR = {"yes": "#2ad48e", "no": "#ff4458", "skip": "#3ca4ff", "trash": "#b46cff"}  # = pulsanti
-KIND_COLOR = {"photo": "#5b8def", "pano": "#a46bf0", "live": "#f0b429", "video": "#4fb7a8"}
-
-# Stile ispirato a Foto di macOS (scuro, barre a "pillola", accento giallo) e, per la scelta,
-# a Tinder: pulsanti rotondi centrati sotto la foto. Font di sistema (SF su Mac, Segoe su Windows).
-STYLE = """
-QMainWindow, QDialog { background: #1c1c1e; }
-QWidget { color: #f2f2f7; font-size: 13px; }
-QLabel, QRadioButton, QCheckBox { background: transparent; }
-QToolTip { background: #2c2c2e; color: #f2f2f7; border: 1px solid #48484a; border-radius: 6px; padding: 4px 7px; font-size: 11px; }
-
-/* pulsanti normali: pillole grigie */
-QPushButton { background: #2c2c2e; border: 1px solid #545456; border-radius: 15px; padding: 6px 14px; }
-QPushButton:hover { background: #3a3a3c; }
-QPushButton:pressed { background: #48484a; }
-QPushButton:disabled { color: #7c7c80; background: #242426; border-color: #3a3a3c; }
-
-/* barra in alto, come la barra strumenti di Foto */
-QFrame#pill { background: #2c2c2e; border: 1px solid #48484a; border-radius: 18px; }
-QFrame#zoompill { background: rgba(0, 0, 0, 130); border: 1px solid rgba(255, 255, 255, 40);
-                  border-radius: 14px; }
-QFrame#zoompill QLabel { color: #ffffff; background: transparent; }
-QFrame#pill QPushButton { background: transparent; border: none; border-radius: 14px;
-                          font-size: 17px; min-width: 30px; min-height: 28px; padding: 0 6px; }
-QFrame#pill QPushButton:hover { background: #3a3a3c; }
-QFrame#pill QPushButton:disabled { color: #6e6e73; background: transparent; }
-QPushButton#fav[on="true"] { color: #ff375f; }
-QPushButton#undo { color: #f5b748; }
-QLabel#chosen { border-radius: 8px; padding: 2px 9px; font-size: 11px; font-weight: 700; color: #111; }
-QPushButton#info[on="true"] { background: #48484a; }
-QSlider::groove:horizontal { height: 4px; background: #636366; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #d1d1d6; border-radius: 2px; }
-QSlider::handle:horizontal { width: 18px; height: 18px; margin: -7px 0; background: #f2f2f7;
-                             border-radius: 9px; }
-QSlider::groove:horizontal:disabled { background: #48484a; }
-QSlider::sub-page:horizontal:disabled { background: #636366; }
-QSlider::handle:horizontal:disabled { background: #636366; }
-QLabel#heading { font-size: 15px; font-weight: 700; }
-QLabel#subtitle, QLabel#counter { color: #98989f; font-size: 12px; }
-
-/* foto a tutto schermo, sullo stesso grigio della finestra */
-QGraphicsView { border: none; background: #1c1c1e; }
-QLabel#stamp { background: rgba(0, 0, 0, 130); color: #ffffff; font-size: 13px; font-weight: 600;
-               border-radius: 12px; padding: 5px 12px; }
-QLabel#chip { background: rgba(28, 28, 30, 215); color: #ffb340; font-size: 12px; font-weight: 600;
-              border: 1px solid rgba(255, 179, 64, 90); border-radius: 12px; padding: 5px 12px; }
-QLabel#toast { background: rgba(44, 44, 46, 235); color: #ff6961; font-size: 13px;
-               border: 1px solid #48484a; border-radius: 14px; padding: 8px 16px; }
-
-/* barra della striscia (Live e video): pillola che galleggia sotto la foto */
-QFrame#scenebar { background: #2c2c2e; border: 1px solid #48484a; border-radius: 18px; }
-QFrame#scenebar QLabel { color: #98989f; font-size: 12px; }
-QFrame#scenebar QPushButton { background: #3a3a3c; border: none; border-radius: 13px; padding: 5px 12px; }
-QFrame#scenebar QPushButton:hover { background: #48484a; }
-QFrame#scenebar QPushButton#arrow { background: transparent; font-size: 16px; color: #f2f2f7;
-    border: 1.5px solid #8e8e93; border-radius: 15px; min-width: 30px; max-width: 30px;
-    min-height: 30px; max-height: 30px; padding: 0; }
-QFrame#scenebar QPushButton#arrow:hover { background: #3a3a3c; border-color: #d1d1d6; }
-QFrame#scenebar QPushButton#play { background: transparent; font-size: 16px; color: #f2f2f7;
-    border: 1.5px solid #8e8e93; border-radius: 15px; min-width: 30px; max-width: 30px;
-    min-height: 30px; max-height: 30px; padding: 0; }
-QFrame#scenebar QPushButton#play:hover { background: #3a3a3c; border-color: #d1d1d6; }
-/* pulsanti della striscia in basso: bordo e hover, come quelli dei fotogrammi */
-QPushButton#stripnav { background: transparent; color: #f2f2f7; font-size: 13px;
-    border: 1.5px solid #8e8e93; border-radius: 15px; padding: 3px 10px; }
-QPushButton#stripnav:hover { background: #3a3a3c; border-color: #d1d1d6; }
-QPushButton#stripnav[home="true"] { border: 2px solid #ffd60a; }
-QPushButton#photoarrow { background: rgba(28,28,30,170); color: #f2f2f7; font-size: 22px;
-    border: 1.5px solid #8e8e93; border-radius: 22px; padding-bottom: 3px; }
-QPushButton#photoarrow:hover { background: rgba(58,58,60,220); border-color: #d1d1d6; }
-QFrame#scenebar QPushButton#live { background: #ffd60a; color: #1c1c1e; font-weight: 700; }
-/* come la barra Live di Foto: striscia tra parentesi, volume e menu "Live" */
-QFrame#scenebar QFrame#stripbox { background: #3a3a3c; border: none; border-radius: 8px; }
-QFrame#scenebar QPushButton#bracket { background: transparent; border: none; color: #f2f2f7;
-    font-size: 15px; font-weight: 800; padding: 0; min-width: 18px; max-width: 18px; border-radius: 6px; }
-QFrame#scenebar QPushButton#bracket:hover { background: #48484a; }
-QFrame#scenebar QPushButton#volume { background: #3a3a3c; border: none; border-radius: 10px; padding: 0; }
-QFrame#scenebar QPushButton#volume:hover { background: #48484a; }
-QFrame#scenebar QPushButton#livemode { background: #3a3a3c; border: none; border-radius: 13px;
-    padding: 0 12px; font-size: 13px; }
-QFrame#scenebar QLabel#framestatus { color: #98989f; font-size: 12px; }
-QFrame#scenebar QPushButton#livemode:hover { background: #48484a; }
-QFrame#scenebar QPushButton#live:hover { background: #ffe14d; }
-
-/* scelta, stile Tinder: cerchi scuri con anello e simbolo colorati; al passaggio si riempiono */
-QPushButton[round="true"] { background: #232325; border: 2px solid #3a3a3c; padding: 0; font-weight: 700; }
-QPushButton#no      { border-color: #ff4458; color: #ff4458; border-radius: 33px; font-size: 28px; }
-QPushButton#yes     { border-color: #2ad48e; color: #2ad48e; border-radius: 33px; font-size: 28px; }
-QPushButton#skip    { border-color: #3ca4ff; color: #3ca4ff; border-radius: 24px; font-size: 20px; }
-QPushButton#trash   { border-color: #b46cff; color: #b46cff; border-radius: 24px; font-size: 18px; }
-QPushButton#yesvideo{ border-color: #4fd1c5; color: #4fd1c5; border-radius: 24px; font-size: 20px; }
-/* al passaggio e a scelta fatta il simbolo resta colorato pieno; il cerchio prende una tinta */
-QPushButton#no:hover      { background: rgba(255, 68, 88, 50); border-width: 3px; }
-QPushButton#yes:hover     { background: rgba(42, 212, 142, 50); border-width: 3px; }
-QPushButton#skip:hover    { background: rgba(60, 164, 255, 50); border-width: 3px; }
-QPushButton#trash:hover   { background: rgba(180, 108, 255, 50); border-width: 3px; }
-QPushButton#yesvideo:hover{ background: rgba(79, 209, 197, 50); border-width: 3px; }
-QPushButton[round="true"]:pressed { background: #48484a; }
-/* già deciso (tornando indietro): il cerchio della scelta fatta resta tinto, anello spesso */
-QPushButton#no[chosen="true"]    { background: rgba(255, 68, 88, 80); border-width: 4px; }
-QPushButton#yes[chosen="true"]   { background: rgba(42, 212, 142, 80); border-width: 4px; }
-QPushButton#skip[chosen="true"]  { background: rgba(60, 164, 255, 80); border-width: 4px; }
-QPushButton#trash[chosen="true"] { background: rgba(180, 108, 255, 80); border-width: 4px; }
-QPushButton[round="true"]:disabled { background: #1f1f21; border-color: #48484a; color: #6e6e73; }
-/* con l'ID le regole sopra vincono su [round]:disabled: serve ripeterlo per ogni pulsante */
-QPushButton#no:disabled, QPushButton#yes:disabled, QPushButton#skip:disabled,
-QPushButton#trash:disabled, QPushButton#yesvideo:disabled { background: #1f1f21; border-color: #48484a;
-                                                             color: #6e6e73; }
-QLabel#cap { color: #8e8e93; font-size: 11px; }
-QLabel#cap:disabled { color: #545456; }
-QLabel#snaps { color: #7fe3b4; font-size: 11px; font-weight: 700; padding-bottom: 4px;
-               border-bottom: 1px solid #3a3a3c; }
-QLabel#snaps[empty="true"] { background: transparent; border: none; }
-QFrame#next { background: #2c2c2e; border: 1px solid #3a3a3c; border-radius: 12px; }
-QFrame#printbox { background: transparent; border: none; }
-/* sottosezioni del pannello (Info): come le voci di Regola — riga sottile sopra, titolo 15 px */
-QLabel#subhead { color: #f2f2f7; font-size: 15px; padding-top: 10px; border-top: 1px solid #3a3a3c;
-                 margin-top: 4px; }
-QFrame#infocard { background: #2c2c2e; border: none; border-radius: 10px; }
-QFrame#infocard QLabel { background: transparent; }
-QFrame#side QPushButton#textlink { background: transparent; border: none; padding: 0 2px; color: #0a84ff;
-    font-size: 12px; text-align: left; }
-QFrame#side QPushButton#textlink:hover { color: #409cff; }
-QFrame#printbox QLabel { background: transparent; }
-QFrame#next QLabel { background: transparent; }
-QLabel#muted { color: #98989f; }
-QPushButton#small { font-size: 12px; padding: 4px 9px; border-radius: 12px; }
-QLabel#details { color: #d1d1d6; font-size: 12px; }
-QFrame#settings { background: #2c2c2e; border: 1px solid #48484a; border-radius: 14px; }
-QFrame#settings QPushButton { background: #3a3a3c; border: none; border-radius: 8px; text-align: left; padding: 7px 12px; }
-QFrame#settings QPushButton:hover { background: #48484a; }
-QFrame#settings QComboBox { background: #3a3a3c; border: none; }
-
-/* pannello laterale (cartelle e impostazioni), come il pannello Regola di Foto */
-QFrame#side { background: #232325; border-left: 1px solid #2f2f31; }
-QLabel#section { color: #98989f; font-size: 11px; font-weight: 700; padding-top: 10px;
-                 border-bottom: 1px solid #3a3a3c; padding-bottom: 4px; }
-QScrollArea#sidescroll, QScrollArea#sidescroll > QWidget > QWidget#sidebody,
-QScrollArea#setupscroll, QScrollArea#setupscroll > QWidget > QWidget#setuppage { background: transparent; }
-QFrame#side QPushButton { border-radius: 8px; text-align: left; padding: 7px 12px; }
-QFrame#side QPushButton#small { font-size: 12px; padding: 4px 9px; border-radius: 12px; text-align: center; }
-QComboBox { background: #2c2c2e; border: 1px solid #545456; border-radius: 8px; padding: 5px 10px; }
-QComboBox:hover { background: #3a3a3c; }
-QComboBox::drop-down { border: none; width: 22px; }
-QComboBox::down-arrow { image: url(__CHEVRON__); width: 10px; height: 6px; }
-
-/* focus da tastiera visibile (Tab) */
-QPushButton:focus { outline: none; border: 2px solid #0a84ff; }
-QPushButton#start:focus { border: 2px solid #0a84ff; }
-QComboBox:focus, QCheckBox:focus, QRadioButton:focus { outline: none; }
-QComboBox:focus { border: 2px solid #0a84ff; }
-
-/* barre di scorrimento scure, sottili */
-QScrollBar:vertical { width: 8px; background: transparent; margin: 2px; }
-QScrollBar::handle:vertical { background: #545456; border-radius: 3px; min-height: 24px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-QComboBox QAbstractItemView { background: #2c2c2e; border: 1px solid #48484a; color: #f2f2f7;
-                              selection-background-color: #0a84ff; outline: 0; padding: 4px; }
-/* ogni voce dell'elenco ha il suo bordo; al passaggio del mouse si evidenzia */
-QComboBox QAbstractItemView::item { min-height: 26px; padding: 6px 12px; margin: 2px 4px;
-    border: 1px solid #48484a; border-radius: 8px; color: #f2f2f7; }
-QComboBox QAbstractItemView::item:hover { background: #3a3a3c; border: 1px solid #8e8e93; }
-QComboBox QAbstractItemView::item:selected { background: #0a84ff; border: 1px solid #0a84ff; color: #ffffff; }
-QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #636366; border-radius: 4px; background: #2c2c2e; }
-QCheckBox::indicator:checked { background: #0a84ff; border-color: #0a84ff; }
-
-/* messaggi a tutta pagina (download, fine) */
-QLabel#big { font-size: 17px; color: #d1d1d6; }
-
-/* schermata iniziale */
-QFrame#setup { background: #232325; border: 1px solid #48484a; border-radius: 18px; }
-QFrame#setup QPushButton { border-radius: 10px; }
-QRadioButton { spacing: 8px; padding: 2px 0; }
-QRadioButton::indicator { width: 14px; height: 14px; border-radius: 8px; border: 2px solid #8e8e93;
-                          background: #2c2c2e; }
-QRadioButton::indicator:checked { background: #0a84ff; border-color: #0a84ff; }
-QLabel#h1 { font-size: 24px; font-weight: 700; }
-QLabel#step { font-size: 16px; font-weight: 600; }
-QLabel#warn { color: #ffb340; }
-QLabel#path { background: #1c1c1e; border: 1px solid #545456; border-radius: 8px; padding: 8px 10px;
-              color: #d1d1d6; }
-QLabel#path[empty="true"] { color: #8e8e93; }
-QPushButton#start, QPushButton#primary { background: #ffd60a; color: #1c1c1e; border: none;
-                    border-radius: 18px; font-size: 16px; font-weight: 700; padding: 9px 26px; }
-QPushButton#start:hover, QPushButton#primary:hover { background: #ffe14d; }
-QPushButton#start:disabled { background: #3a3a3c; color: #8e8e93; }
-"""
-STYLE += EP.EDIT_STYLE + """
-QProgressBar#progress { background: #3a3a3c; border: none; border-radius: 2px; max-height: 4px; min-height: 4px; }
-QProgressBar#progress::chunk { background: #d1d1d6; border-radius: 2px; }
-QLabel#editbadge { color: #98989f; font-size: 12px; }
-QPushButton#toolround { background: #2c2c2e; border: 1px solid #48484a; border-radius: 16px; padding: 0; }
-QPushButton#toolround:hover { background: #3a3a3c; }
-QPushButton#toolround:checked { background: #545456; }
-QPushButton#toolpill { background: #2c2c2e; border: 1px solid #48484a; border-radius: 15px;
-                       padding: 0 16px; font-size: 13px; min-height: 30px; max-height: 30px; }
-QPushButton#toolpill:hover { background: #3a3a3c; }
-QPushButton#donepill { background: #ffd60a; color: #1c1c1e; border: none; border-radius: 16px;
-                       padding: 0 18px; font-size: 14px; font-weight: 600; min-height: 32px; max-height: 32px; }
-QPushButton#donepill:hover { background: #ffe14d; }
-QPushButton#toolpill[compact="true"] { padding: 0; min-width: 40px; max-width: 40px; font-size: 16px; }
-"""
-
+CHOICE_NAME = {"yes": tr('✓ SÌ'), "no": tr('✗ NO'), "skip": tr('↪ Salta'), "trash": tr('🗑 In “cancellare”')}
 
 HELP_TEXT = HELP[LANG]
 
@@ -456,6 +253,51 @@ class OverlayLabel(QLabel):
             self.move((par.width() - w) // 2, par.height() - h - 16)
         self.show()
         self.raise_()
+
+
+class StaleResult(Exception):
+    """Risultato di un lavoro chiesto per la cartella aperta prima: si scarta."""
+
+
+class _MoveFailed(OSError):
+    """Gli originali non si sono spostati in “cancellare” (niente è cambiato)."""
+
+
+class AbandonedWait(StaleResult):
+    """Attesa di un download lasciata a metà: l'elemento non è più quello che guardi
+    (o non è più tra i prossimi da anticipare). Si scarta senza mostrare nulla."""
+
+
+def wait_downloads(files: list[Path], abandon: threading.Event, delay: float = 0.0) -> bool:
+    """Scarica i file dell'elemento corrente, ognuno nel suo thread: non si mette mai in coda
+    dietro ai download degli elementi passati di corsa. Se l'elemento viene lasciato
+    (abandon), l'attesa finisce subito; dopo un breve ritardo (delay) per non avviare
+    download per gli elementi solo sfiorati scorrendo veloce."""
+    if delay and abandon.wait(delay):
+        raise AbandonedWait()
+    futs: list[tuple[Path, Future]] = []
+    for p in files:
+        f: Future = Future()
+
+        def run(p=p, f=f):
+            try:
+                f.set_result(cloud.download(p))
+            except BaseException as e:  # noqa: BLE001 - riportato dall'attesa
+                f.set_exception(e)
+        threading.Thread(target=run, name=f"icloud-{p.name}", daemon=True).start()
+        futs.append((p, f))
+    for p, f in futs:
+        while True:
+            if abandon.is_set():
+                raise AbandonedWait()
+            try:
+                ok = f.result(timeout=0.2)
+                break
+            except TimeoutError:
+                continue
+        if not ok:
+            raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
+    return True
 
 
 class Bridge(QObject):
@@ -1276,11 +1118,40 @@ EDIT_PROXY = 1600          # Regola / Ritaglia: anteprima veloce, poi la foto in
 EDIT_FULL_MAX = 30_000_000  # oltre (panorami enormi) a schermo resta l'anteprima; l'export è sempre intero
 
 
+def print_takes_edit() -> bool:
+    """printprep.improve accetta le modifiche (parametro edit)? Le versioni vecchie no."""
+    try:
+        return "edit" in inspect.signature(printprep.improve).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def render_edit_job(img, e: dict, crop_mode: bool):
     """In Ritaglia si vede la foto intera (raddrizzata) con il riquadro sopra; altrimenti finita."""
     if crop_mode:
-        return E.render_tone(E.geometry_base(img.convert("RGB"), e), e)
+        base = E.geometry_base(img.convert("RGB"), e)
+        return E.render_tone(base, uncropped_tone_edit(e, *base.size))
     return E.render(img, e)
+
+
+def uncropped_tone_edit(e: dict, w: int, h: int) -> dict:
+    """Le regolazioni per la foto intera (Ritaglia mostra tutto, con il riquadro sopra).
+    Gli occhi rossi sono segnati nel riquadro di quel momento: si riportano sulla foto intera,
+    nello stesso posto e della stessa misura in cui finiranno nella foto ritagliata."""
+    t = dict(e)
+    t.pop("crop", None)
+    pts = e.get("redeye") or []
+    if pts:
+        c = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
+        k = max(c[2] * w, c[3] * h) / max(1, w, h)   # misura relativa al lato lungo del ritaglio
+        flip = 1.0 if e.get("flip") else 0.0
+        t["redeye"] = []
+        for p in pts:
+            x, y = E.redeye_point(p, e)          # nel riquadro di adesso
+            size = p[2] if len(p) > 2 else E.get(e, "redeye_size")
+            t["redeye"].append([c[0] + x * c[2], c[1] + y * c[3], size * k,
+                                flip, 0.0, 0.0, 1.0, 1.0])
+    return t
 
 
 def pil_to_qimage(img) -> QImage:
@@ -1310,9 +1181,13 @@ class MainWindow(QMainWindow):
         self.settings_store = QSettings("PhotoSwipe", os.environ.get("PHOTOSWIPE_PROFILE", "PhotoSwipe"))
 
         self.bg = ThreadPoolExecutor(max_workers=4)
-        self.dl = ThreadPoolExecutor(max_workers=6)        # download dell'elemento corrente
+        self.dl = ThreadPoolExecutor(max_workers=6)        # "scarica i prossimi 10" (a mano)
         self.pre = ThreadPoolExecutor(max_workers=2)       # anticipo dei successivi (2 alla volta)
-        self.waiters = ThreadPoolExecutor(max_workers=4)   # attese dei download correnti
+        # attese dei download dell'elemento corrente: quelle degli elementi lasciati finiscono
+        # subito (o non partono), così quello su cui ti fermi non aspetta dietro di loro
+        self.waiters = ThreadPoolExecutor(max_workers=4)
+        # ("ready-now"|"ready-pre", id) -> [future, abbandonato, gettone] dei download in corso
+        self._ready_jobs: dict[tuple[str, str], list] = {}
         self.export_q = ThreadPoolExecutor(max_workers=1)  # export in ordine, uno alla volta
         # fotogrammi da mostrare subito: coda tutta loro, non aspettano dietro le miniature
         self.frames_q = ThreadPoolExecutor(max_workers=2)
@@ -1331,6 +1206,8 @@ class MainWindow(QMainWindow):
         self.review_skipped = False
         self.history: list[tuple[int, str, dict | None]] = []
         self.export_futures: dict[str, Future] = {}
+        self._scan_gen = 0
+        self._rename_busy = False   # cresce a ogni apertura: i risultati vecchi non vanno nei dati nuovi
         # dove sono ORA le copie spostate (Preferite) secondo la coda export: la sessione lo sa solo
         # dopo, e un Annulla o un altro ♥ in coda subito dietro userebbero i percorsi vecchi.
         # Letto e scritto SOLO dai lavori di export_q (un solo thread, in ordine).
@@ -1371,6 +1248,9 @@ class MainWindow(QMainWindow):
         self._edit_proxy = None
         self._edit_tiny = None
         self.edit_gen = 0
+        # i calcoli più vecchi di questo non si mostrano più (altra foto o fotogramma, originale a
+        # schermo, copia per la stampa…); quelli più recenti sì, anche se non sono l'ultimo
+        self._edit_floor = 0
         self._edit_busy = False
         self._edit_again = False
         self.crop_draft: dict | None = None    # Ritaglia aperto: bozza finché non si preme OK
@@ -1417,10 +1297,10 @@ class MainWindow(QMainWindow):
         self.btn_home.setToolTip(tr("Home: torna alla scelta della cartella (la sessione resta salvata)."))
         self.btn_home.clicked.connect(self.go_home)
         self.btn_back = QPushButton("‹")
-        self.btn_back.setToolTip(tr("Precedente (↑ o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia."))
+        self.btn_back.setToolTip(tr("Precedente (← o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia."))
         self.btn_back.clicked.connect(self.go_back)
         self.btn_fwd = QPushButton("›")
-        self.btn_fwd.setToolTip(tr("Successivo (↓): vai all'elemento dopo senza decidere."))
+        self.btn_fwd.setToolTip(tr("Successivo (→): vai all'elemento dopo senza decidere."))
         self.btn_fwd.clicked.connect(self.go_forward)
         self.btn_undo = QPushButton("↩")
         self.btn_undo.setObjectName("undo")
@@ -1490,7 +1370,7 @@ class MainWindow(QMainWindow):
 
         self.btn_fav = QPushButton("♡")
         self.btn_fav.setObjectName("fav")
-        self.btn_fav.setToolTip(tr('Preferita (.): le preferite approvate vengono copiate in\nexport/Preferite invece che in export.'))
+        self.btn_fav.setToolTip(tr('Preferita (.): le preferite approvate vengono copiate in\nexport/Foto/Preferite invece che in export/Foto.'))
         self.btn_fav.clicked.connect(self.toggle_favorite)
         self.btn_help = QPushButton("?")
         self.btn_help.setToolTip(tr('Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.'))
@@ -1813,19 +1693,22 @@ class MainWindow(QMainWindow):
         self.btn_side_export = QPushButton(tr('Export'))
         self.btn_side_export.setToolTip(tr('Apre in {FILE_MANAGER} la cartella con le foto approvate.', FILE_MANAGER=FILE_MANAGER))
         self.btn_side_export.clicked.connect(self.open_export)
-        self.btn_rename_date = QPushButton(tr('Rinomina per data'))
-        self.btn_rename_date.setToolTip(tr('Rinomina le copie approvate in export in ordine di data e ora di scatto. Gli originali non si toccano.'))
-        self.btn_rename_date.clicked.connect(self.rename_exports_by_date)
+        # due righe: in una sola i quattro pulsanti superano i 280 px del pannello e tutto il
+        # contenuto veniva allargato e tagliato a destra
         self.save_row = QWidget()
-        srow = QHBoxLayout(self.save_row)
-        srow.setContentsMargins(0, 2, 0, 0)
-        srow.setSpacing(6)
-        for b in (self.btn_save_now, self.btn_show_save, self.btn_side_export, self.btn_rename_date):
-            b.setObjectName("small")   # stessa pillola degli altri pulsanti piccoli del pannello
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setCursor(Qt.PointingHandCursor)
-            srow.addWidget(b)
-        srow.addStretch(1)
+        srows = QVBoxLayout(self.save_row)
+        srows.setContentsMargins(0, 2, 0, 0)
+        srows.setSpacing(6)
+        for group in ((self.btn_save_now, self.btn_show_save, self.btn_side_export),):
+            srow = QHBoxLayout()
+            srow.setSpacing(6)
+            for b in group:
+                b.setObjectName("small")   # stessa pillola degli altri pulsanti piccoli del pannello
+                b.setFocusPolicy(Qt.NoFocus)
+                b.setCursor(Qt.PointingHandCursor)
+                srow.addWidget(b)
+            srow.addStretch(1)
+            srows.addLayout(srow)
         sv.addWidget(self.save_row)
         sv.addStretch(1)
         outer.addWidget(self.side)   # la versione è nel titolo della finestra e in Aiuto
@@ -1890,7 +1773,7 @@ class MainWindow(QMainWindow):
             b.setFocusPolicy(Qt.NoFocus)
             b.setCursor(Qt.PointingHandCursor)
             b.setToolTip(tr(tip))
-            b.clicked.connect(fn)
+            b.clicked.connect(lambda _=False, fn=fn: self.nav_unless_editing(fn))
             b.hide()
         self.stamp = QLabel("", self.stack)
         self.stamp.setObjectName("stamp")
@@ -1976,9 +1859,9 @@ class MainWindow(QMainWindow):
         self.btn_sharp.clicked.connect(self.pick_sharpest)
         self.btn_reset = QPushButton(tr('↺  Originale (R)'))
         self.btn_reset.clicked.connect(self.reset_frame)
-        self.btn_prev.setToolTip(tr('Fotogramma precedente (←, Maiusc+← = 10 indietro)'))
-        self.btn_next.setToolTip(tr('Fotogramma successivo (→, Maiusc+→ = 10 avanti)'))
-        self.strip.setToolTip(tr('Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ← → un fotogramma alla volta.'))
+        self.btn_prev.setToolTip(tr('Fotogramma precedente (↑, Maiusc+↑ = 10 indietro)'))
+        self.btn_next.setToolTip(tr('Fotogramma successivo (↓, Maiusc+↓ = 10 avanti)'))
+        self.strip.setToolTip(tr('Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ↑ ↓ un fotogramma alla volta.'))
         # come in Foto: la striscia tra due parentesi in un riquadro, poi volume e menu "Live"
         self.strip_box = QFrame()
         self.strip_box.setObjectName("stripbox")
@@ -2091,7 +1974,7 @@ class MainWindow(QMainWindow):
             col.setSpacing(4)
             col.addStretch(1)
             col.addWidget(b, 0, Qt.AlignHCenter)
-            b.setAccessibleName(cap.replace(" (", ", tasto ").rstrip(")"))  # VoiceOver: non "segno di moltiplicazione"
+            b.setAccessibleName(cap.replace(" (", tr(', tasto ')).rstrip(")"))  # VoiceOver: non "segno di moltiplicazione"
             c = QLabel(cap)
             self.choice_caps[b.objectName()] = c
             c.setObjectName("cap")
@@ -2223,7 +2106,7 @@ class MainWindow(QMainWindow):
         strip_row.addWidget(self.thumbs_strip, 1)
         strip_row.addWidget(self.btn_thumb_next, 0, Qt.AlignVCenter)
         self.btn_return = QPushButton(tr("⤳ Torna all'ultima"))
-        self.btn_return.setToolTip(tr('Torna alla foto da cui sei tornato indietro (con ↑ o B).'))
+        self.btn_return.setToolTip(tr('Torna alla foto da cui sei tornato indietro (con ← o B).'))
         self.btn_return.setFocusPolicy(Qt.TabFocus)
         self.btn_return.setObjectName("stripnav")
         self.btn_return.setFixedSize(220, 30)
@@ -2296,8 +2179,9 @@ class MainWindow(QMainWindow):
         self.update_btn_info()
         for w in (self.side_info, self.side_details, self.side_sel, self.counter, self.snaps_label,
                   self.snap_gallery, self.save_head, self.save_info, self.save_row,
-                  self.thumbs_strip, self.strip_filter, self.btn_thumb_prev, self.btn_thumb_next):
+                  self.thumbs_strip, self.strip_filter):
             w.setVisible(browsing)
+        self.update_locate_btn()   # frecce della striscia: solo dopo ⌂ Riprendi (come il pulsante)
         self.update_print_box()
         self.update_photo_arrows()
 
@@ -2347,8 +2231,14 @@ class MainWindow(QMainWindow):
         self.print_busy.show()
         self.status.setText(tr('Preparo la copia per la stampa… può richiedere qualche minuto'), ms=0)
         k = item.id
-        self.submit("print", (item.id, out), printprep.improve, src, out,
-                    lambda f: self.bridge.progress.emit(k, f), queue=self.print_q)
+        progress = lambda f: self.bridge.progress.emit(k, f)   # noqa: E731
+        edit = E.clean(self.item_edit(item.id)) if self.editable(item) else {}
+        if edit and print_takes_edit():   # la copia per la stampa con le modifiche confermate
+            self.submit("print", (item.id, out),
+                        lambda: printprep.improve(src, out, progress, edit=edit), queue=self.print_q)
+        else:
+            self.submit("print", (item.id, out), printprep.improve, src, out, progress,
+                        queue=self.print_q)
 
     def on_print_progress(self, key, f: float) -> None:
         """Avanzamento vero del motore di stampa: barra e percentuale."""
@@ -2358,21 +2248,31 @@ class MainWindow(QMainWindow):
         self.print_busy.setValue(int(f * 1000))
         self.status.setText(tr('Preparo la copia per la stampa… {v0}%', v0=int(f * 100)), ms=0)
 
-    def set_print_compare(self, on: bool) -> None:
-        """Confronto con la copia per la stampa: la copia a schermo finché il pulsante è premuto."""
+    def set_print_compare(self, on: bool, quiet: bool = False) -> None:
+        """Confronto con la copia per la stampa: la copia a schermo finché il pulsante è premuto.
+        Tolto il confronto si torna alla foto com'è: con le modifiche confermate, se ce ne sono
+        (le stesse con cui si fa la copia per la stampa)."""
         item = self.current()
         path = self.print_copy(item) if item else None
         if not on or path is None or not path.is_file():
-            self.request_edit_render()   # torna a come è la foto (modificata o originale)
-            self.flash(tr("Originale"))
+            if self.edit_base is not None and self.edit_base_owner == (item.id if item else None):
+                if self.editable(item) and not E.is_empty(self.view_edit()):
+                    self.request_edit_render(sync=True)   # subito la versione modificata
+                else:
+                    self.invalidate_edit_renders()
+                    self.image_view.set_image(self.edit_base, keep_zoom=True)
+            edited = item is not None and self.editable(item) and not E.is_empty(self.item_edit(item.id))
+            if not quiet:
+                self.flash(tr("Modificata") if edited else tr("Originale"))
             return
         img = QImage(str(path))
         if img.isNull():
             self.btn_print_cmp.setChecked(False)
             return
-        self.edit_gen += 1   # i calcoli in corso non devono coprire la copia
+        self.invalidate_edit_renders()   # i calcoli in corso non devono coprire la copia
         self.image_view.set_image(img, keep_zoom=True)   # stessa grandezza a schermo: si vedono i dettagli
-        self.flash(tr("Copia per la stampa"))
+        if not quiet:
+            self.flash(tr("Copia per la stampa"))
 
     def update_btn_info(self):
         self.btn_info.setProperty("on", "true" if self.side_wanted else "false")
@@ -2582,7 +2482,7 @@ class MainWindow(QMainWindow):
         if self.edit_base is None or self.crop_draft is not None:
             return
         if on:
-            self.edit_gen += 1   # i calcoli in corso non devono coprire l'originale
+            self.invalidate_edit_renders()   # i calcoli in corso non devono coprire l'originale
             self.image_view.set_image(self.edit_base, keep_zoom=True)
         else:
             self.request_edit_render()
@@ -2667,6 +2567,11 @@ class MainWindow(QMainWindow):
             self.crop_draft = self.tone_draft = None
             self.image_view.set_crop_mode(False)
             self.set_crop_lock(False)
+        elif self.crop_draft is not None or self.image_view.crop_mode:
+            # Ritaglia aperto senza cambiare nulla e poi un'altra foto: si chiude, non resta acceso
+            self.crop_draft = None
+            self.image_view.set_crop_mode(False)
+            self.set_crop_lock(False)
         self.regola.set_edit(self.item_edit() if self.editable(item) else {})
         if self.btn_compare.isChecked():
             self.btn_compare.blockSignals(True)
@@ -2698,10 +2603,12 @@ class MainWindow(QMainWindow):
             if not self.edit_pending():
                 self.regola.set_edit(self.item_edit() if self.editable(item) else {})
         if not self.edit_pending() and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
-            self.edit_gen += 1   # niente da modificare: i calcoli in corso non valgono più
+            self.invalidate_edit_renders()   # niente da modificare: i calcoli in corso non valgono più
             self.image_view.set_image(img, keep_zoom=keep_zoom)
         else:
             self.request_edit_render(sync=True, keep_zoom=keep_zoom)
+        if self.btn_print_cmp.isChecked() and item is not None and item is self.current():
+            self.set_print_compare(True, quiet=True)   # confronto aperto: resta la copia a schermo
         if self.side_tab == "regola":
             self.update_thumbs()
         self.update_edit_ui()
@@ -2726,12 +2633,22 @@ class MainWindow(QMainWindow):
             e.update(self.crop_draft)
         return e
 
+    def invalidate_edit_renders(self) -> None:
+        """I calcoli di Regola in corso non devono più arrivare a schermo."""
+        self.edit_gen += 1
+        self._edit_floor = self.edit_gen
+
     def request_edit_render(self, sync: bool = False, keep_zoom: bool = True) -> None:
         if self.edit_base is None:
             return
+        if not sync and self.btn_print_cmp.isChecked():   # si sta modificando: via il confronto
+            self.btn_print_cmp.blockSignals(True)
+            self.btn_print_cmp.setChecked(False)
+            self.btn_print_cmp.blockSignals(False)
         self.edit_gen += 1
         e, crop = self.view_edit(), self.crop_draft is not None
-        if sync:
+        if sync:   # foto (o fotogramma) appena messa a schermo: niente calcoli vecchi sopra
+            self._edit_floor = self.edit_gen
             try:
                 res = render_edit_job(self.edit_proxy(), e, crop)
             except Exception as ex:  # noqa: BLE001
@@ -2745,27 +2662,36 @@ class MainWindow(QMainWindow):
             self._edit_again = True
             return
         self._edit_busy = True
-        self.submit("edit", (self.edit_base_owner, self.edit_gen, False), render_edit_job,
+        self.submit("edit", (self.edit_base_owner, self.edit_gen, False, self.shown_edit_key()), render_edit_job,
                     self.edit_proxy(), e, crop, queue=self.edit_pool)
 
     def request_full_edit(self) -> None:
         """Ferma la mano sui cursori: la foto intera, nitida anche con lo zoom."""
         b = self.edit_base
-        if b is None or self.crop_draft is not None or self._edit_busy:
+        if b is None or self.crop_draft is not None or self._edit_busy or self.btn_print_cmp.isChecked():
             return
         e = self.view_edit()
         if E.is_empty(e) or max(b.width(), b.height()) <= EDIT_PROXY or b.width() * b.height() > EDIT_FULL_MAX:
             return
-        self.submit("edit", (self.edit_base_owner, self.edit_gen, True),
+        self.submit("edit", (self.edit_base_owner, self.edit_gen, True, self.shown_edit_key()),
                     lambda q, ed: E.render(qimage_to_pil(q), ed), b, e, queue=self.edit_pool)
 
+    def shown_edit_key(self) -> str | None:
+        """Le modifiche di cosa c'è a schermo: la foto, o il fotogramma del video (video#fN)."""
+        item = self.item_by_id(self.edit_base_owner) if self.edit_base_owner else None
+        return self.edit_key(item) if item is not None else None
+
     def on_edit_rendered(self, key, res) -> None:
-        owner, gen, full = key
+        owner, gen, full, ekey = key
         if not full:
             self._edit_busy = False
+        # vale solo per la stessa foto E lo stesso fotogramma (nei video l'id è uguale per tutti),
+        # e mai se nel frattempo a schermo è andato altro (gen sotto il minimo)
+        fresh = gen == self.edit_gen if full else gen >= self._edit_floor
         if not isinstance(res, Exception) and owner == self.edit_base_owner == self.still_owner \
-                and (not full or gen == self.edit_gen) and self.stack.currentWidget() is self.image_view \
-                and not self.btn_compare.isChecked():
+                and fresh and ekey == self.shown_edit_key() \
+                and self.stack.currentWidget() is self.image_view \
+                and not self.btn_compare.isChecked() and not self.btn_print_cmp.isChecked():
             self.image_view.set_image(pil_to_qimage(res), keep_zoom=True)
         if not full:
             if self._edit_again:
@@ -2877,7 +2803,7 @@ class MainWindow(QMainWindow):
         self.after_edit_confirmed()
         self.regola.set_edit({})
         if self.edit_base is not None and self.edit_base_owner == item.id:
-            self.edit_gen += 1
+            self.invalidate_edit_renders()
             self.image_view.set_image(self.edit_base)
         self.update_thumbs()
         self.update_edit_ui()
@@ -3085,7 +3011,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(box)
         v.setContentsMargins(28, 24, 28, 24)
         v.setSpacing(10)
-        title = QLabel(f"Nuova selezione   <span style='font-size:13px; color:#9a9ca0; font-weight:400'>"
+        title = QLabel(tr('Nuova selezione') + "   <span style='font-size:13px; color:#9a9ca0; font-weight:400'>"
                        f"{APP_TITLE}</span>")
         title.setObjectName("h1")
         v.addWidget(title)
@@ -3197,7 +3123,7 @@ class MainWindow(QMainWindow):
         if self.pick_export:
             self.dst_label.setText(str(self.pick_export))
         elif self.pick_root:
-            self.dst_label.setText(f"{self.pick_root / 'export'}   (proposta)")
+            self.dst_label.setText(f"{self.pick_root / 'export'}   " + tr('(proposta)'))
         else:
             self.dst_label.setText(tr('— prima scegli la cartella da guardare —'))
         for lab, empty in ((self.src_label, not self.pick_root),
@@ -3212,16 +3138,16 @@ class MainWindow(QMainWindow):
         # sempre presente (anche vuota): la scheda non salta quando compare il messaggio
         self.q_local.setText(
             tr('💽 Cartella su disco (non su iCloud): nessun download, si parte subito.') if local else
-            "☁️ Questa cartella ha file su iCloud: ogni originale verrà scaricato quando lo apri "
-            "(qualità sempre massima, ma con attesa). Per andare veloci usa una cartella su disco."
+            tr('☁️ Questa cartella ha file su iCloud: ogni originale verrà scaricato quando lo apri '
+               '(qualità sempre massima, ma con attesa). Per andare veloci usa una cartella su disco.')
             if on_cloud else "")
         self.btn_start.setEnabled(self.pick_root is not None)
         last = self.settings_store.value("last_root", "")
         last_exp = self.settings_store.value("last_export", "")
         self.btn_resume.setVisible(bool(last))
         if last:
-            self.btn_resume.setText(f"↻  Riprendi l'ultima sessione:  {Path(last).name}  →  "
-                                    f"{Path(last_exp).name if last_exp else 'export'}")
+            self.btn_resume.setText(tr("↻  Riprendi l'ultima sessione:  {v0}  →  {v1}", v0=Path(last).name,
+                                       v1=Path(last_exp).name if last_exp else 'export'))
             self.btn_resume.setToolTip(tr('Da: {last}\nExport: {last_exp}', last=last, last_exp=last_exp))
 
     def pick_source(self):
@@ -3236,7 +3162,10 @@ class MainWindow(QMainWindow):
 
     def ask_about_saved_work(self, root: Path):
         """Cartella già lavorata: mostra lo stato e chiede se riprendere."""
-        info = exporter.Session.peek(root)
+        last_root = self.settings_store.value("last_root", "")
+        last_exp = self.settings_store.value("last_export", "")
+        hint = Path(last_exp) if last_exp and last_root == str(root) else None
+        info = exporter.Session.peek(root, export=hint)   # anche un salvataggio rimasto solo in export
         if not info:
             return
         c = info["counts"]
@@ -3359,7 +3288,7 @@ class MainWindow(QMainWindow):
             if k in ("Return", "Enter", "Space"):
                 fn = press_focused_or(fn)
             sc = QShortcut(QKeySequence(k), self, activated=fn)
-            sc.setAutoRepeat(k in ("Left", "Right", "Shift+Left", "Shift+Right"))
+            sc.setAutoRepeat(k in ("Up", "Down", "Shift+Up", "Shift+Down"))   # fotogramma per fotogramma
 
     def save_prefs(self):
         self.settings_store.setValue("fmt", self.current_settings().fmt)
@@ -3372,14 +3301,25 @@ class MainWindow(QMainWindow):
                                  tz_override_hours=self.tz.currentData())
 
     # ------------------------------------------------------------------ lavori in background
+    # risultati che valgono solo per la cartella aperta quando sono stati chiesti
+    _SCAN_BOUND = ("analyze", "meta", "thumb", "strip", "ready", "proxy")
+
     def submit(self, kind: str, key, fn, *args, queue=None) -> Future:
         fut = (queue or self.bg).submit(fn, *args)
+        gen = self._scan_gen
 
         def finished(f: Future):
+            if f.cancelled():   # tolto dalla coda prima di partire: nessun risultato
+                return
             try:
                 res = f.result()
             except Exception as e:  # noqa: BLE001 - mostrato all'utente
                 res = e
+            if gen != self._scan_gen:   # chiesto per la cartella aperta prima
+                if kind in self._SCAN_BOUND:
+                    return
+                if kind == "preview":
+                    res = StaleResult()   # libera la coda delle anteprime senza mostrarla
             self.bridge.done.emit(kind, key, res)
         fut.add_done_callback(finished)
         return fut
@@ -3392,7 +3332,7 @@ class MainWindow(QMainWindow):
             return
         # schermata iniziale aperta: i risultati si conservano ma non cambiano cosa si vede
         cur = self.current() if self.stack.currentWidget() is not self.setup_page else None
-        if isinstance(res, Exception):
+        if isinstance(res, Exception) and not isinstance(res, StaleResult):
             log.error("%s %s: %r", kind, key, res, exc_info=res)
         elif kind in ("scan", "ready", "export"):
             log.info("%s %s: %s", kind, key if kind != "scan" else self.root,
@@ -3400,17 +3340,29 @@ class MainWindow(QMainWindow):
         if kind == "scan":
             self.on_scanned(res)
         elif kind == "ready":
-            if isinstance(res, Exception) and ("ready-now", key) not in self.pending:
-                self.pending.discard(("ready-pre", key))
-                return  # anticipo non riuscito: si riprova quando l'elemento viene aperto
-            self.pending.discard(("ready-now", key))
-            self.pending.discard(("ready-pre", key))
+            # "now" (l'elemento che guardi) e "pre" (anticipo) sono lavori distinti: un anticipo
+            # non riuscito non tocca l'attesa di quello corrente e non mostra errori
+            item_id, which, token = key
+            jkey = ("ready-now" if which == "now" else "ready-pre", item_id)
+            job = self._ready_jobs.get(jkey)
+            if job is not None and job[2] == token:
+                del self._ready_jobs[jkey]
+                self.pending.discard(jkey)
+            elif not isinstance(res, Exception):
+                pass   # lavoro lasciato ma finito bene: il file c'è, vale comunque
+            else:
+                return   # lavoro lasciato (o sostituito): il suo esito non conta
             if isinstance(res, Exception):
-                if cur and cur.id == key:
+                if which == "now" and cur and cur.id == item_id \
+                        and not isinstance(res, StaleResult):
                     self.show_message(tr('Download da iCloud non riuscito:\n{res}', res=res))
-                return
-            self.ready.add(key)
-            if cur and cur.id == key:
+                return  # anticipo non riuscito: si riprova quando l'elemento viene aperto
+            was_ready = item_id in self.ready
+            self.ready.add(item_id)
+            it = self.item_by_id(item_id)
+            if it is not None and refresh_capture_time(it) and cur and cur.id == item_id and was_ready:
+                self.update_item_labels()   # data vera dall'EXIF, ora che il file è scaricato
+            if cur and cur.id == item_id and not was_ready:
                 self.show_item()
         elif kind == "analyze":
             self.pending.discard(("analyze", key))
@@ -3441,6 +3393,8 @@ class MainWindow(QMainWindow):
             self.pending.discard(("thumb", key))
             self.next_thumbs[key] = res if not isinstance(res, Exception) else QImage()
             self.update_next_preview()
+        elif kind == "rename":
+            self.on_renamed(res)
         elif kind == "relocate":
             item_id, token = key
             if not isinstance(res, Exception) and res and self.session:
@@ -3457,7 +3411,9 @@ class MainWindow(QMainWindow):
             self.btn_print_fix.setEnabled(True)
             self.btn_print_fix.setText(tr('Migliora per la stampa'))
             self.print_busy.hide()
-            if isinstance(res, Exception):
+            if isinstance(res, InterruptedError):
+                pass   # interrotta dall'uscita: niente da dire
+            elif isinstance(res, Exception):
                 self.flash(tr('Non riesco a preparare questa foto per la stampa'))
             else:
                 self.flash(tr('Copia per la stampa salvata: {v0}  ({v1})', v0=out.name, v1=res))
@@ -3510,7 +3466,7 @@ class MainWindow(QMainWindow):
     def show_help(self):
         # finestra che si scorre: il testo è lungo e non deve uscire dallo schermo
         dlg = QDialog(self)
-        dlg.setWindowTitle(f"Come funziona — {APP_TITLE}")
+        dlg.setWindowTitle(tr('Come funziona') + f" — {APP_TITLE}")
         v = QVBoxLayout(dlg)
         text = QTextBrowser()
         text.setHtml(help_html(HELP_TEXT))
@@ -3579,6 +3535,19 @@ class MainWindow(QMainWindow):
             self.show_setup(tr('Errore nella lettura della cartella: {res}', res=res))
             return
         self.items = res
+        # un'altra cartella (o la stessa riletta): gli id sono percorsi relativi e si ripetono
+        # tra schede diverse (DCIM/100MEDIA/DJI_0001.MP4), quindi niente dati dell'apertura prima
+        self._scan_gen += 1
+        for k in list(self._ready_jobs):   # download chiesti per la cartella di prima
+            self.drop_ready_job(k)
+        for cache in (self.infos, self.camera_frames, self.meta, self.thumbs, self.next_thumbs,
+                      self.exact_cache, self.proxy_frames, self.pending):
+            cache.clear()
+        self.export_q.submit(self.copy_paths.clear)   # copy_paths: solo dalla coda export
+        # copie finite: l'esito è già nel salvataggio; un id uguale nella cartella nuova non è lo stesso
+        self.export_futures = {k: f for k, f in self.export_futures.items() if not f.done()}
+        self.return_idx = None
+        self.btn_return.setVisible(False)
         if self.session:
             self.session.close()
             self.session = None
@@ -3587,13 +3556,23 @@ class MainWindow(QMainWindow):
         except OSError as e:  # salvataggio presente ma illeggibile: non si salva sopra
             self.show_setup(tr('Impossibile leggere il lavoro salvato in questa cartella: {e}', e=e))
             return
-        self.session.save()
+        try:
+            self.session.save()
+        except OSError as e:   # né nella cartella né in export: meglio non iniziare senza salvare
+            self.show_setup(tr('Non riesco a salvare il lavoro ({v0}). Scegli un\'altra cartella export.', v0=e))
+            self.session = None
+            return
+        if self.session.saved_elsewhere:
+            QMessageBox.information(
+                self, APP_TITLE, tr('La cartella non è scrivibile: il lavoro si salva in\n{v0}',
+                                    v0=self.session.saved_elsewhere))
         if self.session.corrupt_backup:
             QMessageBox.warning(
                 self, APP_TITLE,
-                "Il lavoro salvato in questa cartella era danneggiato e non si è potuto leggere.\n"
-                f"È stato conservato come:\n{self.session.corrupt_backup}\n\n"
-                "Si riparte senza le scelte precedenti. I file in “cancellare” sono ancora lì.")
+                tr("Il lavoro salvato in questa cartella era danneggiato e non si è potuto leggere.\n"
+                   "È stato conservato come:\n{v0}\n\n"
+                   "Si riparte senza le scelte precedenti. I file in “cancellare” sono ancora lì.",
+                   v0=self.session.corrupt_backup))
         self.history.clear()
         self.export_q.submit(exporter.clean_partial, self.export_dir)   # dopo gli export in corso
         self.ready.clear()
@@ -3614,6 +3593,8 @@ class MainWindow(QMainWindow):
             self.queue_export(by_id[key.split("#")[0]], d.get("frame"), key=key,
                               snapshot=d["choice"] == "snap",
                               with_video=d.get("with_video", False))
+        if not export_warning:
+            self.tidy_exports()   # copie delle versioni di prima: in Foto / Video, con la data
         self.idx = self.next_index(-1)
         # tornando dalla home: si riparte dalla foto in cui eri, una volta sola
         home_root = self.settings_store.value("home_root", "")
@@ -3760,45 +3741,75 @@ class MainWindow(QMainWindow):
             cam = frames.camera_frame(src, info, item.screennail)
         if src != item.video:
             info.source = src
-            dims = (frames.probe(item.video).width, frames.probe(item.video).height) \
-                if cloud.is_local(item.video) else frames.spotlight_dims(item.video)
+            if cloud.is_local(item.video):
+                orig = frames.probe(item.video)   # una volta sola
+                dims = (orig.width, orig.height)
+            else:
+                dims = frames.spotlight_dims(item.video)
             info.original_dims = dims
         return info, cam
 
+    # attesa prima di avviare i download dell'elemento corrente: scorrendo veloce non si
+    # scaricano gli elementi solo sfiorati (l'anticipo dei successivi li prende comunque)
+    READY_DELAY_S = 0.15
+
     def request_ready(self, item: Item, now: bool = True):
         """Scarica i file dell'elemento. now=True: è quello che stai guardando, ha la precedenza
-        (pool dedicato); now=False: anticipo dei successivi, max 2 download alla volta."""
+        (thread suoi, mai in coda dietro agli altri); now=False: anticipo dei successivi,
+        max 2 download alla volta."""
+        if now:   # gli elementi lasciati non aspettano più: la loro attesa finisce
+            for k in [k for k in self._ready_jobs if k[0] == "ready-now" and k[1] != item.id]:
+                self.drop_ready_job(k)
         key = ("ready-now" if now else "ready-pre", item.id)
-        if key in self.pending:
+        job = self._ready_jobs.get(key)
+        if key in self.pending and job is not None and not job[1].is_set():
             return
         self.pending.add(key)
         files = [p for p in item.needed_files() if not cloud.is_local(p)]
+        abandon = threading.Event()
+        token = uuid.uuid4().hex
+        # registrato PRIMA di partire: un esito immediato (callback nello stesso thread) lo trova
+        job_entry = [None, abandon, token]
+        self._ready_jobs[key] = job_entry
         if now:
-            def job(files=files, pool=self.dl):
-                pairs = [(p, pool.submit(cloud.download, p)) for p in files]
-                for p, f in pairs:
-                    if not f.result():
-                        raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
-                return True
-            self.submit("ready", item.id, job, queue=self.waiters)
+            fut = self.submit("ready", (item.id, "now", token), wait_downloads, files, abandon,
+                              self.READY_DELAY_S, queue=self.waiters)
         else:
-            def job(files=files):
+            def job(files=files, abandon=abandon):
                 for p in files:  # uno dopo l'altro: non toglie banda all'elemento corrente
+                    if abandon.is_set():
+                        raise AbandonedWait()
                     if not cloud.download(p):
                         raise RuntimeError(tr('{v0} non disponibile', v0=p.name))
                 return True
-            self.submit("ready", item.id, job, queue=self.pre)
+            fut = self.submit("ready", (item.id, "pre", token), job, queue=self.pre)
+        job_entry[0] = fut
+
+    def drop_ready_job(self, key: tuple[str, str]) -> None:
+        """Lascia un download: tolto dalla coda se non è partito, altrimenti finisce appena può."""
+        job = self._ready_jobs.pop(key, None)
+        self.pending.discard(key)
+        if job is not None:
+            job[1].set()
+            if job[0] is not None:
+                job[0].cancel()
 
     def prefetch(self):
         i, n = self.idx, 0
+        window: list[Item] = []
         while n < PREFETCH:
             i = self.next_index(i)
             if i >= len(self.items):
                 break
-            it = self.items[i]
+            window.append(self.items[i])
+            n += 1
+        ids = {it.id for it in window}
+        # anticipi non più tra i prossimi PREFETCH (sei andato indietro, o saltato avanti)
+        for k in [k for k in self._ready_jobs if k[0] == "ready-pre" and k[1] not in ids]:
+            self.drop_ready_job(k)
+        for it in window:
             if it.id not in self.ready and not all(cloud.is_local(p) for p in it.needed_files()):
                 self.request_ready(it, now=False)
-            n += 1
 
     def play(self, item: Item):
         self.ensure_player(item)  # sempre l'originale
@@ -3844,12 +3855,21 @@ class MainWindow(QMainWindow):
             self.flash(tr('📷 Fotogramma {v0} già salvato', v0=n + 1))
             return
         self.history.append((self.idx, key, None))
-        self.session.set(key, "snap", [], n)
-        edit = E.clean(self.session.edits.get(key, {}))
-        if edit:   # Regola / Ritaglia su questo fotogramma: si salva la foto modificata
-            self.session.decisions[key]["edit"] = edit
-            self.session.save()
-        self.queue_export(item, n, key=key, snapshot=True)
+        try:
+            self.session.set(key, "snap", [], n)
+            edit = E.clean(self.session.edits.get(key, {}))
+            if edit:   # Regola / Ritaglia su questo fotogramma: si salva la foto modificata
+                self.session.decisions[key]["edit"] = edit
+                self.session.save()
+            self.queue_export(item, n, key=key, snapshot=True)
+        except OSError as e:   # salvataggio non riuscito: la foto non risulta presa
+            self.history.pop()
+            self.session.decisions.pop(key, None)
+            log.error("foto %s non salvata: %r", key, e, exc_info=e)
+            self.status.setStyleSheet("")
+            self.status.setText(tr('Scelta non salvata: {e}', e=e), ms=0)
+            self.update_scene_controls()
+            return
         self.flash(tr('📷 Foto salvata: fotogramma {v0}  (Z per annullare)', v0=n + 1))
         self.set_buttons_enabled(True)
         self.update_scene_controls()
@@ -4035,35 +4055,56 @@ class MainWindow(QMainWindow):
         home = str(Path.home())
         return "~" + str(path)[len(home):] if str(path).startswith(home) else str(path)
 
-    def rename_exports_by_date(self):
-        """Copie approvate in export: numero e data/ora di scatto, in ordine cronologico. Originali intatti."""
-        if not self.session or not self.items:
+    def tidy_exports(self) -> None:
+        """Le copie fatte dalle versioni di prima (foto sciolte in export, senza data nel nome o col
+        numero 0001_) si mettono in ordine come le nuove: export/Foto, export/Video, nome con data e
+        ora di scatto. Da sola, all'apertura; in coda export, dopo le copie da rifare. Originali intatti."""
+        if not self.session or not self.items or not exporter.export_reachable(self.export_dir):
             return
-        if any(not f.done() for f in self.export_futures.values()) or self.print_job is not None:
-            self.flash(tr('Aspetta che finiscano le copie in corso, poi rinomina'))
-            return
-        if not exporter.export_reachable(self.export_dir):
-            self.flash(tr('Cartella export non raggiungibile'))
-            return
-        entries = []
-        for it in self.items:
-            d = self.session.get(it.id)
-            if d and d.get("choice") == "yes" and d.get("files"):
-                entries.append((it.id, it.taken, list(d["files"])))
+        by_id = self._by_id
+        entries, favorites = [], set(self.session.favorites)
+        for key, d in self.session.decisions.items():
+            it = by_id.get(key.split("#")[0])
+            if it is not None and d.get("choice") in ("yes", "snap") and d.get("files"):
+                entries.append((key, it.taken, list(d["files"])))
         if not entries:
-            self.flash(tr('Nessuna copia da rinominare'))
             return
-        sure = QMessageBox.question(
-            self, tr('Rinomina per data'),
-            tr("Rinomino {v0} foto approvate in export in ordine di data e ora.\nGli originali non si toccano.\n\nContinuare?", v0=len(entries)))
-        if sure != QMessageBox.Yes:
+        export_dir = self.export_dir
+
+        def job(entries=entries):
+            # nella coda export: dopo le copie e gli spostamenti già chiesti, percorsi di ADESSO
+            fresh = []
+            for key, taken, files in entries:
+                files = self.copy_paths.get(key) or files
+                fresh.append((key, exporter.album_time(files, taken), files))
+            errors: list[str] = []
+            moved = exporter.rename_by_date(fresh, export_dir, errors, favorites)
+            for key, pairs in moved.items():
+                if key in self.copy_paths:
+                    m = dict(pairs)
+                    self.copy_paths[key] = [m.get(f, f) for f in self.copy_paths[key]]
+            return moved, errors
+        self._rename_busy = True
+        self.submit("rename", None, job, queue=self.export_q)
+
+    def on_renamed(self, res) -> None:
+        self._rename_busy = False
+        if isinstance(res, Exception):
+            log.error("riordino export: %r", res, exc_info=res)
             return
-        moved = exporter.rename_by_date(entries, self.export_dir)
-        for item_id, pairs in moved.items():
-            d = self.session.get(item_id)
+        moved, errors = res
+        for item_id, pairs in moved.items():   # anche se qualcosa non è riuscito: i file rinominati
+            d = self.session.get(item_id) if self.session else None
             if d:
                 self.session.relocated(item_id, d.get("export_id"), pairs)
-        self.flash(tr('Copie rinominate: {v0}', v0=sum(len(p) for p in moved.values())))
+        n = sum(len(p) for p in moved.values())
+        if n:
+            log.info("export riordinato: %d copie in Foto / Video con la data nel nome", n)
+            self.flash(tr('Export in ordine: {v0} copie spostate in Foto / Video con la data nel nome', v0=n))
+        if errors:
+            log.warning("export: copie non riordinate: %s", errors)
+            self.status.setStyleSheet("color:#f0b860;")
+            self.status.setText(tr('{v0} copie in export non si sono potute rinominare: restano com\'erano', v0=len(errors)), ms=0)
 
     def save_now(self):
         if not self.session:
@@ -4184,7 +4225,7 @@ class MainWindow(QMainWindow):
     LIVE_MODES = {"live": "Live", "loop": "Ripeti", "off": "Disattiva"}
 
     def refresh_live_mode(self) -> None:
-        names = {k: tr(v) for k, v in self.LIVE_MODES.items()}
+        names = {k: tr(v) for k, v in self.LIVE_MODES.items()}   # Ripeti, Disattiva: in EN
         self.btn_live_mode.setText(names[self.live_mode] + "  ⇕")
         for k, b in self._live_mode_btns.items():
             b.setText(("✓   " if k == self.live_mode else "      ") + names[k])
@@ -4528,7 +4569,7 @@ class MainWindow(QMainWindow):
         self.show_message(f"{head}\n\n✓ {c['yes']} approvate    ✗ {c['no']} scartate    "
                           f"↪ {c['skip']} saltate"
                           + (tr('\n\n🎬 {hidden} nascosti dal filtro attivo', hidden=hidden) if hidden else "")
-                          + tr('\n\n↑ = torna indietro a rivedere'), end=True)
+                          + tr('\n\n← = torna indietro a rivedere'), end=True)
         if left:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
@@ -4565,7 +4606,7 @@ class MainWindow(QMainWindow):
         self.choice_caps["yesvideo"].setText(both)
         for name, cap in (("yes", yes), ("yesvideo", both)):
             getattr(self, "btn_yes" if name == "yes" else "btn_yes_video").setAccessibleName(
-                cap.replace(" (", ", tasto ").rstrip(")"))
+                cap.replace(" (", tr(', tasto ')).rstrip(")"))
 
     def snaps_of(self, item: Item) -> list[str]:
         """Foto già prese da questo video con 📷 Prendi foto."""
@@ -4608,7 +4649,7 @@ class MainWindow(QMainWindow):
             self.frame_label.setText(tr('Foto {v0} / {v1} · {who}', v0=n + 1, v1=info.frames, who=who))
             self.frame_label.setToolTip(
                 tr("trascina sulla striscia per sceglierne un'altra") if self.live_view else
-                tr('trascina sulla striscia o usa ← → per cambiarla  ·  SÌ salva questa'))
+                tr('trascina sulla striscia o usa ↑ ↓ per cambiarla  ·  SÌ salva questa'))
             self.update_time_label(n, info)
             return
         if self.scene_mode:
@@ -4789,11 +4830,19 @@ class MainWindow(QMainWindow):
             self._preview_again = False
             self.request_preview()
 
+    def nav_unless_editing(self, fn) -> None:
+        """Frecce sulla foto: come i tasti, con modifiche in sospeso si conferma o annulla prima."""
+        if self.edit_pending():
+            self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
+            return
+        fn()
+
     def nav_frame(self, delta: int):
         """Su / Giù: fotogramma prima / dopo nei video; sulle foto, foto precedente / successiva."""
         item = self.current()
-        if item is not None and item.is_clip and self.current_frame() is not None:
-            self.step(delta)
+        if item is not None and item.is_clip:
+            if self.current_frame() is not None:
+                self.step(delta)   # analisi non ancora finita: si aspetta, non si cambia elemento
         else:
             (self.go_back if delta < 0 else self.go_forward)()
 
@@ -4951,6 +5000,10 @@ class MainWindow(QMainWindow):
         """"Torna all'analisi" e le frecce della striscia: solo se si torna dalla home, finché serve."""
         show = self.came_from_home and bool(self.items) and not self.locate_is_here()
         self.btn_locate.setVisible(show)
+        browsing = self.stack.currentWidget() is not self.setup_page
+        arrows = browsing and self.came_from_home and bool(self.items)
+        for b in (self.btn_thumb_prev, self.btn_thumb_next):
+            b.setVisible(arrows)
 
     def locate_thumb(self):
         """Torna alla prima foto ancora da decidere (la prossima da giudicare)."""
@@ -4998,9 +5051,8 @@ class MainWindow(QMainWindow):
         on = self.session.toggle_favorite(item.id)
         d = self.session.get(item.id)
         if d and d["choice"] == "yes" and not d.get("noexport"):
-            # già approvata: le copie si spostano tra export ed export/Preferite (mai sovrascritte)
-            fav = self.export_dir / exporter.FAV_SUBDIR
-            old_root, new_root = (self.export_dir, fav) if on else (fav, self.export_dir)
+            # già approvata: le foto si spostano tra export/Foto ed export/Foto/Preferite (mai sovrascritte)
+            export_dir = self.export_dir
             fut = self.export_futures.get(item.id)
 
             def job(fut=fut, files=list(d["files"]), item_id=item.id):
@@ -5010,13 +5062,12 @@ class MainWindow(QMainWindow):
                         files = [str(p) for p in fut.result()]
                     except Exception:  # noqa: BLE001 - export fallito: niente da spostare
                         return []
-                todo = [f for f in files if fav not in Path(f).parents] if on else files  # già lì: restano
-                pairs = exporter.relocate_exports(todo, old_root, new_root)
+                pairs = exporter.refile_favorite(files, export_dir, on)
                 moved = {a: b for a, b in pairs}
                 self.copy_paths[item_id] = [moved.get(f, f) for f in files]
                 return pairs
             self.submit("relocate", (item.id, d.get("export_id")), job, queue=self.export_q)
-        self.flash(tr('♥ Preferita: le copie vanno in export/Preferite') if on else tr('Preferita tolta'))
+        self.flash(tr('♥ Preferita: le copie vanno in export/Foto/Preferite') if on else tr('Preferita tolta'))
         self.update_fav_button()
 
     def update_fav_button(self):
@@ -5210,7 +5261,7 @@ class MainWindow(QMainWindow):
             if same:  # niente da cambiare: si va avanti
                 self.idx = self.next_index(self.idx)
                 self.show_item()
-                self.flash(f"Scelta confermata: {CHOICE_NAME.get(choice, choice)}")
+                self.flash(tr('Scelta confermata: {v0}', v0=CHOICE_NAME.get(choice, choice)))
                 return
             if not self.revert_effects(item.id, prev):
                 return
@@ -5218,6 +5269,20 @@ class MainWindow(QMainWindow):
         self.history.append((self.idx, item.id, prev))
         changed = f"{CHOICE_NAME.get(prev['choice'], prev['choice'])}  →  {CHOICE_NAME.get(choice, choice)}" \
             if prev is not None else ""
+        moved: list[list[str]] = []
+        try:
+            self._apply_decision(item, choice, with_video, snaps, moved)
+        except OSError as e:   # salvataggio non riuscito (disco pieno, scollegato…)
+            self.decision_not_saved(item, prev, moved, e)
+            return
+        self.idx = self.next_index(self.idx)
+        self.show_item()
+        if changed:  # tornati indietro e cambiata idea: si dice chiaramente cosa è successo
+            self.flash(tr('Scelta cambiata: {v0}   (Z annulla)', v0=changed))
+
+    def _apply_decision(self, item: Item, choice: str, with_video: bool, snaps: list,
+                        moved: list[list[str]]) -> None:
+        """Effetti e salvataggio della scelta. OSError = salvataggio non riuscito (vedi decide)."""
         frame = None
         if choice == "yes" and item.kind == "video":
             # Con foto prese: SÌ = tieni solo le foto, "SÌ + video" = copia anche il video.
@@ -5243,34 +5308,46 @@ class MainWindow(QMainWindow):
             self.player.setSource(QUrl())  # rilascia il file prima di spostarlo
             self._player_item = None
             try:
-                moved = exporter.move_to_trash(item, self.root)  # tutto o niente
+                moved.extend(exporter.move_to_trash(item, self.root))  # tutto o niente
             except (OSError, ValueError) as e:
-                self.history.pop()
-                self.status.setStyleSheet("")
-                self.status.setText(tr('Spostamento non riuscito: {e}', e=e))
-                self.show_item(keep_status=True)
-                return
+                raise _MoveFailed(e) from e
             self.session.set(item.id, "trash", moved=moved)
         else:
             self.session.set(item.id, choice)
-        self.idx = self.next_index(self.idx)
-        self.show_item()
-        if changed:  # tornati indietro e cambiata idea: si dice chiaramente cosa è successo
-            self.flash(f"Scelta cambiata: {changed}   (Z annulla)")
+
+    def decision_not_saved(self, item: Item, prev: dict | None, moved: list[list[str]],
+                           e: Exception) -> None:
+        """La scelta non si è potuta salvare (o gli originali non si sono spostati): tutto come
+        prima della scelta, nessun file spostato senza che il salvataggio lo sappia."""
+        self.history.pop()
+        if self.session:
+            # gli effetti della scelta di prima sono già stati tolti (revert_effects): l'elemento
+            # torna da decidere, come i suoi file
+            self.session.decisions.pop(item.id, None)
+        if moved:
+            try:
+                exporter.restore_from_trash(moved)
+            except OSError as e2:
+                log.error("ripristino dopo salvataggio non riuscito %s: %r", item.id, e2)
+        self.status.setStyleSheet("")
+        if isinstance(e, _MoveFailed):
+            self.status.setText(tr('Spostamento non riuscito: {e}', e=e.__cause__ or e))
+        else:
+            log.error("scelta su %s non salvata: %r", item.id, e, exc_info=e)
+            self.status.setText(tr('Scelta non salvata: {e}', e=e), ms=0)
+        self.show_item(keep_status=True)
 
     def queue_export(self, item: Item, frame: int | None, key: str | None = None,
                      snapshot: bool = False, with_video: bool = False):
         key = key or item.id
         token = uuid.uuid4().hex  # lega l'esito a questa decisione (vedi on_done)
         self.session.mark_export(key, token)
-        dest = self.export_dir
-        if key == item.id and item.id in self.session.favorites:
-            dest = self.export_dir / exporter.FAV_SUBDIR
+        favorite = key == item.id and item.id in self.session.favorites
         self.export_q.submit(self.copy_paths.pop, key, None)   # copia nuova: posizioni vecchie non valgono
         edit = (self.session.decisions.get(key) or {}).get("edit")
         fut = self.submit("export", (key, frame, token), exporter.export_item, item, frame,
-                          dest, self.current_settings(with_video), snapshot, edit,
-                          queue=self.export_q)
+                          self.export_dir, self.current_settings(with_video), snapshot, edit,
+                          favorite, queue=self.export_q)
         self.export_futures[key] = fut
 
     def revert_effects(self, item_id: str, d: dict) -> bool:
@@ -5282,7 +5359,8 @@ class MainWindow(QMainWindow):
             self._player_item = None
             try:
                 new_names: dict[Path, Path] = {}
-                renamed = exporter.restore_from_trash(d.get("moved", []), new_names)
+                missing: list[Path] = []
+                renamed = exporter.restore_from_trash(d.get("moved", []), new_names, missing)
             except OSError as e:
                 self.status.setStyleSheet("")
                 self.status.setText(tr('Ripristino da “cancellare” non riuscito: {e} (riprova)', e=e))
@@ -5293,6 +5371,10 @@ class MainWindow(QMainWindow):
                     p = getattr(item, attr)
                     if p is not None and p in new_names:
                         setattr(item, attr, new_names[p])
+            if missing:   # tolti a mano da "cancellare": la scelta si annulla, ma va detto
+                QMessageBox.warning(
+                    self, APP_TITLE, tr('Questi file non sono più in “cancellare” e non si possono rimettere a posto:\n')
+                    + "\n".join(str(p) for p in missing))
             if renamed:
                 QMessageBox.information(
                     self, APP_TITLE, tr("Al posto originale c'era già un file con lo stesso nome: nessuno è stato sovrascritto. Ripristinati come:\n")
@@ -5321,14 +5403,18 @@ class MainWindow(QMainWindow):
             self.player.stop()
             self.player.setSource(QUrl())
             self._player_item = None
-            try:
-                d = {**d, "moved": exporter.move_to_trash(item, self.root)}
+            try:   # sposta e registra insieme: se non si salva, i file tornano al loro posto
+                exporter.trash_item(self.session, item, self.root, base=d)
             except (OSError, ValueError) as e:
                 self.status.setText(tr('Spostamento non riuscito: {e}', e=e))
-                self.session.clear(item_id)
+                self.session.decisions.pop(item_id, None)
                 return
+            return
         self.session.decisions[item_id] = d
-        self.session.save()
+        try:
+            self.session.save()
+        except OSError as e:
+            self.status.setText(tr('Scelta non salvata: {e}', e=e), ms=0)
         if d["choice"] == "yes" and not d.get("noexport") and item and "#" not in item_id:
             d["files"] = []
             self.queue_export(item, d.get("frame"), with_video=d.get("with_video", False))
@@ -5389,12 +5475,29 @@ class MainWindow(QMainWindow):
                 self.show_message(tr('Completo gli export in corso… ({left})\n\nLe copie non finite verranno rifatte alla prossima apertura.', left=left))
                 QApplication.processEvents()
                 time.sleep(0.05)
-        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q):
+        for k in list(self._ready_jobs):   # le attese dei download finiscono subito
+            self.drop_ready_job(k)
+        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q,
+                   self.edit_pool):
             ex.shutdown(wait=False, cancel_futures=True)
+        stop_child_processes()   # ffmpeg e Real-ESRGAN: non restano orfani né lasciano file a metà
         if self.session:
             self.session.close()
         log.info("uscita")
         super().closeEvent(e)
+
+
+def stop_child_processes() -> None:
+    """Ferma i processi figli ancora in corso (ffmpeg dei fotogrammi, Real-ESRGAN della stampa):
+    con os._exit resterebbero orfani e potrebbero lasciare file a metà."""
+    for name, kill in (("ffmpeg", frames.kill_running),
+                       ("stampa", getattr(printprep, "kill_running", lambda: None))):
+        try:
+            n = kill()
+            if n:
+                log.info("uscita: fermati %s processi %s", n, name)
+        except Exception as e:  # noqa: BLE001 - l'uscita non si blocca per questo
+            log.warning("uscita: non riesco a fermare %s: %r", name, e)
 
 
 def selftest(root: Path, out: Path) -> int:
@@ -5458,6 +5561,7 @@ def main():
         else:
             w.start_scan()
     rc = app.exec()
+    stop_child_processes()   # anche se la finestra non è passata da closeEvent
     logging.shutdown()
     # Uscita immediata: senza questo Python aspetterebbe i download iCloud ancora in corso
     # nei thread in background (anche minuti) e l'app resterebbe appesa.

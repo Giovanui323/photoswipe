@@ -1,9 +1,17 @@
 THIRD-PARTY NOTICES — PhotoSwipe
 
-PhotoSwipe itself is MIT-licensed (see LICENSE). It bundles the components below,
-used by "Migliora per la stampa" (print upscaling). They are redistributed
-unmodified, with their original licenses reproduced here as those licenses require.
-None of their authors endorses PhotoSwipe.
+PhotoSwipe itself is MIT-licensed (see LICENSE). It bundles the components below:
+sections 1-8 are used by "Migliora per la stampa" (print upscaling), sections 9-11
+by the HEIC/HEIF and RAW/DNG decoders, sections 12-18 are the runtime the app is
+built on (Python, PyInstaller, Qt/PySide6, Pillow, NumPy, ffmpeg). They are
+redistributed unmodified, with their original licenses reproduced or referenced
+here as those licenses require.
+Full license texts mentioned below are in the "licenses" folder (next to this
+file in the DMG, and inside the app in Contents/Resources/licenses):
+LGPL-3.0.txt, GPL-3.0.txt (LGPL-3.0 is a set of additional permissions on top of
+GPL-3.0), LGPL-2.1.txt, GPL-2.0.txt, GCC-RUNTIME-LIBRARY-EXCEPTION-3.1.txt,
+Apache-2.0.txt, Python-LICENSE.txt, PyInstaller-COPYING.txt, Pillow-LICENSE.txt,
+NumPy-LICENSE.txt. None of their authors endorses PhotoSwipe.
 ==============================================================================
 1. Real-ESRGAN — model realesrgan-x4plus (engines/*/models)
    https://github.com/xinntao/Real-ESRGAN
@@ -211,3 +219,314 @@ SOFTWARE.
 ==============================================================================
 8. auto_model.py (AUTO / magic wand) — trained by PhotoSwipe itself only on
    public-domain and CC0 photographs from Wikimedia Commons; no third-party weights.
+==============================================================================
+9. pi-heif (HEIC / HEIF decoding, Python binding) — https://github.com/bigcat88/pillow_heif
+   Decode-only variant of pillow-heif: it contains no HEVC encoder (no x265).
+
+Copyright (c) 2021-2023, Pillow-Heif contributors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
+
+    * Neither the name of the Pillow-Heif nor the names of any
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+As distributed in binary form, pi-heif bundles the two libraries of section 10;
+its binary wheels are therefore covered by the LGPL-3.0 as a whole.
+==============================================================================
+10. libheif and libde265 (inside pi-heif) — GNU LGPL version 3.0
+    libheif 1.23.0   (libheif.1.23.0.dylib)   https://github.com/strukturag/libheif
+    libde265 1.1.0   (libde265.0.2.0.dylib)   https://github.com/strukturag/libde265
+    Copyright (c) struktur AG and the libheif / libde265 contributors.
+    Licensed under the GNU Lesser General Public License version 3.0
+    (full text: licenses/LGPL-3.0.txt and licenses/GPL-3.0.txt).
+    Source code: the repositories above (tags v1.23.0 / v1.1.0); the exact
+    sources used for the wheel are linked from https://pypi.org/project/pi-heif/1.4.0/
+
+    How PhotoSwipe meets the LGPL: these libraries are used unmodified and only
+    as separate dynamic libraries (.dylib), not linked statically into PhotoSwipe.
+    You may replace them with your own (e.g. modified) compatible builds: in the
+    installed app they are in
+        PhotoSwipe.app/Contents/Frameworks/pi_heif/__dot__dylibs/
+    After replacing them, re-sign the app ad-hoc so macOS will load it:
+        codesign --force --sign - <the replaced .dylib>
+        codesign --force --sign - /Applications/PhotoSwipe.app
+    PhotoSwipe's own source code is public (MIT) at
+    https://github.com/Giovanui323/photoswipe, so you can also rebuild the whole
+    app against other versions of these libraries.
+==============================================================================
+11. rawpy and LibRaw (RAW / DNG decoding)
+    rawpy 0.27.1 — https://github.com/letmaik/rawpy
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Maik Riechert
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+    LibRaw 0.22.1 (libraw_r.25.dylib, inside rawpy) — https://www.libraw.org/
+    Copyright (C) LibRaw LLC. Used under the GNU Lesser General Public
+    License version 2.1 (full text: licenses/LGPL-2.1.txt), one of LibRaw's two
+    licenses (the other is CDDL-1.0). Unmodified, as a separate dynamic library
+    that you may replace in PhotoSwipe.app/Contents/Frameworks/rawpy/ (re-sign
+    as described in section 10). Source: https://github.com/LibRaw/LibRaw
+
+    rawpy also bundles, as dynamic libraries (libjpeg.8.3.2.dylib,
+    liblcms2.2.dylib, libjasper.7.0.0.dylib):
+    - libjpeg-turbo 3.1.3 — IJG License and BSD-3-Clause (libjpeg-turbo Project);
+      "This software is based in part on the work of the Independent JPEG Group."
+      https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md
+    - Little CMS 2 — MIT License, Copyright (c) Marti Maria Saguer
+      https://github.com/mm2/Little-CMS/blob/master/LICENSE
+    - JasPer 4.2.5 — JasPer License Version 2.0 (MIT-style), Copyright (c)
+      Michael David Adams, Image Power, Inc. and the University of British Columbia
+      https://github.com/jasper-software/jasper/blob/master/LICENSE.txt
+==============================================================================
+12. Python 3.13.16 (interpreter and standard library; libpython3.13.dylib)
+    https://www.python.org/ — build from python-build-standalone
+    (https://github.com/astral-sh/python-build-standalone)
+
+    Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
+    Licensed under the PSF License Agreement for Python 3.13.16 (Python
+    Software Foundation License Version 2), which also contains the historical
+    BeOpen, CNRI and CWI licenses. Full text, as distributed with Python:
+    licenses/Python-LICENSE.txt. Python is used unmodified.
+
+    The python-build-standalone libpython3.13.dylib also contains, statically
+    linked, these libraries used by the standard library:
+    - OpenSSL 3.5.9 (ssl, hashlib) — Apache License 2.0 (licenses/Apache-2.0.txt),
+      Copyright (c) 1998-2025 The OpenSSL Project Authors,
+      Copyright (c) 1995-1998 Eric A. Young, Tim J. Hudson. https://www.openssl.org/
+    - Expat 2.x (xml.parsers.expat) — MIT License, Copyright (c) 1998-2000
+      Thai Open Source Software Center Ltd and Clark Cooper, Copyright (c)
+      2001-2025 Expat maintainers. https://github.com/libexpat/libexpat
+    - mpdecimal (decimal) — BSD 2-Clause License, Copyright (c) 2008-2024
+      Stefan Krah. https://www.bytereef.org/mpdecimal/
+    - libffi (ctypes) — MIT License, Copyright (c) 1996-2024 Anthony Green,
+      Red Hat, Inc and others. https://github.com/libffi/libffi
+    - SQLite (sqlite3) — public domain. https://sqlite.org/
+    - bzip2 / libbzip2 (bz2) — bzip2 license (BSD-style), Copyright (C)
+      1996-2010 Julian R Seward. https://sourceware.org/bzip2/
+    - XZ Utils / liblzma (lzma) — BSD Zero Clause License / public domain.
+      https://tukaani.org/xz/
+    - HACL* (hashlib built-in hashes) — MIT License, Copyright (c) 2016-2022
+      INRIA, CMU and Microsoft Corporation. https://github.com/hacl-star/hacl-star
+==============================================================================
+13. PyInstaller 6.22.3 bootloader and run-time hooks (the app's launcher,
+    Contents/MacOS/PhotoSwipe) — https://pyinstaller.org/
+
+    Copyright (c) 2010-2023, PyInstaller Development Team
+    Copyright (c) 2005-2009, Giovanni Bajo
+    Based on previous work under copyright (c) 2002 McMillan Enterprises, Inc.
+    The bootloader is licensed under the GNU GPL version 2 or later WITH the
+    PyInstaller "Bootloader Exception", which allows it to be embedded in and
+    distributed with programs under any license; the run-time hooks are under
+    the Apache License 2.0. Full terms: licenses/PyInstaller-COPYING.txt
+    (also licenses/GPL-2.0.txt and licenses/Apache-2.0.txt).
+==============================================================================
+14. Qt 6.8.3, PySide6 6.8.3 and Shiboken6 6.8.3 (the user interface)
+    https://www.qt.io/ — https://wiki.qt.io/Qt_for_Python
+    Copyright (C) The Qt Company Ltd. and other contributors.
+
+    Qt, PySide6 and Shiboken6 are available under the GNU Lesser General Public
+    License version 3 (or GPL-2.0 / GPL-3.0, or a commercial license).
+    PhotoSwipe uses them under the GNU LGPL version 3.0 (full text:
+    licenses/LGPL-3.0.txt together with licenses/GPL-3.0.txt).
+    Bundled Qt modules (each a separate dynamic framework/library): QtCore,
+    QtGui, QtWidgets, QtMultimedia, QtMultimediaWidgets, QtNetwork, QtOpenGL,
+    QtDBus, QtSvg, QtPdf, QtQml, QtQmlMeta, QtQmlModels, QtQmlWorkerScript,
+    QtQuick, QtVirtualKeyboard, plus Qt plugins (platforms, styles, imageformats,
+    iconengines, multimedia, tls, ...) and the PySide6/Shiboken6 bindings
+    (libpyside6.abi3.6.8.dylib, libshiboken6.abi3.6.8.dylib and the Qt*.so
+    modules).
+    Note: the Qt Virtual Keyboard module (QtVirtualKeyboard.framework, loaded by
+    the platforminputcontexts plugin; not used by PhotoSwipe) is offered by The
+    Qt Company under GPL-3.0 (or a commercial license) rather than LGPL-3.0; it
+    is distributed here under GPL-3.0 (licenses/GPL-3.0.txt).
+
+    Source code: Qt 6.8.3 at https://download.qt.io/archive/qt/6.8/6.8.3/ and
+    https://code.qt.io/ ; PySide6/Shiboken6 6.8.3 at
+    https://code.qt.io/cgit/pyside/pyside-setup.git/ (tag v6.8.3).
+    Qt also contains third-party code under its own permissive licenses (listed
+    in the Qt documentation, "Licenses Used in Qt", https://doc.qt.io/qt-6/licenses-used-in-qt.html).
+
+    How PhotoSwipe meets the LGPL: Qt, PySide6 and Shiboken6 are used unmodified
+    and only as separate dynamic libraries, not linked statically. You may
+    replace them with your own (e.g. modified) compatible builds; in the
+    installed app they are in
+        PhotoSwipe.app/Contents/Frameworks/PySide6/   (Qt/lib/*.framework, Qt/plugins)
+        PhotoSwipe.app/Contents/Frameworks/shiboken6/
+    then re-sign the app ad-hoc as described in section 10. PhotoSwipe's own
+    source code is public (MIT, https://github.com/Giovanui323/photoswipe), so
+    you can also rebuild the app against other versions of Qt/PySide6.
+==============================================================================
+15. FFmpeg libraries used by Qt Multimedia (video playback) — FFmpeg 7.1
+    libavcodec.61.dylib, libavformat.61.dylib, libavutil.59.dylib,
+    libswresample.5.dylib, libswscale.8.dylib (from the PySide6 wheel, in
+    PhotoSwipe.app/Contents/Frameworks/PySide6/Qt/lib/)
+    https://ffmpeg.org/ — Copyright (c) 2000-2024 the FFmpeg developers.
+
+    These libraries are an LGPL build of FFmpeg (configured without
+    --enable-gpl and without --enable-nonfree; each library reports
+    "license: LGPL version 2.1 or later"). Licensed under the GNU Lesser General
+    Public License version 2.1 or later (full text: licenses/LGPL-2.1.txt).
+    Unmodified, dynamically linked, replaceable as described in section 14.
+    Source code: https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz (git tag n7.1,
+    https://git.ffmpeg.org/ffmpeg.git).
+==============================================================================
+16. Pillow 13.0.0 (image loading/saving) — https://python-pillow.github.io/
+
+    The Python Imaging Library (PIL) is
+        Copyright © 1997-2011 by Secret Labs AB
+        Copyright © 1995-2011 by Fredrik Lundh and contributors
+    Pillow is the friendly PIL fork. It is
+        Copyright © 2010 by Jeffrey 'Alex' Clark and contributors
+    Licensed under the MIT-CMU License (full text, together with the licenses of
+    all bundled libraries, as shipped in the Pillow wheel: licenses/Pillow-LICENSE.txt).
+
+    Pillow bundles these libraries (dynamic libraries in PIL/.dylibs, inside the
+    app in PhotoSwipe.app/Contents/Frameworks/PIL/__dot__dylibs/); their full
+    license texts are in licenses/Pillow-LICENSE.txt:
+    - libjpeg-turbo 3.2.0 (libjpeg.62.4.0.dylib) — IJG License and BSD-3-Clause;
+      "This software is based in part on the work of the Independent JPEG Group."
+    - libpng (libpng16.16.dylib) — libpng License
+    - libtiff 4.7.2 (libtiff.6.dylib) — libtiff License (Sam Leffler, Silicon Graphics)
+    - libwebp 1.6.0 (libwebp.7.dylib, libwebpdemux.2.dylib, libwebpmux.3.dylib,
+      libsharpyuv.0.dylib) — BSD-3-Clause, Copyright (c) Google Inc.
+    - libavif 1.4.2 (libavif.16.4.2.dylib, containing dav1d, libaom and libyuv)
+      — BSD-2-Clause (libavif, dav1d), BSD-2-Clause + AOM Patent License 1.0
+      (libaom), BSD-3-Clause (libyuv)
+    - OpenJPEG 2.5.4 (libopenjp2.2.5.4.dylib) — BSD-2-Clause
+    - Little CMS 2.19.1 (liblcms2.2.dylib) — MIT
+    - FreeType 2.14.3 (libfreetype.6.dylib) — FreeType License (FTL):
+      portions of this software are copyright © The FreeType Project
+      (www.freetype.org). All rights reserved.
+    - HarfBuzz 14.5.0 (libharfbuzz.0.dylib) — MIT ("Old MIT")
+    - Brotli (libbrotlicommon.1.2.0.dylib, libbrotlidec.1.2.0.dylib) — MIT
+    - zlib-ng 2.3.3 (libz.1.3.1.zlib-ng.dylib) — zlib License
+    - XZ Utils / liblzma (liblzma.5.dylib) — BSD Zero Clause License / public domain
+    - libxcb 1.17.0 (libxcb.1.1.0.dylib) and libXau (libXau.6.dylib) — X11 (MIT) License
+    - raqm 0.11.0 (inside the _imagingft module) — MIT
+==============================================================================
+17. NumPy 2.5.4 and its bundled libraries (numpy/.dylibs, inside the app in
+    PhotoSwipe.app/Contents/Frameworks/numpy/) — https://numpy.org/
+
+    NumPy: Copyright (c) 2005-2025, NumPy Developers. BSD 3-Clause License (with
+    parts under 0BSD, MIT, Zlib, Apache-2.0 and CC0-1.0). Full texts, as shipped
+    in the NumPy wheel: licenses/NumPy-LICENSE.txt.
+
+    The NumPy wheel bundles, as dynamic libraries:
+    - OpenBLAS (libscipy_openblas64_.dylib), with LAPACK inside —
+      BSD-3-Clause, Copyright (c) 2011-2014, The OpenBLAS Project; LAPACK:
+      BSD-3-Clause-Open-MPI, Copyright (c) 1992-2013 The University of
+      Tennessee and others. https://github.com/OpenMathLib/OpenBLAS/
+    - GCC runtime libraries libgfortran (libgfortran.5.dylib) and libgcc
+      (libgcc_s.1.1.dylib) — Copyright (C) Free Software Foundation, Inc.
+      GNU General Public License version 3 or later WITH the GCC Runtime
+      Library Exception, version 3.1 (full texts: licenses/GPL-3.0.txt and
+      licenses/GCC-RUNTIME-LIBRARY-EXCEPTION-3.1.txt). The Exception permits
+      distributing these runtime libraries together with programs under any
+      license. Source: https://gcc.gnu.org/ (libgfortran, libgcc).
+    - libquadmath (libquadmath.0.dylib) — Copyright (C) 2010-2019 Free
+      Software Foundation, Inc. GNU Lesser General Public License version 2.1
+      or later (full text: licenses/LGPL-2.1.txt). Unmodified, dynamically
+      linked and replaceable in the folder above (re-sign as in section 10).
+      Source: https://gcc.gnu.org/ (libquadmath).
+==============================================================================
+18. imageio-ffmpeg 0.6.0 and the ffmpeg 7.1 program it contains
+    (video frame export) — https://github.com/imageio/imageio-ffmpeg
+
+BSD 2-Clause License
+
+Copyright (c) 2019-2025, imageio
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+    ffmpeg 7.1 executable (ffmpeg-macos-aarch64-v7.1, in
+    PhotoSwipe.app/Contents/Frameworks/imageio_ffmpeg/binaries/)
+    https://ffmpeg.org/ — Copyright (c) 2000-2024 the FFmpeg developers.
+    This is a GPL build of FFmpeg: it was configured with --enable-gpl and
+    statically includes GPL libraries (x264, x265, libvidstab, postproc), so
+    the program as a whole is licensed under the GNU General Public License
+    version 2 or (at your option) any later version (full texts:
+    licenses/GPL-2.0.txt, licenses/GPL-3.0.txt). It was not built with
+    --enable-nonfree. It is a separate program that PhotoSwipe only runs as an
+    external process; it is not linked into PhotoSwipe. It is redistributed
+    unmodified as published in the imageio-ffmpeg 0.6.0 wheel.
+    Build configuration (from "ffmpeg -version"):
+      --enable-gpl --enable-libvmaf --enable-libopenjpeg --enable-libopus
+      --enable-libmp3lame --enable-libx264 --enable-libx265 --enable-libvpx
+      --enable-libwebp --enable-libass --enable-libfreetype --enable-fontconfig
+      --enable-libtheora --enable-libvorbis --enable-libsnappy --enable-libaom
+      --enable-libvidstab --enable-libzimg --enable-libsvtav1 --enable-libharfbuzz
+      --enable-libkvazaar --enable-postproc (static, macOS arm64)
+    Libraries statically included and their licenses: x264 (GPL-2.0-or-later),
+    x265 (GPL-2.0-or-later), libvidstab (GPL-2.0-or-later), LAME/libmp3lame
+    (LGPL-2.0-or-later), libass (ISC), FreeType (FTL), fontconfig (MIT-style),
+    HarfBuzz (MIT), FriBiDi (LGPL-2.1-or-later, via libass), libvpx (BSD-3-Clause),
+    libaom (BSD-2-Clause + AOM Patent License 1.0), SVT-AV1 (BSD-3-Clause-Clear
+    + AOM Patent License 1.0), Kvazaar (BSD-3-Clause), libopus (BSD-3-Clause),
+    libvorbis/libogg/libtheora (BSD-3-Clause, Xiph.Org), libwebp (BSD-3-Clause),
+    OpenJPEG (BSD-2-Clause), zimg (WTFPL), snappy (BSD-3-Clause), libvmaf
+    (BSD-2-Clause-Patent).
+    Source code: FFmpeg 7.1 at https://ffmpeg.org/releases/ffmpeg-7.1.tar.xz,
+    and the upstream projects of the libraries listed above.

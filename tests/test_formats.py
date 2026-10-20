@@ -112,7 +112,8 @@ def test_export_heic_copies_byte_identical(tmp_path):
     out_dir = tmp_path / "export"
     out_dir.mkdir()
     out = exporter.export_item(item, None, out_dir, exporter.Settings())
-    assert out[0].name == "IMG_0002.HEIC"
+    # senza data nell'EXIF: quella trovata alla scansione
+    assert out == [out_dir / exporter.PHOTO_SUBDIR / exporter.dated("IMG_0002.HEIC", item.taken)]
     assert out[0].read_bytes() == src.read_bytes()
 
 
@@ -157,7 +158,7 @@ def test_iphone_live_export_keeps_still_only_by_default(tmp_path):
     out_dir = tmp_path / "export"
     out_dir.mkdir()
     out = exporter.export_item(item, None, out_dir, exporter.Settings(copy_video=False))
-    assert [p.name for p in out] == ["IMG_0011.HEIC"]
+    assert out == [out_dir / exporter.PHOTO_SUBDIR / exporter.dated("IMG_0011.HEIC", item.taken)]
     assert out[0].read_bytes() == src.read_bytes()
     assert not (out_dir / exporter.VIDEO_SUBDIR).exists()
 
@@ -170,7 +171,8 @@ def test_iphone_live_export_with_video_copies_mov_too(tmp_path):
     out_dir = tmp_path / "export"
     out_dir.mkdir()
     out = exporter.export_item(item, None, out_dir, exporter.Settings(copy_video=True))
-    assert out[1] == out_dir / exporter.VIDEO_SUBDIR / "IMG_0012.MOV"
+    assert out == [out_dir / exporter.PHOTO_SUBDIR / exporter.dated("IMG_0012.HEIC", item.taken),
+                   out_dir / exporter.VIDEO_SUBDIR / exporter.dated("IMG_0012.MOV", item.taken)]
     assert out[1].read_bytes() == mov.read_bytes()
 
 

@@ -11,73 +11,6 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushB
 import edits as E
 from i18n import tr
 
-EDIT_STYLE = """
-QFrame#segbar { background: #2c2c2e; border: 1px solid #48484a; border-radius: 16px; }
-QFrame#side QFrame#segbar QPushButton { background: transparent; border: none; border-radius: 12px;
-    padding: 5px 0; font-size: 13px; font-weight: 600; color: #f2f2f7; text-align: center; }
-QFrame#side QFrame#segbar QPushButton:hover { background: #3a3a3c; }
-QFrame#side QFrame#segbar QPushButton:checked { background: #545456; }
-QFrame#side QFrame#segbar QPushButton:disabled { color: #6e6e73; }
-QLabel#editnote { color: #98989f; font-size: 11px; }
-QFrame#side QPushButton#chev { background: transparent; border: none; padding: 0; font-size: 12px; color: #d1d1d6;
-    min-width: 14px; max-width: 14px; text-align: center; }
-QFrame#side QPushButton#sectitle { background: transparent; border: none; padding: 2px 0; font-size: 15px;
-    color: #f2f2f7; text-align: left; }
-QFrame#side QPushButton#sectitle:hover { color: #ffffff; }
-QFrame#side QPushButton#secundo { background: transparent; border: none; padding: 0; font-size: 15px; color: #8e8e93;
-    min-width: 20px; max-width: 20px; text-align: center; }
-QFrame#side QPushButton#secundo:hover { color: #f2f2f7; }
-QFrame#side QPushButton#auto { background: transparent; border: 1px solid #8e8e93; border-radius: 8px;
-    padding: 0 5px; font-size: 9px; font-weight: 700; color: #d1d1d6; min-height: 15px; max-height: 15px;
-    text-align: center; }
-QFrame#side QPushButton#auto:hover { border-color: #f2f2f7; color: #ffffff; }
-QFrame#side QPushButton#auto[on="true"] { background: #8e8e93; border-color: #8e8e93; color: #1c1c1e; }
-QFrame#side QPushButton#secundo:disabled { color: #545456; }
-QFrame#side QPushButton#opts { background: transparent; border: none; padding: 2px 0 2px 18px; font-size: 13px;
-    color: #d1d1d6; text-align: left; }
-QFrame#side QPushButton#reset, QFrame#side QPushButton#cropbtn { background: #3a3a3c; border: none; border-radius: 15px;
-    padding: 7px 14px; font-size: 13px; text-align: center; }
-QFrame#side QPushButton#reset:hover, QFrame#side QPushButton#cropbtn:hover { background: #48484a; }
-QFrame#side QPushButton#reset:disabled, QFrame#side QPushButton#cropbtn:disabled { color: #6e6e73; background: #2c2c2e; }
-QFrame#side QPushButton#cropok { background: #ffd60a; color: #1c1c1e; border: none; border-radius: 15px;
-    padding: 7px 14px; font-size: 14px; font-weight: 700; text-align: center; }
-QFrame#side QPushButton#cropok:hover { background: #ffe14d; }
-QLabel#panelhead { color: #98989f; font-size: 13px; font-weight: 700; padding-bottom: 7px;
-    border-bottom: 2px solid #48484a; }
-QFrame#side QPushButton#cropitem { background: transparent; border: none; padding: 4px 0; font-size: 15px;
-    color: #d1d1d6; text-align: left; }
-QFrame#side QPushButton#cropitem:hover { color: #ffffff; }
-QFrame#side QPushButton#cropitem[on="true"] { color: #ffffff; }
-QLabel#cropitemlabel { font-size: 15px; color: #d1d1d6; padding: 4px 0; }
-QFrame#side QPushButton#cropbig { background: #48484a; border: none; border-radius: 20px; min-height: 40px;
-    max-height: 40px; font-size: 15px; color: #f2f2f7; text-align: center; padding: 0 12px; }
-QFrame#side QPushButton#cropbig:hover { background: #545456; }
-QFrame#side QPushButton#cropbig:disabled { background: #2f2f31; color: #6e6e73; }
-QFrame#side QPushButton#aspect:checked { color: #ffffff; }
-QFrame#side QPushButton#aspect { background: transparent; border: none; border-radius: 0; padding: 5px 0;
-    font-size: 15px; color: #aeaeb2; text-align: left; }
-QFrame#side QPushButton#aspect:hover { color: #ffffff; }
-QFrame#side QPushButton#aspect:checked { color: #ffffff; }
-QFrame#side QPushButton#flip { background: transparent; border: none; padding: 4px 0; font-size: 15px;
-    color: #d1d1d6; text-align: left; }
-QFrame#side QPushButton#flip:hover { color: #ffffff; }
-QFrame#side QPushButton#orient { background: #2c2c2e; border: 1px solid #48484a; border-radius: 6px; padding: 0;
-    font-size: 15px; min-width: 34px; max-width: 34px; min-height: 24px; max-height: 24px; text-align: center; }
-QFrame#side QPushButton#orient:checked { background: #545456; border-color: #8e8e93; }
-QFrame#side QPushButton#swatch { border-radius: 11px; min-width: 22px; max-width: 22px; min-height: 22px;
-    max-height: 22px; padding: 0; border: 2px solid transparent; }
-QFrame#side QPushButton#swatch:checked { border: 2px solid #ffffff; }
-QFrame#side QPushButton#small2 { background: #3a3a3c; border: none; border-radius: 10px; padding: 3px 10px;
-    font-size: 12px; text-align: center; }
-QFrame#side QPushButton#small2:hover { background: #48484a; }
-QFrame#side QPushButton#discard { background: #3a3a3c; border: 1px solid #ff453a; color: #ff6961; border-radius: 15px;
-    padding: 7px 14px; font-size: 13px; font-weight: 600; text-align: center; }
-QFrame#side QPushButton#discard:hover { background: rgba(255, 69, 58, 50); }
-QFrame#side QPushButton#discard:disabled { color: #6e6e73; border-color: #3a3a3c; background: #2c2c2e; }
-QFrame#side QSpinBox { background: #2c2c2e; border: 1px solid #545456; border-radius: 6px; padding: 2px 4px; }
-"""
-
-
 # ----------------------------------------------------------------------------- piccoli widget
 class Segmented(QFrame):
     """Info · Regola · Ritaglia, come la barra Regola · Stili · Ritaglia di Foto."""
@@ -904,7 +837,8 @@ class RegolaPanel(QWidget):
 
     def add_redeye(self, x: float, y: float) -> None:
         pts = list(self.edit.get("redeye") or [])
-        pts.append([x, y, E.get(self.edit, "redeye_size")])
+        # con il riquadro di adesso (capovolgi + ritaglio): se poi cambiano, il punto resta sull'occhio
+        pts.append([x, y, E.get(self.edit, "redeye_size")] + E.redeye_frame(self.edit))
         self.edit["redeye"] = pts
         self.edit["off"] = [s for s in self.edit.get("off", []) if s != "redeye"]
         self._emit()

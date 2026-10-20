@@ -1,0 +1,3 @@
+# Per sviluppare e far girare i test: pacchetti dell'app + pytest
+-r requirements.txt
+pytest>=8

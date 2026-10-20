@@ -166,7 +166,7 @@ def read_video(path: Path, info: frames.VideoInfo | None) -> Meta:
     br = re.search(r"bitrate: (\d+) kb/s", err)
     if br:
         meta.rows.append((tr('Bitrate'), f"{int(br.group(1)) / 1000:.1f} Mbit/s"))
-    if re.search(tr('Audio: '), err):
+    if "Audio: " in err:   # testo di ffmpeg: mai tradotto
         a = re.search(r"Audio: (\w+)[^\n]*?(\d+) Hz[^\n]*?(mono|stereo|[\d.]+ channels)?", err)
         meta.rows.append((tr('Audio'), f"{a.group(1).upper()} · {a.group(3) or ''}".strip(" ·") if a else tr('sì')))
     return meta

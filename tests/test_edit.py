@@ -13,6 +13,7 @@ import exporter  # noqa: E402
 from test_ui import (PHOTO1, PHOTO2, click, exported, exports_done, go, open_folder, press,  # noqa: E402,F401
                      pump, qapp, sd, sd_template, wait, win)
 from PySide6.QtCore import Qt  # noqa: E402
+from test_frames_exact import frame_rel, photo_rel  # noqa: E402
 
 
 # ------------------------------------------------------------------ motore
@@ -83,9 +84,9 @@ def test_regola_then_yes_exports_modified(qapp, win, sd):
     assert win.btn_discard.isEnabled() and win.btn_restore.isVisible()
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert exported(win) == [PHOTO1]
+    assert exported(win) == [photo_rel(PHOTO1)]   # Foto/20260730_132210_DJI_..._0002_D.JPG
     src = next((sd / "DCIM").rglob(PHOTO1))
-    out = win.export_dir / PHOTO1
+    out = win.export_dir / photo_rel(PHOTO1)
     assert out.read_bytes() != src.read_bytes()
     a = np.asarray(Image.open(out), np.float32).mean()
     b = np.asarray(Image.open(src), np.float32).mean()
@@ -111,7 +112,8 @@ def test_crop_needs_ok_and_blocks_choices(qapp, win, sd):
     assert win.side_tab == "info"
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert Image.open(win.export_dir / PHOTO1).size == (900, 900)
+    assert exported(win) == [photo_rel(PHOTO1)]
+    assert Image.open(win.export_dir / photo_rel(PHOTO1)).size == (900, 900)
 
 
 def test_crop_cancel_keeps_original(qapp, win, sd):
@@ -123,7 +125,8 @@ def test_crop_cancel_keeps_original(qapp, win, sd):
     assert win.crop_draft is None and E.is_empty(win.item_edit())
     click(qapp, win, win.btn_yes)
     exports_done(qapp, win)
-    assert (win.export_dir / PHOTO2).read_bytes() == next((sd / "DCIM").rglob(PHOTO2)).read_bytes()
+    assert exported(win) == [photo_rel(PHOTO2)]
+    assert (win.export_dir / photo_rel(PHOTO2)).read_bytes() == next((sd / "DCIM").rglob(PHOTO2)).read_bytes()
 
 
 def test_discard_edits_button(qapp, win, sd):
@@ -248,7 +251,8 @@ def test_open_crop_without_changes_does_not_block(qapp, win, sd):
     click(qapp, win, win.btn_yes)            # Sì direttamente: chiude Ritaglia ed esporta l'originale
     exports_done(qapp, win)
     assert win.crop_draft is None and not win.image_view.crop_mode
-    assert (win.export_dir / PHOTO1).read_bytes() == next((sd / "DCIM").rglob(PHOTO1)).read_bytes()
+    assert exported(win) == [photo_rel(PHOTO1)]
+    assert (win.export_dir / photo_rel(PHOTO1)).read_bytes() == next((sd / "DCIM").rglob(PHOTO1)).read_bytes()
     win.on_side_tab("regola")
     win.regola._set("contrast", 0.3)
     win.regola._set("contrast", 0.0)         # tornato com'era: niente da confermare
@@ -277,16 +281,17 @@ def test_video_frame_regola_then_snapshot_is_edited(qapp, win, sd):
     assert win.session.edits[f"{win.current().id}#f30"]["exposure"] == -0.9
     click(qapp, win, win.btn_snap)
     exports_done(qapp, win)
-    out = win.export_dir / f"{long_}_f0031.jpg"
+    rel = frame_rel(sd / "DCIM" / "DJI_001" / f"{long_}.MP4", 30)
+    assert exported(win) == [rel]
+    out = win.export_dir / rel
     edited = np.asarray(Image.open(out), np.float32).mean()
     # stesso fotogramma senza modifiche, per confronto
     win.on_side_tab("regola")
     win.regola.reset_all.emit()
     win.regola_ok()                        # foto già presa: si rifà senza modifiche
     exports_done(qapp, win)
-    files = [p for p in win.export_dir.iterdir() if p.suffix == ".jpg"]
-    assert len(files) == 1
-    plain = np.asarray(Image.open(files[0]), np.float32).mean()
+    assert exported(win) == [rel]          # stesso nome, rifatta al suo posto
+    plain = np.asarray(Image.open(out), np.float32).mean()
     assert edited < plain - 10
 
 
@@ -299,7 +304,9 @@ def test_video_crop_on_frame(qapp, win, sd):
     win.crop_ok()
     click(qapp, win, win.btn_snap)
     exports_done(qapp, win)
-    w, h = Image.open(win.export_dir / f"{long_}_f0011.jpg").size
+    rel = frame_rel(sd / "DCIM" / "DJI_001" / f"{long_}.MP4", 10)
+    assert exported(win) == [rel]
+    w, h = Image.open(win.export_dir / rel).size
     assert w == h
 
 

@@ -6,7 +6,10 @@ risoluzione): i raggi di sfocatura e nitidezza sono in proporzione alla misura d
 """
 from __future__ import annotations
 
+import io
 import math
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -109,6 +112,8 @@ def clean(e: dict) -> dict:
         elif k == "redeye":
             if v:
                 out[k] = [[round(float(a), 5) for a in p] for p in v]
+    if "crop" not in out:   # proporzioni senza riquadro (es. "Originale"): la foto non cambia
+        out.pop("aspect", None)
     if "aspect" not in out:
         out.pop("aspect_custom", None)
         out.pop("aspect_portrait", None)
@@ -123,7 +128,13 @@ def _full_crop(c) -> bool:
 
 
 def is_empty(e: dict | None) -> bool:
-    return not e or not clean(e)
+    """Nessuna modifica che cambi davvero la foto: solo valori predefiniti, proporzioni senza
+    riquadro, sezioni spente, misura degli occhi rossi senza occhi, bacchetta senza effetto…
+    Allora l'export è la copia identica dell'originale."""
+    if not e:
+        return True
+    c = clean(e)
+    return not (has_geometry(c) or has_tone(c))
 
 
 def section_modified(e: dict, sec: str) -> bool:
@@ -425,15 +436,101 @@ def _bw(x, e, scale: float):
     return np.clip(out, 0, 1)
 
 
+def redeye_frame(e: dict) -> list[float]:
+    """Geometria in cui si segna un occhio rosso: capovolgi (0/1), ritaglio, raddrizza,
+    verticale e orizzontale di quel momento."""
+    c = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
+    return ([1.0 if e.get("flip") else 0.0] + [float(v) for v in c]
+            + [get(e, "straighten"), get(e, "vertical"), get(e, "horizontal")])
+
+
+def _geo_forward(X: float, Y: float, g: dict, r: float) -> tuple[float, float]:
+    """Punto (0..1) della foto già capovolta → punto (0..1) dell'uscita di geometry_base
+    (prospettiva, poi raddrizza), per una foto con larghezza/altezza r."""
+    if abs(get(g, "vertical")) > 1e-6 or abs(get(g, "horizontal")) > 1e-6:
+        m = np.linalg.inv(_persp_matrix(g, r, 1.0))   # foto → uscita
+        u = m @ np.array([X * r, Y, 1.0])
+        X, Y = u[0] / u[2] / r, u[1] / u[2]
+    a = get(g, "straighten")
+    if abs(a) > 1e-6:
+        k = straighten_scale(a, r, 1.0)
+        t = math.radians(a)
+        dx, dy = (X - 0.5) * r, Y - 0.5
+        # rotate(-a) di PIL: in senso orario di a gradi (asse y verso il basso)
+        dx, dy = dx * math.cos(t) - dy * math.sin(t), dx * math.sin(t) + dy * math.cos(t)
+        X, Y = dx / (r * k) + 0.5, dy / k + 0.5
+    return X, Y
+
+
+def _geo_inverse(X: float, Y: float, g: dict, r: float) -> tuple[float, float]:
+    """L'inverso di _geo_forward: uscita di geometry_base → foto (già capovolta)."""
+    a = get(g, "straighten")
+    if abs(a) > 1e-6:
+        k = straighten_scale(a, r, 1.0)
+        t = math.radians(a)
+        dx, dy = (X - 0.5) * r * k, (Y - 0.5) * k
+        dx, dy = dx * math.cos(t) + dy * math.sin(t), -dx * math.sin(t) + dy * math.cos(t)
+        X, Y = dx / r + 0.5, dy + 0.5
+    if abs(get(g, "vertical")) > 1e-6 or abs(get(g, "horizontal")) > 1e-6:
+        u = _persp_matrix(g, r, 1.0) @ np.array([X * r, Y, 1.0])   # uscita → foto
+        X, Y = u[0] / u[2] / r, u[1] / u[2]
+    return X, Y
+
+
+def redeye_point(p, e: dict, aspect: float | None = None) -> tuple[float, float]:
+    """Punto (x, y) di un occhio rosso nel riquadro di adesso.
+
+    I punti ricordano la geometria in cui sono stati segnati
+    [x, y, misura, flip, cx, cy, cw, ch, raddrizza, verticale, orizzontale]: il punto si riporta
+    sulla foto originale (inverso di ritaglio, raddrizza, prospettiva e capovolgi di allora) e poi
+    si rimanda avanti con la geometria di adesso, così la correzione resta sull'occhio.
+    aspect = larghezza/altezza della foto originale (raddrizza dipende dalla forma); se manca si
+    usa 1. Esatto a meno degli arrotondamenti al pixel di geometry_base (int() della misura
+    raddrizzata, // del margine): meno di un pixel. I punti con 8 valori (prima di raddrizza e
+    prospettiva) seguono solo capovolgi e ritaglio; quelli con 3 o meno restano dove sono."""
+    if len(p) < 8:
+        return p[0], p[1]
+    fl, cx, cy, cw, ch = p[3:8]
+    X, Y = cx + p[0] * cw, cy + p[1] * ch   # nell'uscita di geometry_base di allora
+    n = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
+    if len(p) >= 11:
+        r = aspect or 1.0
+        then = {"straighten": p[8], "vertical": p[9], "horizontal": p[10]}
+        X, Y = _geo_inverse(X, Y, then, r)     # foto capovolta come allora
+        if bool(fl) != bool(e.get("flip")):
+            X = 1 - X
+        X, Y = _geo_forward(X, Y, e, r)        # geometria di adesso
+    elif bool(fl) != bool(e.get("flip")):
+        X = 1 - X
+    return (X - n[0]) / max(n[2], 1e-6), (Y - n[1]) / max(n[3], 1e-6)
+
+
+def redeye_spot(p, e: dict, aspect: float, wid: int, hgt: int) -> tuple[float, float, float]:
+    """Centro (x, y in 0..1) e raggio (in pixel) di un occhio rosso nella foto di adesso
+    (wid × hgt). Per i punti che ricordano la geometria anche il raggio segue lo zoom di
+    ritaglio / raddrizza / prospettiva: si manda avanti anche un punto sul bordo del cerchio."""
+    px, py = redeye_point(p, e, aspect)
+    size = p[2] if len(p) > 2 else get(e, "redeye_size")
+    if len(p) < 11:
+        return px, py, size * max(wid, hgt)
+    fa = max(p[6], 1e-6) * aspect / max(p[7], 1e-6)   # larghezza/altezza del riquadro di allora
+    dx = size * max(1.0, 1.0 / fa)                      # raggio in unità della larghezza di allora
+    qx, qy = redeye_point([p[0] + dx, p[1]] + list(p[2:]), e, aspect)
+    return px, py, math.hypot((qx - px) * wid, (qy - py) * hgt)
+
+
 def _redeye(x, e):
     pts = e.get("redeye") or []
     if not pts:
         return x
     hgt, wid = x.shape[:2]
     yy, xx = np.mgrid[0:hgt, 0:wid].astype(np.float32)
+    # forma della foto originale: raddrizza e prospettiva non la cambiano, il ritaglio sì
+    c = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
+    aspect = (wid / max(c[2], 1e-6)) / (hgt / max(c[3], 1e-6))
     for p in pts:
-        cx, cy = p[0] * wid, p[1] * hgt
-        r = (p[2] if len(p) > 2 else get(e, "redeye_size")) * max(wid, hgt)
+        px, py, r = redeye_spot(p, e, aspect, wid, hgt)
+        cx, cy = px * wid, py * hgt
         d = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / max(r, 1)
         mask = np.clip(1.3 - d, 0, 1)
         rch, gch, bch = x[..., 0], x[..., 1], x[..., 2]
@@ -605,6 +702,11 @@ def classic_auto_color(img: Image.Image) -> dict:
     return out
 
 
+def _grad(a: np.ndarray, axes=(0, 1)) -> list[np.ndarray]:
+    """np.gradient che non si rompe sulle foto alte o larghe 1 px (lì il gradiente è 0)."""
+    return [np.gradient(a, axis=ax) if a.shape[ax] > 1 else np.zeros_like(a) for ax in axes]
+
+
 def _illuminant(x: np.ndarray) -> np.ndarray:
     """Colore della luce (lineare): Shades of Gray (p=6) e Gray Edge insieme."""
     lin = _lin(x)
@@ -615,7 +717,7 @@ def _illuminant(x: np.ndarray) -> np.ndarray:
     p = 6
     sog = np.array([np.mean(lin[..., c][ok] ** p) ** (1 / p) for c in range(3)])
     sm = _blur(lin, 1.0)
-    gy, gx = np.gradient(sm, axis=(0, 1))
+    gy, gx = _grad(sm)
     mag = np.hypot(gx, gy)
     ge = np.array([np.mean(mag[..., c][ok] ** p) ** (1 / p) for c in range(3)])
     if sog.sum() < 1e-9:
@@ -696,7 +798,7 @@ def find_lines(img: Image.Image, side: int = 640, families: tuple[str, ...] = ("
         g = g.resize((max(1, round(g.width * k)), max(1, round(g.height * k))), Image.BILINEAR)
     a = _blur(np.asarray(g, np.float32) / 255, 1.2)
     hgt, wid = a.shape
-    gy, gx = np.gradient(a)
+    gy, gx = _grad(a)
     mag = np.hypot(gx, gy)
     thr = max(float(np.percentile(mag, 93)), 0.02)
     # solo i massimi lungo il gradiente (bordi sottili, come Canny)
@@ -830,20 +932,108 @@ def auto_perspective(img: Image.Image) -> dict:
 
 
 # ----------------------------------------------------------------------------- export
-def load_full(path: Path) -> tuple[Image.Image, dict]:
-    """Originale a piena risoluzione, già girato secondo l'EXIF; e cosa conservare nel file."""
-    keep: dict = {}
+_RGB16 = ("I;16", "I;16B", "I;16L", "I;16N", "I")
+
+
+def to_rgb(im: Image.Image) -> tuple[Image.Image, bytes | None]:
+    """RGB a 8 bit, e il profilo ICC da tenere (solo se è un profilo RGB).
+    16 bit: si scala 0..65535 → 0..255 (convert("RGB") taglierebbe a 255: foto quasi bianca).
+    CMYK col suo profilo: si converte in sRGB col profilo (e allora il profilo non serve più)."""
+    icc = im.info.get("icc_profile")
+    space = icc[16:20] if icc and len(icc) >= 20 else None
+    if im.mode in _RGB16:
+        a = np.asarray(im.convert("I") if im.mode != "I" else im).astype(np.float32)
+        if im.mode != "I" or a.max() > 255:   # "I" con valori 0..255: è già a 8 bit
+            a = a / 257.0
+        im = Image.fromarray(np.clip(a + 0.5, 0, 255).astype(np.uint8), "L")
+    elif im.mode == "CMYK" and space == b"CMYK":
+        try:
+            from PIL import ImageCms
+            return ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+                                             ImageCms.createProfile("sRGB"), outputMode="RGB"), None
+        except Exception:  # noqa: BLE001 - profilo rotto: conversione semplice
+            pass
+    return im.convert("RGB"), (icc if space == b"RGB " else None)
+
+
+def _load_raw(path: Path) -> Image.Image | None:
+    """DNG a piena risoluzione (PIL ci vede solo la miniatura TIFF): sviluppo con rawpy;
+    se non si può, l'anteprima di scanner; None se non va niente."""
     try:
-        im = Image.open(path)
-        im.load()
-        exif = im.getexif()
-        keep["icc_profile"] = im.info.get("icc_profile")
-        im = ImageOps.exif_transpose(im)
-        if exif:
-            exif[0x0112] = 1   # già girata
-            keep["exif"] = exif.tobytes()
-        return im.convert("RGB"), keep
-    except Exception:  # noqa: BLE001 - es. HEIC: lo legge Qt (macOS)
+        import rawpy
+        with rawpy.imread(str(path)) as raw:
+            return Image.fromarray(raw.postprocess(use_camera_wb=True))
+    except Exception:  # noqa: BLE001 - rawpy assente o file che non legge
+        pass
+    try:
+        from scanner import raw_preview
+        img = raw_preview(path)
+        return img.convert("RGB") if img is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_HEIF_TRIED = False
+
+
+def register_heif() -> bool:
+    """HEIC / HEIF in PIL con pi-heif (solo decodifica, licenze compatibili), se c'è: così si
+    tengono EXIF, profilo ICC e XMP. Senza, load_full ripiega su Qt (macOS) come prima."""
+    global _HEIF_TRIED
+    if not _HEIF_TRIED:
+        _HEIF_TRIED = True
+        try:
+            from pi_heif import register_heif_opener
+            register_heif_opener()
+        except Exception:  # noqa: BLE001 - pi-heif assente o rotto: resta Qt
+            pass
+    return "HEIF" in Image.OPEN
+
+
+_BOMB_LOCK = threading.Lock()
+
+
+@contextmanager
+def open_unbounded(path):
+    """Image.open senza il limite "decompression bomb" di PIL (panorami oltre 178 MP, uscita 4×
+    del motore di stampa): solo per file scelti dall'utente o nostri. Il limite è globale: si
+    toglie sotto un lucchetto solo per l'apertura (il controllo è lì) e si rimette subito."""
+    with _BOMB_LOCK:
+        old, Image.MAX_IMAGE_PIXELS = Image.MAX_IMAGE_PIXELS, None
+        try:
+            im = Image.open(path)
+        finally:
+            Image.MAX_IMAGE_PIXELS = old
+    with im:
+        yield im
+
+
+def load_full(path: Path) -> tuple[Image.Image, dict]:
+    """Originale a piena risoluzione, girato come lo mostra l'anteprima (Qt: EXIF per JPEG e
+    TIFF, non per PNG / WebP; HEIC già girato da pi-heif come da Qt); e cosa conservare nel
+    file (exif, icc_profile, xmp)."""
+    from scanner import RAW_EXT
+    keep: dict = {}
+    if Path(path).suffix.lower() in RAW_EXT:
+        img = _load_raw(Path(path))
+        if img is not None:
+            return img, keep
+    register_heif()
+    try:
+        with open_unbounded(path) as im:   # originale scelto dall'utente: anche panorami enormi
+            im.load()
+            exif = im.getexif()
+            xmp = im.info.get("xmp")
+            if im.format in ("JPEG", "MPO", "TIFF"):
+                im = ImageOps.exif_transpose(im)
+            if exif:
+                exif[0x0112] = 1   # già girata (o, per i PNG, come si vede nell'app)
+                keep["exif"] = exif.tobytes()
+            if xmp:
+                keep["xmp"] = xmp if isinstance(xmp, bytes) else str(xmp).encode("utf-8")
+            im, keep["icc_profile"] = to_rgb(im)
+        return im, keep
+    except Exception:  # noqa: BLE001 - es. HEIC senza pi-heif: lo legge Qt (macOS)
         from PySide6.QtGui import QImage, QImageReader
         r = QImageReader(str(path))
         r.setAutoTransform(True)
@@ -853,16 +1043,42 @@ def load_full(path: Path) -> tuple[Image.Image, dict]:
         q = q.convertToFormat(QImage.Format_RGB888)
         arr = np.frombuffer(q.constBits(), np.uint8, q.sizeInBytes()).reshape(q.height(), q.bytesPerLine())
         arr = arr[:, :q.width() * 3].reshape(q.height(), q.width(), 3)
-        return Image.fromarray(arr.copy()), keep
+        return Image.fromarray(arr.copy()), {}
+
+
+_JPEG_SEGMENT = 65533   # byte utili di un segmento APP del JPEG
+
+
+def jpeg_meta(keep: dict, size: tuple[int, int]) -> dict:
+    """Argomenti per salvare in JPEG ciò che si conserva dell'originale: EXIF (con le misure in
+    pixel aggiornate a quelle nuove), profilo ICC, XMP così com'è (voti, parole chiave).
+    Un XMP troppo grande per un segmento JPEG (XMP esteso) si lascia: meglio che non salvare."""
+    kw = {k: v for k, v in keep.items() if v and k in ("exif", "icc_profile", "xmp")}
+    if kw.get("exif"):
+        try:
+            ex = Image.Exif()
+            ex.load(kw["exif"])
+            sub = ex.get_ifd(0x8769)
+            if sub or 0x8769 in ex:
+                sub[0xA002], sub[0xA003] = int(size[0]), int(size[1])   # PixelX/YDimension
+            kw["exif"] = ex.tobytes()
+            if len(kw["exif"]) > _JPEG_SEGMENT - 6 and 0x927C in sub:
+                del sub[0x927C]   # MakerNote enorme: meglio senza che perdere data, GPS e fotocamera
+                kw["exif"] = ex.tobytes()
+        except Exception:  # noqa: BLE001 - EXIF strano: si tiene com'era
+            pass
+        if len(kw["exif"]) > _JPEG_SEGMENT - 6:
+            kw.pop("exif")   # PIL non lo scriverebbe: la foto si salva comunque
+    if kw.get("xmp") and len(kw["xmp"]) + 29 > _JPEG_SEGMENT:
+        kw.pop("xmp")
+    return kw
 
 
 def save_edited(img: Image.Image, dst: Path, keep: dict) -> None:
     import os
     tmp = dst.with_name(dst.name + ".part")
-    kw = {k: v for k, v in keep.items() if v}
-    img.save(tmp, "JPEG", quality=100, subsampling=0, optimize=True, **kw)
+    img.save(tmp, "JPEG", quality=100, subsampling=0, optimize=True, **jpeg_meta(keep, img.size))
     os.replace(tmp, dst)
-
 
 
 def estimate_blur(img: Image.Image) -> float:
@@ -878,8 +1094,8 @@ def estimate_blur(img: Image.Image) -> float:
         k = 1.0
     a = np.asarray(g, np.float32) / 255
     s0 = 1.0
-    g1 = np.hypot(*np.gradient(a))
-    g2 = np.hypot(*np.gradient(_blur(a, s0)))
+    g1 = np.hypot(*_grad(a))
+    g2 = np.hypot(*_grad(_blur(a, s0)))
     edge = g1 > max(float(np.percentile(g1, 97)), 0.03)
     if edge.sum() < 50:
         return 0.0
@@ -945,7 +1161,7 @@ def auto_features(img: Image.Image) -> np.ndarray:
     else:
         f += [0.0, 0.0]
     f += list(_illuminant(x))
-    gy, gx = np.gradient(L)
+    gy, gx = _grad(L)
     gm = np.hypot(gx, gy)
     f += [float(gm.mean())]
     # colore per fascia di luce (ombre, mezzitoni, luci) e sui bordi: dove si vede una dominante
