@@ -7,7 +7,7 @@
 **Swipe through thousands of photos and videos and keep only the best, Tinder-style.**
 A fast, offline photo culling and sorting app for macOS (Windows and Linux from source).
 
-![Version](https://img.shields.io/badge/version-1.5.3-blue)
+![Version](https://img.shields.io/badge/version-1.5.4-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
