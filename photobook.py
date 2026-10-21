@@ -2,16 +2,18 @@
 
 A sinistra l'ultima approvata fino alla miniatura selezionata, grande; a destra le 4 prima
 (2 × 2). Contano anche le foto prese dai video con 📷 Prendi foto. Dà l'idea di come sta
-venendo la selezione senza uscire dalla foto che stai guardando."""
+venendo la selezione senza uscire dalla foto che stai guardando. "Apri l'album" (o il clic sulla
+carta del libro) apre l'album con tutte le approvate, da sfogliare (album.py)."""
 from __future__ import annotations
 
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
 from PySide6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QImageReader, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import QLabel, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QToolTip, QVBoxLayout, QWidget
 
 import thumbcache
 from i18n import tr
@@ -59,6 +61,11 @@ def last_accepted(session, items: list[Item], upto: int, n: int = SHOWN) -> list
         if len(out) >= n:
             break
     return out[:n]
+
+
+def all_accepted(session, items: list[Item]) -> list[Page]:
+    """Tutte le foto del libro, dalla prima all'ultima della cartella: le pagine dell'album."""
+    return last_accepted(session, items, len(items) - 1, sys.maxsize)[::-1]
 
 
 def _thumb(page: Page) -> QImage:
@@ -117,12 +124,27 @@ class PhotoBook(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(10)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         head = QLabel(tr('Ultime foto approvate').upper())
         head.setObjectName("subhead")
-        lay.addWidget(head)
+        self.open_btn = QPushButton(tr("Apri l'album ›"))
+        self.open_btn.setCursor(Qt.PointingHandCursor)
+        self.open_btn.setToolTip(tr("Sfoglia tutte le foto approvate impaginate come un album."))
+        self.open_btn.setStyleSheet(f"QPushButton {{ background: transparent; border: none; padding: 12px 0 0 0;"
+                                    f" color: {C['link']}; font-size: 12px; }}"
+                                    f" QPushButton:hover {{ color: {C['link_hover']}; }}")
+        self.open_btn.clicked.connect(self.open_album)
+        row.addWidget(head)
+        row.addStretch(1)
+        row.addWidget(self.open_btn, 0, Qt.AlignBottom)
+        lay.addLayout(row)
         self.book = _Book()
+        self.book.blank_clicked.connect(self.open_album)
         lay.addWidget(self.book)
         self.opened = self.book.opened
+        self.album = None
+        self._session, self._items = None, []
         self.setVisible(False)
 
     @property
@@ -130,8 +152,20 @@ class PhotoBook(QWidget):
         return self.book.items
 
     def refresh(self, session, items: list[Item], upto: int) -> None:
+        self._session, self._items = session, items
         self.book.refresh(session, items, upto)
         self.setVisible(bool(self.book.items))
+
+    def open_album(self) -> None:
+        import album   # album importa questo modulo
+        pages = all_accepted(self._session, self._items)
+        if not pages:
+            return
+        self.album = album.AlbumDialog(self.window(), self._session, pages)
+        self.album.opened.connect(self.opened.emit)   # clic su una foto: si torna lì, come nel libro
+        self.album.show()
+        self.album.raise_()
+        self.album.activateWindow()
 
     def setVisible(self, on: bool) -> None:   # la schermata iniziale la spegne; senza foto resta spenta
         super().setVisible(on and bool(self.book.items))
@@ -140,6 +174,7 @@ class PhotoBook(QWidget):
 class _Book(QWidget):
     """Album aperto con le ultime foto approvate. Clic su una foto = vai a quella foto."""
     opened = Signal(str)   # chiave della foto (id, o id#fN per una foto presa da un video)
+    blank_clicked = Signal()   # clic sulla carta, fuori dalle foto: apri l'album
 
     def __init__(self):
         super().__init__()
@@ -206,17 +241,21 @@ class _Book(QWidget):
 
     def mouseMoveEvent(self, e):
         i = self._at(e.position())
-        self.setCursor(Qt.PointingHandCursor if i is not None else Qt.ArrowCursor)
+        self.setCursor(Qt.PointingHandCursor)
         if i is None:
-            QToolTip.hideText()
+            QToolTip.showText(e.globalPosition().toPoint(), tr("Clic: apri l'album"), self)
         else:
             QToolTip.showText(e.globalPosition().toPoint(),
                               tr('{v0}\nClic: torna a questa foto', v0=self.items[i].main.name), self)
 
     def mousePressEvent(self, e):
         i = self._at(e.position())
-        if i is not None and e.button() == Qt.LeftButton:
+        if e.button() != Qt.LeftButton:
+            return
+        if i is not None:
             self.opened.emit(self.items[i].key)
+        elif self.items:
+            self.blank_clicked.emit()
 
     def paintEvent(self, e):
         if not self.items:

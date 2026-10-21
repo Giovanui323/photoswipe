@@ -25,6 +25,18 @@ def tr(text: str, **kw) -> str:
 
 
 EN = {
+    "Apri l'album ›": 'Open album ›',
+    'Sfoglia tutte le foto approvate impaginate come un album.': 'Browse all approved photos laid out like an album.',
+    "Clic: apri l'album": 'Click: open the album',
+    'Album delle foto approvate': 'Album of approved photos',
+    'Foto approvate': 'Approved photos',
+    '{n} foto': '{n} photos',
+    '1 foto': '1 photo',
+    "{v0}\nClic: chiudi l'album e torna a questa foto": '{v0}\nClick: close the album and go back to this photo',
+    'Pagina precedente (←)': 'Previous page (←)',
+    'Pagina successiva (→)': 'Next page (→)',
+    '← → per sfogliare · clic su una foto per tornarci · Esc per chiudere': '← → to turn pages · click a photo to go back to it · Esc to close',
+    'Pagine {v0} di {v1}': 'Pages {v0} of {v1}',
     "Foto precedente": "Previous photo",
     "Foto successiva": "Next photo",
     "Confronta con la copia per la stampa": "Compare with the print copy",
