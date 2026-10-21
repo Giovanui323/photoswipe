@@ -677,7 +677,7 @@ def classic_auto_light(img: Image.Image) -> dict:
         else:
             hi_e = mid
     e = (lo_e + hi_e) / 2 * 0.9   # un filo prudente, come Foto
-    # non bruciare: al massimo l'1,5% di pixel bianchi in più
+    # non bruciare: al massimo l'1,5% di pixel bruciati (bianco pieno) in più
     while e > 0.05 and float((_lum(_light(x.copy(), {**out, "exposure": e})) > 0.985).mean()) > \
             float((L > 0.985).mean()) + 0.015:
         e -= 0.05
