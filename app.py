@@ -50,7 +50,7 @@ from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, L
                      hide_keep_space, pil_to_qimage, qimage_to_pil, wait_downloads)
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -60,8 +60,6 @@ STRIP_FILTERS = ((tr('Mostra: tutte'), "all"), (tr('Mostra: da decidere'), "todo
                  (tr('Mostra: ✓ Sì'), "yes"), (tr('Mostra: ✗ No'), "no"), (tr('Mostra: ↪ saltate'), "skip"),
                  (tr('Mostra: 🗑 “cancellare”'), "trash"))
 MEDIA_FILTERS = ("all", "photos", "videos")   # filtro di visualizzazione: tutto / solo foto / solo video
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng"}
-VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 KIND_LABEL = {"photo": tr('FOTO'), "pano": tr('PANORAMA'), "live": tr('LIVE'), "video": tr('VIDEO')}
 # scelta già fatta su un elemento (tornando indietro): nome e colore dell'etichetta
 CHOICE_NAME = {"yes": tr('✓ SÌ'), "no": tr('✗ NO'), "skip": tr('↪ Salta'), "trash": tr('🗑 In “cancellare”')}
@@ -1386,8 +1384,11 @@ class MainWindow(QMainWindow):
         if self.crop_dirty():
             self.flash(tr('Prima conferma il ritaglio con OK oppure Annulla'))
             return
-        if not self.editable(item) or self.edit_base is None:
+        if not self.editable(item):
             self.flash(tr('La bacchetta magica funziona su foto, panorami, Live e fotogrammi fermi dei video'))
+            return
+        if self.edit_base is None:   # foto (della Live) non ancora caricata: parte appena arriva
+            self._wand_when_ready = item.id
             return
         if self.side_tab != "regola":
             self.on_side_tab("regola")
@@ -1530,6 +1531,9 @@ class MainWindow(QMainWindow):
                 or self.edit_base.cacheKey() != img.cacheKey():
             self.edit_base, self.edit_base_owner = img, item_id
             self._edit_proxy = self._edit_tiny = None
+        wand, self._wand_when_ready = getattr(self, "_wand_when_ready", None), None   # altra foto: annullata
+        if wand == item_id:
+            QTimer.singleShot(0, self.auto_enhance)
         item = self.item_by_id(item_id)
         key = self.edit_key(item) if item is not None else None
         if key != getattr(self, "_shown_edit_key", None):   # altro fotogramma del video: le sue modifiche
@@ -2972,7 +2976,7 @@ class MainWindow(QMainWindow):
         if choice == "trash":
             moved = [dst for _, dst in d.get("moved", [])]
             return (CHOICE_COLOR["trash"], tr('🗑 originale SPOSTATO in “cancellare” (Z lo rimette a posto)'),
-                    self.open_links(moved))
+                    infopanel.open_links(moved))
         if choice == "yes" and d.get("noexport"):
             return CHOICE_COLOR["yes"], tr('✓ approvata · video non copiato (tenute solo le foto prese)'), []
         if d.get("export_failed"):
@@ -2981,17 +2985,7 @@ class MainWindow(QMainWindow):
         if not files:
             return C["text_warn"], tr('⏳ copia in export in corso…'), []
         return (CHOICE_COLOR["yes"], tr("✓ approvata · COPIATA in export (l'originale resta al suo posto)"),
-                self.open_links(files))
-
-    @staticmethod
-    def open_links(files: list[str]) -> list[tuple[str, str]]:
-        """Un link per la prima foto e uno per il primo video tra i file indicati."""
-        links = []
-        for exts, label in ((IMAGE_EXTS, tr('Apri foto')), (VIDEO_EXTS, tr('Apri video'))):
-            f = next((f for f in files if Path(f).suffix.lower() in exts and Path(f).exists()), None)
-            if f:
-                links.append((label, f))
-        return links
+                infopanel.open_links(files))
 
     def short_path(self, path) -> str:
         """Percorso leggibile: dentro la cartella aperta come "dji pocket/export", altrove con ~."""

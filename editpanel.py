@@ -756,7 +756,7 @@ class RegolaPanel(QWidget):
         self.curve_preview = CurvePreview()
         s.body_lay.addWidget(self.curve_preview)
         for k, lab in (("curve_blacks", tr('Neri')), ("curve_shadows", tr('Ombre')), ("curve_mid", tr('Mezzitoni')),
-                       ("curve_high", tr('Luci')), ("curve_whites", tr('Cognome'))):
+                       ("curve_high", tr('Luci')), ("curve_whites", tr('Bianco'))):
             s.body_lay.addWidget(bar(k, lab))
         # Livelli
         s = section("levels", "▥", "Livelli", auto=True)

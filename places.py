@@ -196,7 +196,10 @@ def name(lat: float, lon: float) -> str:
 
 
 def info_html(m, color: str, link: str, esc) -> str:
-    """Riga del luogo nel pannello Info: puntino, nome del posto, coordinate e link alla mappa."""
+    """Riga del luogo nel pannello Info: puntino, nome del posto, coordinate e link alla mappa.
+    Senza GPS lo si dice (es. DJI Pocket: niente GPS se non è collegata al telefono)."""
+    if not m.gps:
+        return f"<div style='color:{color}'>📍 {esc(tr('Luogo non registrato nella foto'))}</div>"
     lat, lon = m.gps
     url = (f"https://maps.apple.com/?ll={lat},{lon}&q={lat},{lon}" if sys.platform == "darwin"
            else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}")

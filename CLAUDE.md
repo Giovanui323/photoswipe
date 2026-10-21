@@ -1,5 +1,11 @@
 # PhotoSwipe — regole per chi modifica il codice
 
+## Si lavora sempre su `main`
+
+- Tutto il lavoro si fa direttamente sul ramo `main`: niente rami paralleli (`migliorie` o simili).
+- Prima di cominciare controlla di essere su `main` (`git branch --show-current`) e allineato a
+  `origin/main`.
+
 ## app.py deve solo diminuire, con obiettivo 2.000 righe
 
 L'obiettivo è che `app.py` arrivi a **2.000 righe** e non superi mai più quel numero: ogni

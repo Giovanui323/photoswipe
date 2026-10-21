@@ -3,10 +3,15 @@
 Solo testo: i widget restano in app.py, qui si decide cosa mostrare e come."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import places
 from datefmt import _GIORNI_LUNGHI, _MESI_LUNGHI
 from i18n import tr
 from theme import COLORS as C
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng"}
+VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 
 
 def esc(x) -> str:
@@ -65,10 +70,10 @@ def card_html(m, extra: list[str], burst_html) -> str:
 
 
 def more_html(m, extra: list[str], warn: list[str], short_folder, favorite: bool) -> str:
-    """Sotto la scheda, in piccolo: luogo (solo se c'è), file, cartella, note e avvisi."""
+    """Sotto la scheda, in piccolo: luogo, file, cartella, note e avvisi."""
     rows = dict(m.rows) if m else {}
     more = []
-    if m and m.gps:
+    if m:   # anche senza GPS: "Luogo non registrato"
         more.append(places.info_html(m, C['text_detail'], C['link'], esc))
     if rows.get(tr('File')):
         names = []
@@ -90,3 +95,12 @@ def more_html(m, extra: list[str], warn: list[str], short_folder, favorite: bool
     if warn:
         more.append(f"<div style='color:{C['text_warn']}; margin-top:6px'>" + "<br>".join(map(esc, warn)) + "</div>")
     return "".join(more)
+
+def open_links(files: list[str]) -> list[tuple[str, str]]:
+    """Un link per la prima foto e uno per il primo video tra i file indicati."""
+    links = []
+    for exts, label in ((IMAGE_EXTS, tr('Apri foto')), (VIDEO_EXTS, tr('Apri video'))):
+        f = next((f for f in files if Path(f).suffix.lower() in exts and Path(f).exists()), None)
+        if f:
+            links.append((label, f))
+    return links

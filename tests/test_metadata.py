@@ -106,3 +106,10 @@ def test_place_online_switch(monkeypatch, tmp_path):
     assert places.online(45.0, 9.0) == ""
     box.setChecked(True)
     assert places.ONLINE and store.value("places_online") == "1"
+
+
+def test_place_missing_is_said(tmp_path):
+    import places
+    p = _photo(tmp_path, gps=False)
+    m = metadata.read(Item("photo", p.name, image=p))
+    assert "📍" in places.info_html(m, "#aaa", "#09f", str) and "href" not in places.info_html(m, "#aaa", "#09f", str)
