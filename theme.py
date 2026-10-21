@@ -117,10 +117,10 @@ QFrame#side QPushButton#auto[on="true"] { background: $bg_auto_on; border-color:
 QFrame#side QPushButton#secundo:disabled { color: $text_caption_off; }
 QFrame#side QPushButton#opts { background: transparent; border: none; padding: 2px 0 2px 18px; font-size: 13px;
     color: $text_detail; text-align: left; }
-QFrame#side QPushButton#reset, QFrame#side QPushButton#cropbtn { background: $bg_hover; border: none; border-radius: 15px;
+QFrame#side QPushButton#reset { background: $bg_hover; border: none; border-radius: 15px;
     padding: 7px 14px; font-size: 13px; text-align: center; }
-QFrame#side QPushButton#reset:hover, QFrame#side QPushButton#cropbtn:hover { background: $bg_pressed; }
-QFrame#side QPushButton#reset:disabled, QFrame#side QPushButton#cropbtn:disabled { color: $text_off; background: $bg_control; }
+QFrame#side QPushButton#reset:hover { background: $bg_pressed; }
+QFrame#side QPushButton#reset:disabled { color: $text_off; background: $bg_control; }
 QFrame#side QPushButton#cropok { background: $accent; color: $text_on_accent; border: none; border-radius: 15px;
     padding: 7px 14px; font-size: 14px; font-weight: 700; text-align: center; }
 QFrame#side QPushButton#cropok:hover { background: $accent_hover; }
@@ -362,7 +362,7 @@ QPushButton#toolpill[compact="true"] { padding: 0; min-width: 40px; max-width: 4
 """)
 
 # focus da tastiera (Tab) visibile anche dove le regole sopra, più specifiche, tolgono il bordo
-FOCUS_IN_SIDE = ("chev", "sectitle", "secundo", "auto", "opts", "reset", "cropbtn", "cropok", "cropitem", "cropbig",
+FOCUS_IN_SIDE = ("chev", "sectitle", "secundo", "auto", "opts", "reset", "cropok", "cropitem", "cropbig",
                  "aspect", "flip", "orient", "swatch", "small", "small2", "discard", "textlink")
 STYLE += qss("".join(f"QFrame#side QPushButton#{n}:focus {{ border: 2px solid $focus; }}\n" for n in FOCUS_IN_SIDE)
              + "QFrame#side QFrame#segbar QPushButton:focus { border: 2px solid $focus; }\n"

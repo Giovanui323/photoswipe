@@ -100,7 +100,6 @@ def test_crop_needs_ok_and_blocks_choices(qapp, win, sd):
     win.on_side_tab("ritaglia")
     assert win.crop_draft is not None and win.image_view.crop_mode
     assert win.decision_bar.isEnabled()      # aperto senza cambiare nulla: niente conferma
-    assert not win.confirm_row.isVisible()
     win.ritaglia._set_aspect("square")
     assert abs(win.image_view.crop[2] * 1200 - win.image_view.crop[3] * 900) < 2
     assert not win.decision_bar.isEnabled()  # ora sì: riquadro cambiato

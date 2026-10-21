@@ -592,3 +592,37 @@ def test_end_screen_with_undecided_items_left_offers_to_go_back(qapp, win, sd):
     click(qapp, win, win.msg_btn2)
     assert win.idx == 0 and win.current().kind == "live"
     assert win.btn_yes.isEnabled()
+
+
+# ------------------------------------------------------------------ fotolibro
+
+def test_photobook_shows_approved_photos_up_to_the_selected_thumbnail(qapp, win, sd):
+    """Fisso in fondo al pannello Info: le ultime 5 approvate fino all'elemento selezionato
+    (compreso), la più vicina per prima; niente NO né video. Tornando indietro nelle miniature
+    il libro torna indietro; clic su una foto = vai a quella foto."""
+    open_folder(qapp, win, sd)
+    assert win.photobook.items == [] and not win.photobook.isVisible()   # niente approvate: niente sezione
+    photos = [it.main.name for it in win.items if it.kind == "photo"]   # PHOTO1, PHOTO2, poi 4 foto
+    for n in photos:
+        go(qapp, win, n)
+        press(qapp, win, Qt.Key_N if n == photos[2] else Qt.Key_Y)
+    go(qapp, win, LONG + ".MP4")
+    press(qapp, win, Qt.Key_Y)
+    go(qapp, win, photos[-1])
+    names = lambda: [it.main.name for it in win.photobook.items]  # noqa: E731
+    assert names() == [photos[5], photos[4], photos[3], PHOTO2, PHOTO1]   # la NO (photos[2]) non c'è
+    assert win.photobook.book.height() > 0 and win.photobook.isVisible()
+    go(qapp, win, PHOTO2)   # indietro: solo quelle fino a qui
+    assert names() == [PHOTO2, PHOTO1]
+    go(qapp, win, f"{LIVE}.MP4")   # prima di tutte: nessuna approvata finora
+    assert names() == [] and not win.photobook.isVisible()
+    go(qapp, win, photos[3])
+    win.view_filter.setCurrentIndex(A.MEDIA_FILTERS.index("videos"))   # solo video: niente fotolibro
+    pump(qapp, 0.1)
+    assert names() == [] and not win.photobook.isVisible()
+    win.view_filter.setCurrentIndex(A.MEDIA_FILTERS.index("all"))
+    go(qapp, win, photos[3])
+    assert wait(qapp, lambda: all(it.id in win.photobook.book._thumbs for it in win.photobook.items))
+    win.photobook.opened.emit(win.photobook.items[-1].id)
+    pump(qapp, 0.1)
+    assert win.current().main.name == PHOTO1

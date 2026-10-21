@@ -16,7 +16,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QSettings, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QFont, QImage, QImageReader, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QDesktopServices, QFont, QImage, QImageReader, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
@@ -34,6 +34,7 @@ import exporter
 import frames
 import infopanel
 import metadata
+import photobook
 import places
 import printprep
 import similar
@@ -43,14 +44,14 @@ from thumbqueue import ThumbQueue
 from scanner import Item, mp4_duration, raw_preview, refresh_capture_time, scan
 from i18n import HELP, LANG, tr
 from theme import CHOICE_COLOR, COLORS as C, KIND_COLOR, STRIP_FRAME_COLORS, STYLE, apply_dark_palette
-from datefmt import _GIORNI_LUNGHI, _MESI_LUNGHI, fmt_datetime  # noqa: F401
-from editjob import EDIT_FULL_MAX, EDIT_PROXY, print_takes_edit, render_edit_job, uncropped_tone_edit  # noqa: F401
+from datefmt import _MESI_LUNGHI, fmt_datetime  # noqa: F401
+from editjob import EDIT_FULL_MAX, EDIT_PROXY, print_takes_edit, render_edit_job  # noqa: F401
 from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, LruCache, OverlayLabel,  # noqa: F401
                      SnapGallery, StaleResult, ThumbStrip, TipStyle, TrashButton, _MoveFailed, chevron_file,
                      hide_keep_space, pil_to_qimage, qimage_to_pil, wait_downloads)
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.5"
+APP_VERSION = "1.4.7"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -107,7 +108,6 @@ class MainWindow(QMainWindow):
         self.settings_store = QSettings("PhotoSwipe", os.environ.get("PHOTOSWIPE_PROFILE", "PhotoSwipe"))
 
         self.bg = ThreadPoolExecutor(max_workers=4)
-        self.dl = ThreadPoolExecutor(max_workers=6)        # "scarica i prossimi 10" (a mano)
         self.pre = ThreadPoolExecutor(max_workers=2)       # anticipo dei successivi (2 alla volta)
         # attese dei download dell'elemento corrente: quelle degli elementi lasciati finiscono
         # subito (o non partono), così quello su cui ti fermi non aspetta dietro di loro
@@ -438,7 +438,8 @@ class MainWindow(QMainWindow):
         seg_wrap.addWidget(self.side_seg)
         side_outer.addLayout(seg_wrap)
         self.side_pages = QStackedWidget()
-        self.side_pages.addWidget(side_scroll)
+        self.photobook = photobook.PhotoBook()   # fisso sotto le Info che scorrono: sempre in vista
+        self.side_pages.addWidget(photobook.pin_below(side_scroll, self.photobook))
         self.regola = EP.RegolaPanel()
         self.regola.changed.connect(self.on_regola_changed)
         self.regola.auto_requested.connect(self.on_auto)
@@ -480,25 +481,6 @@ class MainWindow(QMainWindow):
         self.btn_discard.setFocusPolicy(Qt.NoFocus)
         self.btn_discard.setToolTip(tr("Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)"))
         self.btn_discard.clicked.connect(self.discard_edits)
-        # Regola e Ritaglia si confermano qui: OK (Invio) o Annulla (Esc), sempre in vista
-        self.confirm_row = QWidget()
-        cr = QHBoxLayout(self.confirm_row)
-        cr.setContentsMargins(0, 0, 0, 2)
-        cr.setSpacing(8)
-        self.btn_edit_cancel = QPushButton(tr('Annulla'))
-        self.btn_edit_cancel.setObjectName("cropbtn")
-        self.btn_edit_cancel.setToolTip(tr("Lascia la foto com'era prima di queste modifiche (Esc)."))
-        self.btn_edit_ok = QPushButton("OK")
-        self.btn_edit_ok.setObjectName("cropok")
-        self.btn_edit_ok.setToolTip(tr('Conferma le modifiche (Invio). Poi ✓ Sì esporta la foto modificata.'))
-        for b in (self.btn_edit_cancel, self.btn_edit_ok):
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setCursor(Qt.PointingHandCursor)
-            cr.addWidget(b, 1)
-        self.btn_edit_cancel.clicked.connect(self.cancel_edit)
-        self.btn_edit_ok.clicked.connect(self.confirm_edit)
-        self.confirm_row.setVisible(False)
-        fl.addWidget(self.confirm_row)
         fl.addWidget(self.btn_discard)
         self.side_foot = foot
         side_outer.addWidget(foot)
@@ -594,7 +576,6 @@ class MainWindow(QMainWindow):
         pb.addWidget(self.print_busy)
         self.print_box.hide()
         sv.addWidget(self.print_box)
-        self.side_slot = sv.count()   # qui arrivano le foto prese da un video
         sel = QLabel(tr('Selezione').upper())
         sel.setObjectName("subhead")
         sv.addWidget(sel)
@@ -714,7 +695,6 @@ class MainWindow(QMainWindow):
         self.status.setObjectName("toast")
         # foto presa dal video, vista a schermo intero (doppio clic sulla miniatura)
         self.snap_key: str | None = None
-        self.snap_fixing = False
         self.snap_bar = QFrame(self.stack)
         sb = QHBoxLayout(self.snap_bar)
         sb.setContentsMargins(10, 6, 10, 6)
@@ -919,21 +899,6 @@ class MainWindow(QMainWindow):
         self.snaps_label.setWordWrap(True)
         self.snaps_label.setProperty("empty", "true")
         self.snaps_label.setToolTip(tr("Foto prese da questo video con 📷 Prendi foto.\nRestano salvate in export anche se premi NO.\nZ annulla l'ultima presa."))
-        self.next_box = QFrame()
-        self.next_box.setObjectName("next")
-        nb = QVBoxLayout(self.next_box)
-        nb.setContentsMargins(8, 6, 8, 8)
-        nb.setSpacing(4)
-        self.next_txt = ElidedLabel()
-        self.next_txt.setObjectName("muted")
-        self.next_img = QLabel("")
-        self.next_img.setObjectName("muted")
-        self.next_img.setAlignment(Qt.AlignCenter)
-        nb.addWidget(self.next_txt)
-        nb.addWidget(self.next_img)
-        self.next_box.setToolTip(tr("Anteprima dell'elemento che arriva dopo questa scelta."))
-        self.next_box.hide()
-        self.next_img.setFixedSize(234, 132)
         self.snap_gallery = SnapGallery()
         self.snap_gallery.picked.connect(self.review_snap)
         self.snap_gallery.viewed.connect(self.open_snap)
@@ -943,8 +908,7 @@ class MainWindow(QMainWindow):
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snaps_label)
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snap_gallery)
         self.side_layout.insertSpacing(self.side_layout.count() - 1, 6)
-        self.side_layout.insertWidget(self.side_slot, self.next_box)
-        self.next_box.setVisible(False)   # sostituita dalla striscia delle miniature in basso
+        self.photobook.opened.connect(lambda k: self.jump_to(next((i for i, it in enumerate(self.items) if it.id == k), -1)))
         self.decision_bar = QWidget()
         bottom = QHBoxLayout(self.decision_bar)
         bottom.setContentsMargins(0, 2, 0, 0)
@@ -1110,7 +1074,7 @@ class MainWindow(QMainWindow):
         self.update_btn_info()
         for w in (self.side_details, self.side_sel, self.counter, self.snaps_label,
                   self.snap_gallery, self.save_head, self.save_info, self.save_row,
-                  self.thumbs_strip, self.strip_filter):
+                  self.thumbs_strip, self.strip_filter, self.photobook):
             w.setVisible(browsing)
         self.update_locate_btn()   # frecce della striscia: solo dopo ⌂ Riprendi (come il pulsante)
         self.update_print_box()
@@ -1462,8 +1426,6 @@ class MainWindow(QMainWindow):
         self.side_seg.buttons["ritaglia"].setEnabled(ok and not tone)
         self.side_seg.buttons["info"].setEnabled(not (crop or tone))
         self.btn_discard.setEnabled(has or crop or tone)
-        self.confirm_row.setVisible(False)   # la conferma è "Conferma le modifiche" nel pannello
-        editing = ok and (self.crop_draft is not None or tone)
         self.btn_edit_cancel_top.setVisible(crop or tone)
         self.btn_discard.setVisible(has or crop or tone)   # solo se c'è qualcosa da togliere (o da scartare)
         self.btn_confirm_foot.setVisible(ok and (crop or tone))
@@ -1985,7 +1947,7 @@ class MainWindow(QMainWindow):
             v.addLayout(row)
             return path, btn
 
-        self.src_label, self.btn_pick_src = step(
+        self.src_label, _ = step(
             "①", tr('Cartella da guardare'),
             tr('La cartella copiata dalla scheda SD (per esempio DCIM). Vengono lette anche tutte le sottocartelle.'),
             tr('Scegli cartella…'), self.pick_source)
@@ -2386,7 +2348,7 @@ class MainWindow(QMainWindow):
             else:
                 self.set_frame(res, manual=True)
         elif kind == "export":
-            item_id, frame, token = key
+            item_id, _, token = key
             # l'esito vale solo per la decisione che ha avviato questo export (non annullata,
             # non rifatta, stessa cartella); un errore non cancella la scelta
             outcome = self.session.record_export(item_id, token, res) if self.session else "stale"
@@ -2611,7 +2573,7 @@ class MainWindow(QMainWindow):
         return len(self.items)
 
     def show_item(self, keep_status: bool = False):
-        self.snap_key, self.snap_fixing = None, False   # la foto presa resta solo su quel video
+        self.snap_key = None   # la foto presa resta solo su quel video
         self.snap_bar.hide()
         self.player.stop()
         self.player.setSource(QUrl())
@@ -2860,7 +2822,7 @@ class MainWindow(QMainWindow):
         if img.isNull():
             self.flash(tr('Foto non ancora salvata: riprova tra un attimo'))
             return
-        self.snap_key, self.snap_fixing = key, False
+        self.snap_key = key
         self.image_view.set_image(img)
         self.stack.setCurrentWidget(self.image_view)
         m = metadata.read_image(Path(files[0]))
@@ -2901,7 +2863,6 @@ class MainWindow(QMainWindow):
         self.side_seg.set_current("regola")
         self.side_tab = "regola"
         self.side_pages.setCurrentIndex(1)
-        self.snap_fixing = True
         self.snap_save.show()
         self.flash(tr('Modifica il fotogramma, poi premi "Aggiorna foto"'))
 
@@ -2926,7 +2887,7 @@ class MainWindow(QMainWindow):
             self.flash(tr('Prima conferma le modifiche con OK oppure Annulla'))
             return
         d = self.session.get(self.snap_key) if self.session and self.snap_key else None
-        self.snap_key, self.snap_fixing = None, False
+        self.snap_key = None
         self.snap_bar.hide()
         item = self.current()
         if d and item and item.is_clip:
@@ -3133,20 +3094,6 @@ class MainWindow(QMainWindow):
             log.info("ancora in attesa di iCloud (%d s) per %s", secs, item.id)
         self.message.setText(
             tr('☁️  Scarico da iCloud{dots}\n\n{names}\n\n{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   (stima su {speed:.1f} MB/s)\nmacOS non dice la percentuale vera: la stima usa la velocità dei download già fatti.\nI prossimi {PREFETCH} elementi si stanno già scaricando in automatico.\n\nIntanto puoi premere  S = salta,  N = no,  X = sposta in “cancellare”.', dots=dots, names=names, bar=bar, pct=pct, secs=secs, eta=eta, speed=speed, PREFETCH=PREFETCH))
-
-    def download_next_ten(self):
-        nxt, i = [], self.idx
-        while len(nxt) < 10:
-            i = self.next_index(i)
-            if i >= len(self.items):
-                break
-            nxt.append(self.items[i])
-        todo = [p for it in nxt for p in it.needed_files() if not cloud.is_local(p)]
-        for p in todo:
-            self.dl.submit(cloud.download, p)
-        mb = sum(p.stat().st_size for p in todo if p.exists()) / 1e6
-        log.info("scarico in anticipo %d file (%.0f MB)", len(todo), mb)
-        self.flash(tr('☁️ Scarico in anticipo {v0} file ({mb:.0f} MB)', v0=len(todo), mb=mb))
 
     def show_live_still(self):
         """Live: si vede la foto (fotogramma della fotocamera o quello scelto), come sull'iPhone."""
@@ -3396,6 +3343,7 @@ class MainWindow(QMainWindow):
 
     def update_counter(self):
         self.update_snaps_label()
+        self.photobook.refresh(self.session if self.media_filter != "videos" else None, self.items, self.idx)
         self.update_save_info()
         self.refresh_stamp()
         if not self.session or not self.items:
@@ -4074,7 +4022,6 @@ class MainWindow(QMainWindow):
     def update_next_preview(self):
         """In basso: miniature prima e dopo (prima era un riquadro con il solo successivo)."""
         self.update_thumb_strip()
-        self.next_box.hide()   # il vecchio riquadro "Dopo" resta nascosto
 
     make_thumb = staticmethod(thumbcache.make_thumb)
 
@@ -4332,7 +4279,7 @@ class MainWindow(QMainWindow):
                 time.sleep(0.05)
         for k in list(self._ready_jobs):   # le attese dei download finiscono subito
             self.drop_ready_job(k)
-        for ex in (self.bg, self.dl, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q,
+        for ex in (self.bg, self.pre, self.waiters, self.export_q, self.frames_q, self.print_q,
                    self.edit_pool, self.thumb_q.pool):
             ex.shutdown(wait=False, cancel_futures=True)
         stop_child_processes()   # ffmpeg e Real-ESRGAN: non restano orfani né lasciano file a metà

@@ -222,7 +222,6 @@ EN = {
         "②  Choose (or create with “New folder”) where to copy the approved ones",
     "☁️  Scarico da iCloud{dots}\n\n{names}\n\n{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   (stima su {speed:.1f} MB/s)\nmacOS non dice la percentuale vera: la stima usa la velocità dei download già fatti.\nI prossimi {PREFETCH} elementi si stanno già scaricando in automatico.\n\nIntanto puoi premere  S = salta,  N = no,  X = sposta in “cancellare”.":
         "☁️  Downloading from iCloud{dots}\n\n{names}\n\n{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   (estimate at {speed:.1f} MB/s)\nmacOS doesn't report the real percentage: the estimate uses the speed of the downloads so far.\nThe next {PREFETCH} items are already downloading automatically.\n\nMeanwhile you can press  S = skip,  N = no,  X = move to “cancellare”.",
-    "☁️ Scarico in anticipo {v0} file ({mb:.0f} MB)": "☁️ Downloading ahead: {v0} files ({mb:.0f} MB)",
     "♥ Preferita: le copie vanno in export/Preferite": "♥ Favorite: copies go to export/Preferite",
     "♥ sì": "♥ yes",
     "⚠ Cartella export non raggiungibile ({v0}): {v1} copie in sospeso verranno rifatte alla prossima apertura":
@@ -355,6 +354,9 @@ EN = {
     "FOTO PRESA · FOTOGRAMMA {v0}": "TAKEN PHOTO · FRAME {v0}",
     "Correggi": "Fix", "Aggiorna foto": "Update photo", "Chiudi ✕": "Close ✕",
     "Modifica il fotogramma, poi premi \"Aggiorna foto\"": "Edit the frame, then press \"Update photo\"",
+    "Fotolibro: ultime foto approvate": "Photo book: latest approved photos",
+    "Ultime foto approvate": "Latest approved photos",
+    "{v0}\nClic: torna a questa foto": "{v0}\nClick: go back to this photo",
 }
 
 EN.update({
