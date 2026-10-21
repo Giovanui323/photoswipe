@@ -119,7 +119,7 @@ def test_strip_long_current_outside_filter_and_return_on_thumb_click(qapp, win, 
     assert win.thumbs_strip.outside
     here = win.idx
     win.jump_to(first)                  # clic su una miniatura prima: come ←
-    assert win.return_idx == here and win.btn_return.isVisible()
+    assert win.btn_locate.isVisible()   # "Prossima da decidere" per tornare
     assert not win.thumbs_strip.outside
     win._pick_strip_filter("all", "")
     assert len(win.thumbs_strip.entries) == len(win.items)   # nessun taglio a 12 per lato

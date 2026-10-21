@@ -242,7 +242,7 @@ def test_going_back_shows_choice_and_new_choice_replaces_it(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)
     click(qapp, win, win.btn_no)
-    click(qapp, win, win.btn_back)
+    click(qapp, win, win.photo_prev)
     assert win.current().main.name == PHOTO1
     assert win.chosen_tag.isVisible() and "NO" in win.chosen_tag.text()
     assert win.btn_no.property("chosen") == "true"
@@ -262,7 +262,7 @@ def test_same_choice_again_just_moves_on(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)
     click(qapp, win, win.btn_skip)
-    click(qapp, win, win.btn_back)
+    click(qapp, win, win.photo_prev)
     click(qapp, win, win.btn_skip)
     assert win.current().main.name == PHOTO2
     assert "Scelta confermata" in win.status.text()
@@ -478,7 +478,7 @@ def test_settings_popup_opens_and_closes(qapp, win, sd):
     open_folder(qapp, win, sd)
     click(qapp, win, win.btn_settings)
     assert win.settings_pop.isVisible()
-    assert win.btn_export.text() == "Export: export"
+    assert win.settings_pop.export_name.text() == "export"
     win.settings_pop.hide()
     win.fmt.setCurrentIndex(1)
     assert QSettings("PhotoSwipe", PROFILE).value("fmt") == "png16"
@@ -534,7 +534,7 @@ def test_file_name_readable_on_narrow_window_with_choice_tag(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)
     click(qapp, win, win.btn_no)
-    click(qapp, win, win.btn_back)             # compare l'etichetta "GIÀ SCELTO"
+    click(qapp, win, win.photo_prev)             # compare l'etichetta "GIÀ SCELTO"
     win.resize(1024, 768)
     pump(qapp, 0.3)
     assert win.chosen_tag.isVisible()

@@ -34,9 +34,11 @@ import exporter
 import frames
 import infopanel
 import metadata
+import navbar
 import photobook
 import places
 import printprep
+import settingspop
 import similar
 import stripfilter
 import thumbcache
@@ -133,6 +135,7 @@ class MainWindow(QMainWindow):
         self.idx = 0
         self.review_skipped = False
         self.history: list[tuple[int, str, dict | None]] = []
+        self.redo_stack: list[tuple[int, str, dict | None]] = []   # scelte annullate, da ripristinare
         self.export_futures: dict[str, Future] = {}
         self._scan_gen = 0
         self._rename_busy = False   # cresce a ogni apertura: i risultati vecchi non vanno nei dati nuovi
@@ -211,32 +214,13 @@ class MainWindow(QMainWindow):
         lay.setSpacing(8)
         outer.addWidget(main, 1)
 
-        def pill(*buttons):
-            f = QFrame()
-            f.setObjectName("pill")
-            h = QHBoxLayout(f)
-            h.setContentsMargins(4, 3, 4, 3)
-            h.setSpacing(2)
-            for b in buttons:
-                b.setFocusPolicy(Qt.NoFocus)
-                h.addWidget(b)
-            return f
-
+        pill = navbar.pill
         # ---- barra in alto
-        self.btn_home = QPushButton("⌂")
-        self.btn_home.setToolTip(tr("Home: torna alla scelta della cartella (la sessione resta salvata)."))
-        self.btn_home.clicked.connect(self.go_home)
-        self.btn_back = QPushButton("‹")
-        self.btn_back.setToolTip(tr("Precedente (← o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia."))
-        self.btn_back.clicked.connect(self.go_back)
-        self.btn_fwd = QPushButton("›")
-        self.btn_fwd.setToolTip(tr("Successivo (→): vai all'elemento dopo senza decidere."))
-        self.btn_fwd.clicked.connect(self.go_forward)
-        self.btn_undo = QPushButton("↩")
-        self.btn_undo.setObjectName("undo")
-        self.btn_undo.setToolTip(tr("Annulla l'ultima scelta e torna indietro (Z).\nSe era un Sì, toglie anche i file copiati in export."))
-        self.btn_undo.clicked.connect(self.undo)
-        self.nav_pill = pill(self.btn_home, self.btn_back, self.btn_fwd, self.btn_undo)
+        # cartelle, annulla, ripristina: con un ritaglio da confermare dicono di premere OK
+        self.btn_home, self.btn_undo, self.btn_redo = navbar.make_buttons().values()
+        for b, fn in ((self.btn_home, self.go_home), (self.btn_undo, self.undo), (self.btn_redo, self.redo)):
+            b.clicked.connect(lambda _=False, fn=fn: self.nav_unless_editing(fn))
+        self.nav_pill = navbar.bar(self.btn_home, self.btn_undo, self.btn_redo)
         left = QHBoxLayout()
         left.setSpacing(10)
         if self.unified:
@@ -355,57 +339,16 @@ class MainWindow(QMainWindow):
         self.top_grid, self.top_left, self.top_right = top, left, right
 
         # ---- impostazioni: finestrella che si apre dal pulsante ⚙ (come i menu di Foto)
-        self.btn_open = QPushButton(tr('📂  Apri cartella…'))
+        self.settings_pop = settingspop.SettingsPopup(self, self.settings_store, FILE_MANAGER)
+        sp = self.settings_pop
+        self.btn_open, self.btn_export, self.btn_show_export = sp.btn_open, sp.btn_export, sp.btn_show_export
+        self.fmt, self.tz, self.view_filter = sp.fmt, sp.tz, sp.view_filter
         self.btn_open.clicked.connect(self.choose_root)
-        self.btn_export = QPushButton(tr('Export: —'))
         self.btn_export.clicked.connect(self.choose_export)
-        self.btn_show_export = QPushButton(tr('Mostra export in {FILE_MANAGER}', FILE_MANAGER=FILE_MANAGER))
         self.btn_show_export.clicked.connect(self.open_export)
-        self.fmt = QComboBox()
-        self.fmt.addItems([tr('JPEG qualità massima'), tr('PNG 16-bit (senza perdita)')])
-        self.tz = QComboBox()
-        self.tz.addItem(tr('Ora: della fotocamera'), None)
-        for h in range(-12, 15):
-            self.tz.addItem(f"Ora: UTC{h:+d}", float(h))
-        self.view_filter = QComboBox()
-        self.view_filter.addItems([tr('Mostra: tutto'), tr('Mostra: solo foto (anche Live e panorami)'),
-                                   tr('Mostra: solo video (Live escluse)')])
+        sp.btn_help.clicked.connect(self.show_help)
         self.view_filter.setCurrentIndex(MEDIA_FILTERS.index(self.media_filter))
         self.view_filter.currentIndexChanged.connect(self.on_filter_changed)
-        btn_help2 = QPushButton(tr('?  Come funziona'))
-        btn_help2.clicked.connect(self.show_help)
-        tips = {
-            self.btn_open: tr('Scegli la cartella con foto e video (vengono lette anche le sottocartelle).'),
-            self.btn_export: tr('Cartella dove vengono COPIATE le foto approvate. Gli originali non si toccano.'),
-            self.fmt: tr('Formato dei fotogrammi estratti da Live e video.\nJPEG qualità massima: accettato da tutti i siti di stampa.\nPNG 16-bit: senza perdita, file molto grandi (~40 MB).\nFoto e panorami vengono sempre copiati identici.'),
-            self.tz: tr("Fuso orario scritto nella data delle foto esportate.\n'Della fotocamera' usa l'ora registrata in ogni file."),
-            self.view_filter: tr("Solo foto: nasconde i video (restano foto, Live e panorami).\nSolo video: nasconde foto, Live e panorami.\nGli elementi nascosti non vengono toccati: li ritrovi con 'Mostra: tutto'."),
-        }
-        for w, t in tips.items():
-            w.setToolTip(t)
-            w.setFocusPolicy(Qt.NoFocus)
-        self.settings_pop = QFrame(self, Qt.Popup)
-        self.settings_pop.setAttribute(Qt.WA_TranslucentBackground)
-        pv = QVBoxLayout(self.settings_pop)
-        pv.setContentsMargins(0, 0, 0, 0)
-        card = QFrame()
-        card.setObjectName("settings")
-        pv.addWidget(card)
-        cv = QVBoxLayout(card)
-        cv.setContentsMargins(16, 8, 16, 16)
-        cv.setSpacing(7)
-        for head, widgets in ((tr('CARTELLE'), (self.btn_open, self.btn_export, self.btn_show_export)),
-                              (tr('VISUALIZZA'), (self.view_filter, places.online_switch(self.settings_store))),
-                              (tr('FOTOGRAMMI ESPORTATI'), (self.fmt, self.tz)),
-                              (tr('AIUTO'), (btn_help2,))):
-            lab = QLabel(head)
-            lab.setObjectName("section")
-            cv.addWidget(lab)
-            for w in widgets:
-                cv.addWidget(w)
-        for b in (self.btn_open, self.btn_export, self.btn_show_export, btn_help2):
-            b.clicked.connect(self.settings_pop.hide)  # le finestre di scelta si aprono sopra
-        self.settings_pop.setFixedWidth(310)
 
         # ---- pannello a destra: solo informazioni utili (come il pannello Info di Foto)
         self.side = QFrame()
@@ -972,9 +915,9 @@ class MainWindow(QMainWindow):
         left_col = QVBoxLayout()
         left_col.setSpacing(4)
         left_col.addWidget(self.strip_filter_btn, 0, Qt.AlignVCenter)
-        self.btn_locate = QPushButton(tr("⤳  Torna all'analisi"))
+        self.btn_locate = QPushButton(tr("⤳  Prossima da decidere"))
         self.btn_locate.setObjectName("stripnav")
-        self.btn_locate.setToolTip(tr('Torna alla prima foto ancora da decidere\n(la prossima da giudicare)'))
+        self.btn_locate.setToolTip(tr('Vai alla prima foto ancora da decidere.'))
         self.btn_locate.setFocusPolicy(Qt.TabFocus)
         self.btn_locate.setFixedWidth(220)
         self.btn_locate.clicked.connect(self.locate_thumb)
@@ -999,21 +942,8 @@ class MainWindow(QMainWindow):
         strip_row.addWidget(self.btn_thumb_prev, 0, Qt.AlignVCenter)
         strip_row.addWidget(self.thumbs_strip, 1)
         strip_row.addWidget(self.btn_thumb_next, 0, Qt.AlignVCenter)
-        self.btn_return = QPushButton(tr("⤳ Torna all'ultima"))
-        self.btn_return.setToolTip(tr('Torna alla foto da cui sei tornato indietro (con ← o B).'))
-        self.btn_return.setFocusPolicy(Qt.TabFocus)
-        self.btn_return.setObjectName("stripnav")
-        self.btn_return.setFixedSize(220, 30)
-        self.btn_return.setVisible(False)
-        self.btn_return.clicked.connect(self.return_to_last)
-        right_box = QWidget()
-        rb = QHBoxLayout(right_box)
-        rb.setContentsMargins(0, 0, 0, 0)
-        rb.addWidget(self.btn_return, 0, Qt.AlignVCenter)
-        right_box.setFixedWidth(220)
-        strip_row.addWidget(right_box, 0, Qt.AlignVCenter)
-        self.return_idx: int | None = None   # dove eri prima di tornare indietro
-        self.came_from_home = False          # riaperta da ⌂ Riprendi: "Torna all'analisi" e frecce
+        strip_row.addSpacing(220)   # come la colonna a sinistra: la striscia resta al centro
+        self.came_from_home = False   # riaperta da Riprendi: frecce della striscia
         self.btn_locate.setProperty("home", "true")   # contorno giallo
         lay.addLayout(strip_row)
 
@@ -1076,7 +1006,7 @@ class MainWindow(QMainWindow):
                   self.snap_gallery, self.save_head, self.save_info, self.save_row,
                   self.thumbs_strip, self.strip_filter, self.photobook):
             w.setVisible(browsing)
-        self.update_locate_btn()   # frecce della striscia: solo dopo ⌂ Riprendi (come il pulsante)
+        self.update_locate_btn()   # "Prossima da decidere" e frecce della striscia
         self.update_print_box()
         self.update_photo_arrows()
 
@@ -1711,15 +1641,13 @@ class MainWindow(QMainWindow):
 
     # ---- Ritaglia: la bozza vale solo con OK; finché è aperto non si sceglie né si cambia foto
     def set_crop_lock(self, on: bool) -> None:
-        for w in (self.decision_bar, self.nav_pill, self.fav_pill, self.scene_bar, self.thumbs_strip,
-                  self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn,
-                  self.btn_return, self.zoom_pill):
+        for w in (self.decision_bar, self.fav_pill, self.scene_bar, self.thumbs_strip,
+                  self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn, self.zoom_pill):
             w.setEnabled(not on)
         for w in (self.decision_bar, self.scene_bar, self.thumbs_strip, self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn):
             hide_keep_space(w, on)
         self.update_photo_arrows()
         self.update_locate_btn()
-        self.btn_locate.setEnabled(not on and not self.locate_is_here())
         self.update_edit_ui()
 
     def crop_ratio(self) -> float | None:
@@ -1734,7 +1662,7 @@ class MainWindow(QMainWindow):
                            if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         if self.edit_base is not None:
             self.ritaglia._landscape_photo = self.edit_base.width() >= self.edit_base.height()
-        self.ritaglia.set_draft(self.crop_draft)
+        self.ritaglia.set_draft(self.crop_draft, video=getattr(self.current(), "kind", "") == "video")
         self.request_edit_render(sync=True, keep_zoom=False)
         self.image_view.set_crop_mode(True, self.crop_draft.get("crop"), self.crop_ratio())
 
@@ -1840,8 +1768,6 @@ class MainWindow(QMainWindow):
         if getattr(self, "btn_help", None) is not None:
             # finestra stretta: il nome del file resta leggibile; l'aiuto resta in ⚙ e coi tasti ? / H
             self.btn_help.setVisible(self.width() >= 1180)
-        if getattr(self, "btn_home", None) is not None:   # finestra stretta: il nome del file ha la precedenza (tasto Home)
-            self.btn_home.setVisible(self.width() >= 1180)
         if getattr(self, "photo_prev", None) is not None:
             self.place_photo_arrows()
         self.balance_top()
@@ -2126,6 +2052,7 @@ class MainWindow(QMainWindow):
                 if live is not None:
                     live.save()
                     self.history.clear()
+                    self.redo_stack.clear()
                 self.refresh_setup()
 
     def pick_destination(self):
@@ -2157,6 +2084,7 @@ class MainWindow(QMainWindow):
             "Shift+Y": lambda: self.decide("yes", with_video=True),
             "Shift+Return": lambda: self.decide("yes", with_video=True), "N": lambda: self.decide("no"),
             "S": lambda: self.decide("skip"), "X": lambda: self.decide("trash"), "Z": self.undo, "Ctrl+Z": self.undo,
+            "Shift+Z": self.redo, "Ctrl+Shift+Z": self.redo,
             "C": self.toggle_scene, "Left": self.go_back, "Right": self.go_forward,
             "Shift+Up": lambda: self.step(-10), "Shift+Down": lambda: self.step(10),
             "P": self.pick_sharpest, "R": self.reset_frame, "Space": self.play_pause,
@@ -2164,7 +2092,6 @@ class MainWindow(QMainWindow):
             "Up": lambda: self.nav_frame(-1), "B": self.go_back, "Home": self.go_home,
             "Down": lambda: self.nav_frame(1), ".": self.toggle_favorite,
             "I": self.toggle_side,
-
         }
         def press_focused_or(fn):
             # un pulsante raggiunto con Tab si preme con Invio/Spazio (le scorciatoie vincerebbero)
@@ -2429,8 +2356,7 @@ class MainWindow(QMainWindow):
         self.player.stop()
         self.settings_store.setValue("last_root", str(self.root))
         self.settings_store.setValue("last_export", str(self.export_dir))
-        self.btn_export.setText(tr('Export: {v0}', v0=self.export_dir.name))
-        self.btn_export.setToolTip(tr('Le foto approvate vengono copiate in:\n{v0}', v0=self.export_dir))
+        self.settings_pop.set_folders(self.root, self.export_dir)
         self.show_message(tr('Lettura della cartella…'))
         # anche le cartelle export usate prima (dopo un cambio di export): le copie fatte lì
         # non devono tornare come elementi nuovi da scegliere
@@ -2457,8 +2383,6 @@ class MainWindow(QMainWindow):
         self.export_q.submit(self.copy_paths.clear)   # copy_paths: solo dalla coda export
         # copie finite: l'esito è già nel salvataggio; un id uguale nella cartella nuova non è lo stesso
         self.export_futures = {k: f for k, f in self.export_futures.items() if not f.done()}
-        self.return_idx = None
-        self.btn_return.setVisible(False)
         if self.session:
             self.session.close()
             self.session = None
@@ -2485,6 +2409,7 @@ class MainWindow(QMainWindow):
                    "Si riparte senza le scelte precedenti. I file in “cancellare” sono ancora lì.",
                    v0=self.session.corrupt_backup))
         self.history.clear()
+        self.redo_stack.clear()
         self.export_q.submit(exporter.clean_partial, self.export_dir)   # dopo gli export in corso
         self.ready.clear()
         self.review_skipped = False
@@ -2517,7 +2442,7 @@ class MainWindow(QMainWindow):
             pos = next((i for i, it in enumerate(self.items) if it.id == home_id), None)
             if pos is not None:
                 self.idx = pos
-                self.came_from_home = True   # "Torna all'analisi" e frecce compaiono solo da qui
+                self.came_from_home = True   # le frecce della striscia compaiono solo da qui
         done = sum(1 for it in self.items if self.session.get(it.id) is not None)
         if export_warning:
             self.status.setStyleSheet(f"color:{C['text_warn']};")
@@ -2588,10 +2513,6 @@ class MainWindow(QMainWindow):
         self.reset_edit_view()
         self.update_counter()
         self.update_locate_btn()
-        self.btn_locate.setEnabled(not self.locate_is_here())
-        if self.return_idx is not None and self.idx == self.return_idx:
-            self.return_idx = None
-            self.btn_return.setVisible(False)
         item = self.current()
         if item is None:
             self.show_end()
@@ -2766,6 +2687,7 @@ class MainWindow(QMainWindow):
             self.flash(tr('📷 Fotogramma {v0} già salvato', v0=n + 1))
             return
         self.history.append((self.idx, key, None))
+        self.redo_stack.clear()
         try:
             self.session.set(key, "snap", [], n)
             edit = E.clean(self.session.edits.get(key, {}))
@@ -2784,7 +2706,6 @@ class MainWindow(QMainWindow):
         self.flash(tr('📷 Foto salvata: fotogramma {v0}  (Z per annullare)', v0=n + 1))
         self.set_buttons_enabled(True)
         self.update_scene_controls()
-        self.btn_undo.setEnabled(True)
         self.update_counter()
 
     def update_snaps_label(self):
@@ -3341,7 +3262,12 @@ class MainWindow(QMainWindow):
             b.style().polish(b)
         self.btn_trash.refresh_icon()
 
+    def update_undo_btns(self):
+        self.btn_undo.setEnabled(bool(self.history))
+        self.btn_redo.setEnabled(bool(self.redo_stack))
+
     def update_counter(self):
+        self.update_undo_btns()
         self.update_snaps_label()
         self.photobook.refresh(self.session if self.media_filter != "videos" else None, self.items, self.idx)
         self.update_save_info()
@@ -3409,7 +3335,7 @@ class MainWindow(QMainWindow):
         self.side_details.setText("")
         self.warn.setText("")
         self.set_buttons_enabled(False)
-        self.btn_undo.setEnabled(bool(self.history))
+        self.update_undo_btns()
         c = self.session.counts() if self.session else {"yes": 0, "no": 0, "skip": 0}
         hidden = sum(1 for it in self.items if not self.visible(it)
                      and not (self.session and self.session.get(it.id)))
@@ -3838,16 +3764,13 @@ class MainWindow(QMainWindow):
             return
         self.go_to(i)
 
-    def locate_is_here(self) -> bool:
-        """True se la foto selezionata è già la prima ancora da decidere: “Torna all'analisi” non serve."""
-        i = self.next_index(-1)
-        return bool(self.items) and i < len(self.items) and i == self.idx
-
     def update_locate_btn(self):
-        """"Torna all'analisi" e le frecce della striscia: solo se si torna dalla home, finché serve."""
-        show = self.came_from_home and bool(self.items) and not self.locate_is_here()
-        self.btn_locate.setVisible(show)
+        """"Prossima da decidere": solo lontano da lì; le frecce della striscia solo dopo Riprendi."""
         browsing = self.stack.currentWidget() is not self.setup_page
+        i = self.next_index(-1) if browsing and self.items else len(self.items)
+        show = i < len(self.items) and i != self.idx
+        self.btn_locate.setVisible(show)
+        self.btn_locate.setEnabled(show and not self.edit_pending())
         arrows = browsing and self.came_from_home and bool(self.items)
         for b in (self.btn_thumb_prev, self.btn_thumb_next):
             b.setVisible(arrows)
@@ -3872,15 +3795,6 @@ class MainWindow(QMainWindow):
     def scroll_thumbs(self, step: int):
         """Sposta la striscia di qualche miniatura, avanti (+1) o indietro (-1)."""
         self.thumbs_strip.nudge(-step * 3 * (ThumbStrip.CELL_W + ThumbStrip.GAP))
-
-    def return_to_last(self):
-        if self.return_idx is None or not self.session or not self.items:
-            return
-        i, self.return_idx = self.return_idx, None
-        if 0 <= i < len(self.items):
-            self.idx = i
-            self.show_item()
-        self.btn_return.setVisible(False)
 
     def go_forward(self):
         if not self.session or not self.items or self.stack.currentWidget() is self.setup_page:
@@ -3933,10 +3847,7 @@ class MainWindow(QMainWindow):
         self.go_to(i)
 
     def go_to(self, i: int):
-        """Vai all'elemento i; andando indietro (← o miniatura) si ricorda da dove si è partiti."""
-        if i < self.idx and self.return_idx is None:
-            self.return_idx = self.idx   # la foto da cui si è tornati indietro
-            self.btn_return.setVisible(True)
+        """Vai all'elemento i (← o miniatura)."""
         self.idx = i
         self.show_item()
 
@@ -4069,6 +3980,7 @@ class MainWindow(QMainWindow):
                 return
             item = self.items[self.idx]  # di nuovo al suo posto
         self.history.append((self.idx, item.id, prev))
+        self.redo_stack.clear()
         changed = f"{CHOICE_NAME.get(prev['choice'], prev['choice'])}  →  {CHOICE_NAME.get(choice, choice)}" \
             if prev is not None else ""
         moved: list[list[str]] = []
@@ -4220,6 +4132,9 @@ class MainWindow(QMainWindow):
         if d["choice"] == "yes" and not d.get("noexport") and item and "#" not in item_id:
             d["files"] = []
             self.queue_export(item, d.get("frame"), with_video=d.get("with_video", False))
+        elif d["choice"] == "snap" and item:
+            d["files"] = []
+            self.queue_export(item, d.get("frame"), key=item_id, snapshot=True)
 
     def undo(self):
         if not self.history or not self.session or self.stack.currentWidget() is self.setup_page:
@@ -4230,6 +4145,7 @@ class MainWindow(QMainWindow):
             return  # non riuscito: la scelta e l'annullamento restano
         self.history.pop()
         self.reapply(item_id, prev)
+        self.redo_stack.append((idx, item_id, dict(cur) if cur else None))
         self.idx = idx
         if cur and cur["choice"] == "snap" and self.current() and self.idx == idx \
                 and self.stack.currentWidget() is not self.msg_page \
@@ -4239,6 +4155,22 @@ class MainWindow(QMainWindow):
             self.update_scene_controls()
             self.update_counter()
             return
+        self.show_item()
+
+    def redo(self):
+        """Ripristina: rifà la scelta appena annullata, con i suoi effetti (copie, “cancellare”)."""
+        if not self.redo_stack or not self.session or self.stack.currentWidget() is self.setup_page:
+            return
+        idx, item_id, d = self.redo_stack[-1]
+        prev = self.session.get(item_id)
+        if prev and not self.revert_effects(item_id, prev):
+            return  # non riuscito: resta da ripristinare
+        self.redo_stack.pop()
+        self.reapply(item_id, d)
+        self.history.append((idx, item_id, prev))
+        self.idx = idx
+        if d is None or d["choice"] != "snap":
+            self.idx = self.index_after_choice()
         self.show_item()
 
     EXIT_WAIT_S = 30

@@ -54,7 +54,11 @@ EN = {
     "Annulla": "Cancel",
     "Annulla le modifiche": "Discard edits",
     "Conferma le modifiche": "Confirm edits",
-    "Home: torna alla scelta della cartella (la sessione resta salvata).": "Home: back to choosing the folder (the session is kept).",
+    "Cartelle": "Folders",
+    "Ripristina": "Redo",
+    "Cartelle: chiude questa cartella e torna alla scelta (la sessione resta salvata).":
+        "Folders: closes this folder and goes back to choosing one (the session is kept).",
+    "Ripristina la scelta appena annullata (⇧Z o ⇧⌘Z).": "Redo the choice you just undid (⇧Z or ⇧⌘Z).",
     "Prima conferma o annulla le modifiche": "First confirm or discard the edits",
     "Annulla questa regolazione": "Reset this adjustment",
     "Anteprima dell'elemento che arriva dopo questa scelta.": "Preview of the item that comes after this decision.",
@@ -153,6 +157,7 @@ EN = {
     "Questo è già il fotogramma più nitido qui vicino": "This is already the sharpest frame nearby",
     "Raddrizza l'orizzonte da solo.": "Levels the horizon automatically.",
     "Raddrizza le linee verticali che convergono (palazzi).": "Straightens the converging vertical lines (buildings).",
+    "RITAGLIA FOTOGRAMMA": "CROP FRAME",
     "Regola e Ritaglia: per foto, panorami, Live e il fotogramma fermo dei video":
         "Adjust and Crop: for photos, panoramas, Lives and the still frame of videos",
     "Ricomincia da capo": "Start over",
@@ -178,7 +183,6 @@ EN = {
     "Sfocatura: la foto è già nitida": "Blur: the photo is already sharp",
     "Specchia la foto da sinistra a destra.": "Mirrors the photo from left to right.",
     "Spostamento non riuscito: {e}": "Move failed: {e}",
-    "Successivo (→): vai all'elemento dopo senza decidere.": "Next (→): go to the next item without deciding.",
     "Sì (Y)": "Yes (Y)",
     "Sì + video (⇧Y)": "Yes + video (⇧Y)",
     "Tieni le foto (Y)": "Keep the photos (Y)",
@@ -187,7 +191,6 @@ EN = {
         "Removes all edits (Adjust and Crop): back to the original photo.",
     "Toglie tutte le regolazioni di questa foto (il ritaglio resta).": "Removes all adjustments for this photo (the crop stays).",
     "Tonalità": "Hue",
-    "Torna alla foto da cui sei tornato indietro (con ← o B).": "Back to the photo you came back from (with ← or B).",
     "analisi del video…": "analyzing the video…",
     "anteprima 720p · originale scaricato al SÌ": "720p preview · original downloaded on YES",
     "anteprima non letta": "preview not read",
@@ -313,8 +316,7 @@ EN = {
     "✗ scartata · niente copiato, l'originale resta al suo posto":
         "✗ discarded · nothing copied, the original stays where it is",
     "⟲  Rivedi (V)": "⟲  Replay (V)",
-    "⤳  Torna all'analisi": "⤳  Back to the analysis",
-    "⤳ Torna all'ultima": "⤳ Back to the last one",
+    "⤳  Prossima da decidere": "⤳  Next to decide",
     "💾 Progressi salvati": "💾 Progress saved",
     "🗑 In “cancellare”": "🗑 In “cancellare”",
     "(si riprova alla prossima apertura)": "(will be retried the next time you open the folder)",
@@ -364,8 +366,8 @@ EN.update({
         "\n(this export folder isn't on this computer: when resuming I'll ask where to copy)",
     "Al posto originale c'era già un file con lo stesso nome: nessuno è stato sovrascritto. Ripristinati come:\n":
         "The original spot already had a file with the same name: nothing was overwritten. Restored as:\n",
-    "Annulla l'ultima scelta e torna indietro (Z).\nSe era un Sì, toglie anche i file copiati in export.":
-        "Undo the last choice and go back (Z).\nIf it was a Yes, it also removes the files copied to export.",
+    "Annulla l'ultima scelta e torna a quella foto (Z o ⌘Z).\nSe era un Sì, toglie anche i file copiati in export.":
+        "Undo the last choice and go back to that photo (Z or ⌘Z).\nIf it was a Yes, it also removes the files copied to export.",
     "Clic o trascina sulla striscia per scegliere il fotogramma.\nLive: quello scelto diventa la foto (SÌ salva questa).\nLive: il pallino giallo è la foto scelta dalla fotocamera (R per tornarci).\nVideo: si ferma lì, poi 📷 Prendi foto.  ↑ ↓ un fotogramma alla volta.":
         "Click or drag on the strip to choose the frame.\nLive: the one you pick becomes the photo (YES saves it).\nLive: the yellow dot is the photo chosen by the camera (R to go back to it).\nVideo: it stops there, then 📷 Take photo.  ↑ ↓ one frame at a time.",
     "Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.":
@@ -399,8 +401,6 @@ EN.update({
         "Improves automatically (magic wand): automatic Light and Color.\nPress again to remove the enhancement. Then Confirm edits.",
     "Non serve: si salva da solo a ogni scelta.\nSe vuoi esserne sicuro, questo salva subito.":
         "Not needed: it saves itself with every choice.\nIf you want to be sure, this saves right away.",
-    "Precedente (← o B): torna all'elemento prima, anche se già deciso\n(approvato, scartato, in “cancellare”). La nuova scelta sostituisce la vecchia.":
-        "Previous (← or B): go back to the previous item, even if already decided\n(approved, discarded, in “cancellare”). A new choice replaces the old one.",
     "Preferita (.): le preferite approvate vengono copiate in\nexport/Foto/Preferite invece che in export/Foto.":
         "Favorite (.): approved favorites are copied to\nexport/Foto/Preferite instead of export/Foto.",
     "Quali miniature mostrare nella striscia in basso.\nQuella che stai guardando resta sempre visibile.":
@@ -418,8 +418,7 @@ EN.update({
         "Photos only: hides videos (photos, Lives and panoramas stay).\nVideos only: hides photos, Lives and panoramas.\nHidden items are not touched: you'll find them again with 'Show: everything'.",
     "Toglie regolazioni e ritaglio da questa foto: torna l'originale.\n(Se l'avevi già approvata, premi di nuovo ✓ Sì per esportarla com'era.)":
         "Removes adjustments and crop from this photo: back to the original.\n(If you had already approved it, press ✓ Yes again to export it as it was.)",
-    "Torna alla prima foto ancora da decidere\n(la prossima da giudicare)":
-        "Go back to the first photo still to decide\n(the next one to judge)",
+    "Vai alla prima foto ancora da decidere.": "Go to the first photo still to decide.",
     "Trascina gli angoli o i lati del riquadro sulla foto; trascina dentro per spostarlo.\nPoi Conferma le modifiche (o Annulla).":
         "Drag the corners or sides of the frame on the photo; drag inside to move it.\nThen Confirm edits (or Cancel).",
     "Video: fermati sul fotogramma da salvare (pausa o clic sulla striscia), poi Regola o Ritaglia":
@@ -481,6 +480,21 @@ EN.update({
     "vicino a {v0}": "near {v0}",
     "Luogo non registrato nella foto": "No location recorded in the photo",
     "Nome del luogo da OpenStreetMap": "Place name from OpenStreetMap",
+    # impostazioni (settingspop.py)
+    "Cambia…": "Change…", "Apri": "Open", "Galleria": "Gallery", "Foto da": "Photos from",
+    "Copie in": "Copies to", "Luoghi": "Places", "Formato": "Format", "Ora": "Time",
+    "Tutto": "Everything", "Solo foto e Live": "Photos and Live only", "Solo video": "Videos only",
+    "JPEG (consigliato)": "JPEG (recommended)", "PNG 16-bit (file grandi)": "16-bit PNG (large files)",
+    "Della fotocamera": "From the camera", "Come funziona  ?": "How it works  ?",
+    "Nomi più precisi via internet": "More precise names via internet",
+    "Fotogrammi da Live e video": "Frames from Live and videos",
+    "Le foto e i panorami vengono sempre copiati identici.": "Photos and panoramas are always copied unchanged.",
+    "Torna alla scelta delle cartelle (la sessione resta salvata).": "Back to choosing the folders (the session stays saved).",
+    "Scegli dove copiare le foto approvate. Gli originali non si toccano.": "Choose where approved photos are copied. Originals are never touched.",
+    "Apre la cartella in {FILE_MANAGER}.": "Opens the folder in {FILE_MANAGER}.",
+    "Gli elementi nascosti non vengono toccati:\nli ritrovi scegliendo 'Tutto'.": "Hidden items are not touched:\nchoose 'Everything' to see them again.",
+    "JPEG a qualità massima: va bene per tutti i siti di stampa.\nPNG 16-bit: senza perdita, ~40 MB a fotogramma.": "Maximum-quality JPEG: accepted by every print service.\n16-bit PNG: lossless, ~40 MB per frame.",
+    "Fuso orario scritto nella data del fotogramma.\n'Della fotocamera' usa l'ora registrata nel file.": "Time zone written in the frame's date.\n'From the camera' uses the time recorded in the file.",
     "Con internet manda a OpenStreetMap solo le coordinate GPS della foto\nper avere un nome più preciso (frazione, quartiere).\nSpento: il nome viene dall'elenco incluso nell'app e nulla esce in rete.": "When online, sends only the photo's GPS coordinates to OpenStreetMap\nfor a more precise name (village, neighbourhood).\nOff: the name comes from the list built into the app and nothing goes online.",
     "{v2} approvate · {v3} scartate · {v4} saltate": "{v2} approved · {v3} discarded · {v4} skipped",
     " · {v0} dai video": " · {v0} from videos", " · {v0} in “cancellare”": " · {v0} in “cancellare”",
@@ -531,8 +545,9 @@ HELP = {
 ✗ NO (N): scarta. Non copia niente.
 ↪ Salta (S): decidi dopo. A fine giro puoi rivedere le saltate.
 🗑 Cancellare (X): sposta l'originale nella cartella "cancellare", dentro quella che stai guardando. Non cancella davvero: la svuoti tu a mano.
-↩ Annulla (Z): torna all'ultima scelta. Se era un Sì, toglie anche i file copiati.
-‹ Precedente (← o B) / Successivo › (→): rivedi anche le foto già decise o in "cancellare". Una nuova scelta sostituisce la vecchia e rimette a posto i file.
+Frecce a uncino in alto, Annulla (Z) / Ripristina (⇧Z): come in Word. Annulla toglie l'ultima scelta (se era un Sì, anche i file copiati); Ripristina la rifà.
+Casa in alto: chiude la cartella e torna alla scelta. La sessione resta salvata.
+‹ / › ai lati della foto (← o B / →): rivedi anche le foto già decise o in "cancellare". Una nuova scelta sostituisce la vecchia e rimette a posto i file.
 ♡ Preferita (.): le preferite approvate finiscono in export/Foto/Preferite.
 Le miniature in basso mostrano quelle prima e dopo: clic per andarci. Il pallino colorato indica la scelta fatta.
 A destra c'è il pannello Info (ⓘ o I per nasconderlo): data, luogo, fotocamera, scatto e file.
@@ -579,8 +594,9 @@ Ogni scelta viene salvata subito in un file nascosto dentro la cartella che apri
 ✗ NO (N): discards. Copies nothing.
 ↪ Skip (S): decide later. At the end you can review the skipped items.
 🗑 Trash (X): moves the original into the "cancellare" folder, inside the folder you're browsing. Nothing is really deleted: you empty that folder yourself.
-↩ Undo (Z): goes back to your last choice. If it was a Yes, it also removes the copied files.
-‹ Previous (← or B) / Next › (→): review photos you already decided or put in "cancellare". A new choice replaces the old one and puts the files back in place.
+Hooked arrows at the top, Undo (Z) / Redo (⇧Z): like in Word. Undo removes your last choice (if it was a Yes, also the copied files); Redo does it again.
+House at the top: closes the folder and goes back to choosing one. The session is kept.
+‹ / › at the sides of the photo (← or B / →): review photos you already decided or put in "cancellare". A new choice replaces the old one and puts the files back in place.
 ♡ Favorite (.): approved favorites end up in export/Foto/Preferite.
 The thumbnails at the bottom show the ones before and after: click to go there. The colored dot shows your choice.
 The Info panel is on the right (ⓘ or I to hide it): date, place, camera, shot and file details.

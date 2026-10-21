@@ -181,9 +181,10 @@ QFrame#zoompill QLabel { color: $text_strong; background: transparent; }
 QFrame#pill QPushButton { background: transparent; border: none; border-radius: 14px;
                           font-size: 17px; min-width: 30px; min-height: 28px; padding: 0 6px; }
 QFrame#pill QPushButton:hover { background: $bg_hover; }
+QFrame#navbar QPushButton { background: transparent; border: none; border-radius: 8px; }
+QFrame#navbar QPushButton:hover { background: $bg_hover; }
 QFrame#pill QPushButton:disabled { color: $text_off; background: transparent; }
 QPushButton#fav[on="true"] { color: $text_fav; }
-QPushButton#undo { color: $text_warn; }
 QLabel#chosen { border-radius: 8px; padding: 2px 9px; font-size: 11px; font-weight: 700; color: $text_on_color; }
 QPushButton#info[on="true"] { background: $bg_pressed; }
 QSlider::groove:horizontal { height: 4px; background: $bg_slider_off; border-radius: 2px; }
@@ -289,6 +290,12 @@ QFrame#settings { background: $bg_control; border: 1px solid $line_soft; border-
 QFrame#settings QPushButton { background: $bg_hover; border: none; border-radius: 8px; text-align: left; padding: 7px 12px; }
 QFrame#settings QPushButton:hover { background: $bg_pressed; }
 QFrame#settings QComboBox { background: $bg_hover; border: none; }
+QFrame#settings QPushButton#small { font-size: 12px; padding: 4px 10px; border-radius: 11px; text-align: center; }
+QFrame#settings QPushButton#textlink { background: transparent; color: $link; padding: 6px 0 0 0; }
+QFrame#settings QPushButton#textlink:hover { color: $link_hover; }
+QLabel#settingshead { color: $text; font-size: 13px; font-weight: 600; padding: 12px 0 0 0; margin: 0; }
+QLabel#settingsnote { color: $text_2; font-size: 11px; }
+QFrame#settingsline { background: $line_divider; }
 
 /* pannello laterale (cartelle e impostazioni), come il pannello Regola di Foto */
 QFrame#side { background: $bg_panel; border-left: 1px solid $line_side; }

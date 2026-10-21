@@ -77,14 +77,13 @@ def test_frame_keys_repeat_and_item_keys_do_not(qapp, win):
     assert not reps["Left"] and not reps["Right"]
 
 
-def test_return_button_does_not_survive_reopening(qapp, win, sd):
+def test_next_to_decide_button_only_away_from_it(qapp, win, sd):
     open_folder(qapp, win, sd)
+    assert not win.btn_locate.isVisible()          # già sulla prossima da decidere
     go(qapp, win, PHOTO2)
-    win.go_back()
-    assert win.btn_return.isVisible()
-    win.go_home()
-    open_folder(qapp, win, sd)
-    assert win.return_idx is None and not win.btn_return.isVisible()
+    assert win.btn_locate.isVisible()
+    win.locate_thumb()
+    assert win.idx == win.next_index(-1) and not win.btn_locate.isVisible()
 
 
 def test_second_card_with_same_names_is_analyzed_again(qapp, win, sd, tmp_path):

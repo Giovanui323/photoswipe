@@ -932,9 +932,9 @@ class RitagliaPanel(QWidget):
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
-        head = QLabel(tr('RITAGLIA'))
-        head.setObjectName("panelhead")
-        v.addWidget(head)
+        self.head = QLabel(tr('RITAGLIA'))
+        self.head.setObjectName("panelhead")
+        v.addWidget(self.head)
         v.addSpacing(4)
         self.bars = {
             "straighten": ValueBar(tr('Raddrizza'), -45, 45, 0, _deg),
@@ -1025,7 +1025,9 @@ class RitagliaPanel(QWidget):
             b.hide()
         self.refresh()
 
-    def set_draft(self, d: dict) -> None:
+    def set_draft(self, d: dict, video: bool = False) -> None:
+        # nei video si ritaglia solo il fotogramma fermo: il video resta com'è
+        self.head.setText(tr('RITAGLIA FOTOGRAMMA') if video else tr('RITAGLIA'))
         self.draft = {k: copy.deepcopy(v) for k, v in (d or {}).items()
                       if k in E.GEOMETRY_KEYS or k in ("aspect_custom", "aspect_portrait")}
         self.refresh()

@@ -298,15 +298,17 @@ class ImageView(QGraphicsView):
         self._click_timer.timeout.connect(self.clicked.emit)
 
     # ---- Ritaglia
+    CROP_MARGIN = 28   # Ritaglia: spazio intorno alla foto, così angoli e lati sul bordo si prendono
+
     def set_crop_mode(self, on: bool, crop: list[float] | None = None, ratio: float | None = None) -> None:
-        self.crop_mode = on
+        was_on, self.crop_mode = self.crop_mode, on
         self.crop = list(crop or [0.0, 0.0, 1.0, 1.0])
         self.crop_ratio = ratio
         self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
         # il riquadro e l'ombra intorno coprono tutta la vista: si ridisegna sempre tutta
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if on
                                    else QGraphicsView.MinimalViewportUpdate)
-        if on:
+        if on or (was_on and not self.zoomed):   # all'uscita la foto torna a tutta finestra
             self.fit()
         self.viewport().update()
 
@@ -497,8 +499,9 @@ class ImageView(QGraphicsView):
     def _fit_k(self) -> float:
         """Scala (punti per pixel dell'immagine) che riempie la finestra: ingrandisce anche le
         foto piccole, come Foto. Nessun limite a 1 pixel fisico per pixel."""
-        return min(self.viewport().width() / self.full.width(),
-                   self.viewport().height() / self.full.height())
+        m = 2 * self.CROP_MARGIN if self.crop_mode else 0
+        return min(max(1, self.viewport().width() - m) / self.full.width(),
+                   max(1, self.viewport().height() - m) / self.full.height())
 
     def _limits(self) -> tuple[float, float]:
         """Zoom minimo (adattata) e massimo: 4 pixel dello schermo per pixel della foto."""
