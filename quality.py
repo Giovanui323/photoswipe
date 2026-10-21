@@ -50,7 +50,7 @@ class Quality:
         """Riga per la scheda del pannello Info: verde se va tutto bene, arancione se no."""
         text, bad = self.summary()
         color = "#ffb340" if bad else "#30d158"
-        return (f"<div style='color:{color}; margin-top:4px; font-size:12px'>"
+        return (f"<div style='color:{color}; margin-top:8px; font-size:12px'>"
                 f"{tr('Qualità')}: {text}</div>")
 
 

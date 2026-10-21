@@ -202,7 +202,7 @@ def info_html(m, color: str, link: str, esc) -> str:
     muted = COLORS["text_2"]
 
     def row(pin: str, body: str) -> str:   # tabella: la seconda riga resta allineata al nome
-        return (f"<table cellspacing='0' cellpadding='0' style='margin-bottom:8px'>"
+        return (f"<table cellspacing='0' cellpadding='0' style='margin-bottom:12px'>"
                 f"<tr><td style='padding-right:5px'>{pin}</td><td>{body}</td></tr></table>")
     if not m.gps:
         return row(f"<span style='color:{muted}'>📍</span>",

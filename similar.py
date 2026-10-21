@@ -47,4 +47,4 @@ def info_html(items, idx: int, quality_of) -> str:
         text = tr('{v0} foto simili: la più nitida è la {v1}ª ({v2}), questa è la {v3}ª',
                   v0=len(members), v1=members.index(best) + 1, v2=f"{items[best].taken:%H:%M:%S}", v3=pos)
         color = "#ffb340"
-    return f"<div style='color:{color}; margin-top:2px; font-size:12px'>{text}</div>"
+    return f"<div style='color:{color}; margin-top:4px; font-size:12px'>{text}</div>"

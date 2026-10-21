@@ -32,13 +32,13 @@ def details_html(taken, kind_label: str, color: str, status: str, links: list[tu
     """In alto: giorno; ora, tipo e fuso; poi lo stato dei file con un puntino del colore della scelta."""
     link_html = "".join(f" · <a style='color:{C['link']}' href='{url}'>{label}</a>" for label, url in links)
     head, _, rest = status.partition(" · ")
-    rest = f"<div style='color:{C['text_2']}; margin-left:14px'>{esc(rest)}</div>" if rest else ""
+    rest = f"<div style='color:{C['text_2']}; margin-left:14px; margin-top:2px'>{esc(rest)}</div>" if rest else ""
     t = taken
     when = "  ·  ".join(x for x in (f"{t:%H:%M:%S}", kind_label.capitalize(), tz) if x)
     return (f"<div style='font-size:17px; font-weight:600; color:{C['text']}'>"
             f"{_GIORNI_LUNGHI[t.weekday()]} {t.day} {_MESI_LUNGHI[t.month - 1]} {t.year}</div>"
-            f"<div style='color:{C['text_2']}; margin-top:2px'>{when}</div>"
-            f"<div style='margin-top:8px'><span style='color:{color}'>●</span> "
+            f"<div style='color:{C['text_2']}; margin-top:4px'>{when}</div>"
+            f"<div style='margin-top:12px'><span style='color:{color}'>●</span> "
             f"<span style='color:{C['text_detail']}; font-weight:600'>{esc(head[:1].upper() + head[1:])}</span>"
             f"{link_html}</div>{rest}")
 
@@ -57,10 +57,10 @@ def card_html(m, extra: list[str], burst_html) -> str:
         files = rows.get(tr('File'), "").split("\n")
         if len(files) == 1 and "  ·  " in files[0]:
             size += "  ·  " + files[0].partition("  ·  ")[2]   # un solo file: il peso va accanto ai MP
-        card.append(f"<div style='color:{C['text_detail']}; margin-top:4px'>{esc(size)}</div>")
+        card.append(f"<div style='color:{C['text_detail']}; margin-top:6px'>{esc(size)}</div>")
     tech = [rows[k] for k in (tr('Scatto'), tr('Durata'), tr('Bitrate'), tr('Audio')) if rows.get(k)]
     if tech:
-        card.append(f"<div style='color:{C['text_2']}; margin-top:4px; font-size:12px'>"
+        card.append(f"<div style='color:{C['text_2']}; margin-top:6px; font-size:12px'>"
                     + esc("  ·  ".join(tech)) + "</div>")
     if m and m.quality:
         card.append(m.quality.info_html() + burst_html())
@@ -84,7 +84,7 @@ def more_html(m, extra: list[str], warn: list[str], short_folder, favorite: bool
         more.append(f"<div style='color:{C['text_2']}'>{esc(chr(10).join(names))}</div>")
     if rows.get(tr('Cartella')):
         folder = esc(short_folder(rows[tr('Cartella')]).replace("/", " › ").replace("\\", " › "))
-        more.append(f"<div style='color:{C['text_2']}'>{folder}</div>")
+        more.append(f"<div style='color:{C['text_2']}; margin-top:2px'>{folder}</div>")
     small = [(k, v) for k, v in rows.items() if k == tr('Colore')]   # il fuso è in alto, accanto all'ora
     small += [(tr('Nota'), x) for x in extra if x.startswith("anteprima")]
     if favorite:

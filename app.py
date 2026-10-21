@@ -504,7 +504,7 @@ class MainWindow(QMainWindow):
         side_outer.addWidget(foot)
         sv = QVBoxLayout(side_body)
         sv.setContentsMargins(18, 10, 18, 18)   # come Regola e Ritaglia
-        sv.setSpacing(8)
+        sv.setSpacing(16)   # aria tra data, scheda, luogo e riquadri
         self.side_layout = sv
         self.side_info = QLabel("")   # titolo solo per le foto prese da un video: la linguetta dice già Info
         self.side_info.setObjectName("panelhead")
@@ -520,7 +520,7 @@ class MainWindow(QMainWindow):
         self.info_card = QFrame()
         self.info_card.setObjectName("infocard")
         icl = QVBoxLayout(self.info_card)
-        icl.setContentsMargins(12, 10, 12, 10)
+        icl.setContentsMargins(14, 12, 14, 12)
         self.info_card_text = QLabel("")
         self.info_card_text.setWordWrap(True)
         self.info_card_text.setTextFormat(Qt.RichText)
@@ -540,7 +540,7 @@ class MainWindow(QMainWindow):
         self.print_box.setObjectName("printbox")
         pb = QVBoxLayout(self.print_box)
         pb.setContentsMargins(0, 0, 0, 0)
-        pb.setSpacing(8)
+        pb.setSpacing(10)
         ph = QLabel(tr('Stampa').upper())
         ph.setObjectName("subhead")
         pb.addWidget(ph)
