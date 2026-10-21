@@ -1,0 +1,32 @@
+name: Controllo dati personali
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Cerca termini vietati
+        env:
+          TERMS: ${{ vars.FORBIDDEN_TERMS }}
+        run: |
+          if [ -z "$TERMS" ]; then
+            echo "Variabile FORBIDDEN_TERMS non impostata"
+            exit 1
+          fi
+          printf '%s\n' "$TERMS" | grep -v '^$' > "$RUNNER_TEMP/terms.txt"
+          status=0
+          # Solo i nomi dei file vengono stampati, mai il testo trovato
+          if git grep -I -i -l -F -f "$RUNNER_TEMP/terms.txt" -- . ':!.github/workflows/no-personal-data.yml' > "$RUNNER_TEMP/hits.txt"; then
+            echo "File con dati personali:"
+            cat "$RUNNER_TEMP/hits.txt"
+            status=1
+          fi
+          if git log --all --format='%an%x09%ae%x09%cn%x09%ce' | grep -i -q -F -f "$RUNNER_TEMP/terms.txt"; then
+            echo "Commit con autore o committer personale"
+            status=1
+          fi
+          exit $status
