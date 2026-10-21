@@ -908,7 +908,7 @@ class MainWindow(QMainWindow):
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snaps_label)
         self.side_layout.insertWidget(self.side_layout.count() - 1, self.snap_gallery)
         self.side_layout.insertSpacing(self.side_layout.count() - 1, 6)
-        self.photobook.opened.connect(lambda k: self.jump_to(next((i for i, it in enumerate(self.items) if it.id == k), -1)))
+        self.photobook.opened.connect(lambda k: photobook.go_to(self, k))   # clic: torna a quella foto
         self.decision_bar = QWidget()
         bottom = QHBoxLayout(self.decision_bar)
         bottom.setContentsMargins(0, 2, 0, 0)
