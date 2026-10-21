@@ -4,7 +4,9 @@ Tutte le approvate (e le foto prese dai video) nell'ordine della cartella, come 
 su carta avorio, una pagina per giorno (fino a 5 foto; le altre dello stesso giorno nella pagina dopo) e i
 giorni con poche foto della stessa settimana insieme (fino a 4) se nello stesso posto. Il luogo
 (dal GPS) serve a mettere insieme: nello stesso giorno le foto dello stesso posto stanno sulla
-stessa pagina, le poche fatte altrove vanno su un'altra (insieme tra loro). Sotto: data e luogo. ← → (o la rotella, o le frecce ai lati) girano la pagina;
+stessa pagina, le poche fatte altrove vanno su un'altra (insieme tra loro). Una foto da sola su
+una pagina è un'eccezione (l'avanzo di un gruppo, 5 + 5 + 1): le altre si uniscono alle vicine
+della stessa settimana anche se fatte altrove. Sotto: data e luogo. ← → (o la rotella, o le frecce ai lati) girano la pagina;
 clic su una foto = chiudi l'album e torna a quella foto; Esc chiude. All'apertura la copertina
 si apre sul dorso (poi non si vede più: da lì in poi solo foto, dalla prima all'ultima) e alla
 chiusura si richiude, con la finestra in dissolvenza. Si vede la versione
@@ -126,7 +128,8 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
     insieme (fino a DAY_MAX per pagina, poi la pagina dopo: 11 = 5 + 5 + 1); quelle di luoghi
     con poche foto (fino a FEW) insieme tra loro su un'altra pagina, invece che una per pagina.
     Poi le pagine di giorni diversi della stessa settimana e dello stesso luogo si uniscono fino
-    a WEEK_MAX. Senza GPS: solo le date."""
+    a WEEK_MAX, e una foto rimasta da sola (non l'avanzo di un gruppo) si unisce comunque alla
+    pagina accanto della stessa settimana. Senza GPS: solo le date."""
     gps = gps or [None] * len(photos)
     days: list[list[int]] = []
     for i, pg in enumerate(photos):
@@ -136,6 +139,7 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
             days.append([i])
     pages: list[list[int]] = []
     page_where: list = []
+    rest: list[bool] = []   # avanzo di un gruppo (5 + 5 + 1): può restare da solo
     week = lambda i: photos[i].item.taken.isocalendar()[:2]  # noqa: E731
     for day in days:
         day_pages: list[list] = []   # [foto, luogo, solo luoghi con poche foto]
@@ -146,8 +150,8 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
                 if few and day_pages and day_pages[-1][2] and len(day_pages[-1][0]) + len(part) <= DAY_MAX:
                     day_pages[-1][0] += part
                 else:
-                    day_pages.append([list(part), at, few])
-        for idx, at, _ in day_pages:
+                    day_pages.append([list(part), at, few, k > 0])
+        for idx, at, _, leftover in day_pages:
             if (pages and len(pages[-1]) + len(idx) <= WEEK_MAX and week(pages[-1][-1]) == week(idx[0])
                     and photos[pages[-1][-1]].item.taken.date() != photos[idx[0]].item.taken.date()
                     and (page_where[-1] is None or at is None or km(page_where[-1], at) <= PLACE_KM)):
@@ -156,6 +160,20 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
             else:
                 pages.append(idx)
                 page_where.append(at)
+                rest.append(leftover)
+    # foto rimaste da sole: con la pagina prima o dopo della stessa settimana, ovunque siano state fatte
+    k = 0
+    while k < len(pages):
+        if len(pages[k]) == 1 and not rest[k]:
+            for j in (k - 1, k + 1):
+                if 0 <= j < len(pages) and len(pages[j]) + 1 <= WEEK_MAX \
+                        and week(pages[j][0]) == week(pages[k][0]):
+                    pages[j] = pages[j] + pages[k] if j < k else pages[k] + pages[j]
+                    rest[j] = False   # con la foto in più non è più una pagina da una
+                    del pages[k], rest[k]
+                    k -= 1
+                    break
+        k += 1
     return pages
 
 

@@ -152,6 +152,11 @@ def test_album_pages_gather_by_place():
     # 4 a LA e 1 a Hollywood in mezzo: le 4 insieme, la quinta a parte
     day = [pg(7, 20, n) for n in range(5)]
     assert album.plan(day, [la, la, hollywood, la, la]) == [[0, 1, 3, 4], [2]]
+    # foto da sole in giorni e posti diversi della stessa settimana: insieme, non una per pagina
+    singles = [pg(7, 21, 0), pg(7, 22, 0), pg(7, 23, 0)]
+    assert album.plan(singles, [la, sf, hollywood]) == [[0, 1, 2]]
+    eleven = [pg(7, 24, n) for n in range(11)] + [pg(7, 25, 0)]
+    assert [len(p) for p in album.plan(eleven, [la] * 11 + [sf])] == [5, 5, 2]   # la foto sola del 25 va con l'avanzo
     # 27 lug: 2 a LA, 1 senza GPS (resta con LA), 2 a Hollywood · 28 lug: 1 a Hollywood e 1 a SF
     # (poche, insieme) che si uniscono alle 2 di Hollywood del giorno prima · 30 lug: 4 a LA, 3 a SF
     # · 1 ago (stessa settimana, a SF): con le 3 di SF
