@@ -77,7 +77,7 @@ def test_album_opens_with_all_approved_turns_pages_and_click_goes_back(qapp, win
 
 
 def test_album_pages_follow_days_and_weeks():
-    """Una pagina per giorno (fino a 5, di più = pagine bilanciate); giorni con poche foto della
+    """Una pagina per giorno (fino a 5, le altre nella pagina dopo); giorni con poche foto della
     stessa settimana insieme fino a 4; le caselle hanno le proporzioni delle foto (niente schiacciate)."""
     from datetime import datetime
     from pathlib import Path
@@ -94,7 +94,9 @@ def test_album_pages_follow_days_and_weeks():
     # 3 lug: 1 · 4 lug: 5 · 5 lug: 7 · 8 e 9 lug (stessa settimana): 2 + 1 · 13 lug (settimana dopo): 1
     photos = [pg(3, 0)] + [pg(4, n) for n in range(5)] + [pg(5, n) for n in range(7)] \
         + [pg(8, 0), pg(8, 1), pg(9, 0), pg(13, 0)]
-    assert album.plan(photos) == [[0], [1, 2, 3, 4, 5], [6, 7, 8, 9], [10, 11, 12], [13, 14, 15], [16]]
+    assert album.plan(photos) == [[0], [1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12], [13, 14, 15], [16]]
+    eleven = [pg(30, n) for n in range(11)]   # 11 foto dello stesso giorno: 5 + 5 + 1
+    assert [len(p) for p in album.plan(eleven)] == [5, 5, 1]
     page = QRectF(0, 0, 300, 400)
     for aspects in ([0.75], [1.5, 0.75], [0.75, 0.75, 1.33, 1.33, 0.75]):
         rects = album.slots(page, aspects)
@@ -129,3 +131,34 @@ def test_album_layout_every_mix_of_landscape_portrait_pano_square():
             assert smallest > 0.02, (aspects, smallest)   # nessuna foto ridotta a francobollo
             worst = min(worst, cover)
     assert worst >= 0.24, worst   # il caso peggiore: un panorama 3:1 da solo, largo quanto la pagina
+
+
+def test_album_pages_gather_by_place():
+    """Il luogo mette insieme: nello stesso giorno le foto dello stesso posto sulla stessa pagina
+    (anche se non sono una dopo l'altra), quelle fatte altrove su un'altra; i luoghi con poche foto
+    insieme tra loro; giorni della stessa settimana insieme solo se nello stesso posto."""
+    from datetime import datetime
+    from pathlib import Path
+
+    import album
+    from photobook import Page
+    from scanner import Item
+
+    def pg(month, day, n):
+        it = Item("photo", f"{month}_{day}_{n}.jpg", image=Path(f"{day}_{n}.jpg"),
+                  taken=datetime(2026, month, day, 10, n))
+        return Page(it.id, it.id, it.main, it, None)
+    la, hollywood, sf = (34.05, -118.25), (34.13, -118.32), (37.77, -122.42)
+    # 4 a LA e 1 a Hollywood in mezzo: le 4 insieme, la quinta a parte
+    day = [pg(7, 20, n) for n in range(5)]
+    assert album.plan(day, [la, la, hollywood, la, la]) == [[0, 1, 3, 4], [2]]
+    # 27 lug: 2 a LA, 1 senza GPS (resta con LA), 2 a Hollywood · 28 lug: 1 a Hollywood e 1 a SF
+    # (poche, insieme) che si uniscono alle 2 di Hollywood del giorno prima · 30 lug: 4 a LA, 3 a SF
+    # · 1 ago (stessa settimana, a SF): con le 3 di SF
+    photos = [pg(7, 27, n) for n in range(5)] + [pg(7, 28, n) for n in range(2)] \
+        + [pg(7, 30, n) for n in range(7)] + [pg(8, 1, 0)]
+    gps = [la, la, None, hollywood, hollywood, hollywood, sf] + [la] * 4 + [sf] * 3 + [sf]
+    assert album.plan(photos, gps) == [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10], [11, 12, 13, 14]]
+    assert album.plan(photos) == [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9, 10, 11], [12, 13, 14]]   # senza GPS: solo le date
+    assert album.caption(photos, [0, 1], "Los Angeles").endswith("2026 · Los Angeles")
+    assert album.place_name(gps, [2, 3]) and album.place_name([None], [0]) == ""

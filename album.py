@@ -1,14 +1,17 @@
 """Album delle foto approvate: si apre dal fotolibro del pannello Info e si sfoglia a doppia pagina.
 
 Tutte le approvate (e le foto prese dai video) nell'ordine della cartella, come stampe incollate
-su carta avorio, una pagina per giorno (fino a 5 foto; un giorno con di più va su più pagine) e i
-giorni con poche foto della stessa settimana insieme (fino a 4), con la data sotto. ← → (o la rotella, o le frecce ai lati) girano la pagina;
+su carta avorio, una pagina per giorno (fino a 5 foto; le altre dello stesso giorno nella pagina dopo) e i
+giorni con poche foto della stessa settimana insieme (fino a 4) se nello stesso posto. Il luogo
+(dal GPS) serve a mettere insieme: nello stesso giorno le foto dello stesso posto stanno sulla
+stessa pagina, le poche fatte altrove vanno su un'altra (insieme tra loro). Sotto: data e luogo. ← → (o la rotella, o le frecce ai lati) girano la pagina;
 clic su una foto = chiudi l'album e torna a quella foto; Esc chiude. All'apertura la copertina
 si apre sul dorso (poi non si vede più: da lì in poi solo foto, dalla prima all'ultima) e alla
 chiusura si richiude, con la finestra in dissolvenza. Si vede la versione
 esportata (con ritaglio e regolazioni) quando c'è, altrimenti l'originale."""
 from __future__ import annotations
 
+import math
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -17,6 +20,8 @@ from PySide6.QtGui import QColor, QFont, QImage, QImageIOHandler, QImageReader, 
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QToolTip, QVBoxLayout, QWidget
 
 import cloud
+import metadata
+import places
 import thumbcache
 from datefmt import _MESI_LUNGHI
 from i18n import tr
@@ -26,6 +31,8 @@ from widgets import LruCache
 
 DAY_MAX = 5    # foto dello stesso giorno in una pagina
 WEEK_MAX = 4   # giorni diversi della stessa settimana in una pagina
+PLACE_KM = 2   # entro questa distanza: lo stesso luogo
+FEW = 2        # foto di un luogo così poche da stare con quelle di altri luoghi dello stesso giorno
 LONG_SIDE = 1600               # lato lungo delle foto caricate: nitide anche a tutto schermo
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".webp")
 SPREAD_ASPECT = 1.5            # due pagine 3 × 4 affiancate
@@ -76,10 +83,51 @@ def load(src: str | None, page: Page) -> QImage:
     return thumbcache.cached_thumb(page.item)   # DNG, file su iCloud, …: almeno la miniatura
 
 
-def plan(photos: list[Page]) -> list[list[int]]:
-    """Le foto (per indice, nell'ordine dato) divise in pagine per data: un giorno = una pagina se
-    ha al massimo DAY_MAX foto, altrimenti più pagine bilanciate (7 = 4 + 3); poi i giorni vicini
-    della stessa settimana si uniscono se insieme non superano WEEK_MAX."""
+def gps_of(page: Page) -> tuple[float, float] | None:
+    """Coordinate dello scatto, dall'originale (le copie in export possono non averle)."""
+    src = page.item.image or page.item.raw
+    if src is None or not cloud.is_local(src):
+        return None
+    return metadata.read_image(src).gps
+
+
+def km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    la1, lo1, la2, lo2 = map(math.radians, (*a, *b))
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 2 * 6371 * math.asin(math.sqrt(min(1.0, h)))
+
+
+def _by_place(day: list[int], gps: list) -> list[tuple[list[int], tuple | None]]:
+    """Le foto di un giorno raccolte per luogo (anche se non sono una dopo l'altra), nell'ordine
+    in cui compare ogni luogo. Una foto senza GPS sta col luogo della foto prima."""
+    groups: list[list[int]] = []
+    where: list = []
+    prev = None
+    for i in day:
+        g = gps[i]
+        if g is None:
+            c = prev if prev is not None else (0 if groups else None)
+        else:
+            c = next((k for k, a in enumerate(where) if a and km(a, g) <= PLACE_KM), None)
+            if c is None:   # un gruppo cominciato con foto senza GPS prende questo luogo
+                c = next((k for k, a in enumerate(where) if a is None), None)
+        if c is None:
+            groups.append([])
+            where.append(g)
+            c = len(groups) - 1
+        groups[c].append(i)
+        where[c] = where[c] or g
+        prev = c
+    return list(zip(groups, where))
+
+
+def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
+    """Le foto divise in pagine per giorno, e nel giorno per luogo: le foto dello stesso posto
+    insieme (fino a DAY_MAX per pagina, poi la pagina dopo: 11 = 5 + 5 + 1); quelle di luoghi
+    con poche foto (fino a FEW) insieme tra loro su un'altra pagina, invece che una per pagina.
+    Poi le pagine di giorni diversi della stessa settimana e dello stesso luogo si uniscono fino
+    a WEEK_MAX. Senza GPS: solo le date."""
+    gps = gps or [None] * len(photos)
     days: list[list[int]] = []
     for i, pg in enumerate(photos):
         if days and photos[days[-1][-1]].item.taken.date() == pg.item.taken.date():
@@ -87,24 +135,57 @@ def plan(photos: list[Page]) -> list[list[int]]:
         else:
             days.append([i])
     pages: list[list[int]] = []
+    page_where: list = []
+    week = lambda i: photos[i].item.taken.isocalendar()[:2]  # noqa: E731
     for day in days:
-        if len(day) > DAY_MAX:
-            n = -(-len(day) // DAY_MAX)   # pagine ripartite in parti uguali
-            cut = [round(k * len(day) / n) for k in range(n + 1)]
-            pages += [day[cut[k]:cut[k + 1]] for k in range(n)]
-            continue
-        week = lambda i: photos[i].item.taken.isocalendar()[:2]  # noqa: E731
-        last = pages[-1] if pages else None
-        if last and len(last) + len(day) <= WEEK_MAX and week(last[-1]) == week(day[0]):
-            last += day
-        else:
-            pages.append(list(day))
+        day_pages: list[list] = []   # [foto, luogo, solo luoghi con poche foto]
+        for group, at in _by_place(day, gps):
+            for k in range(0, len(group), DAY_MAX):
+                part = group[k:k + DAY_MAX]
+                few = len(part) <= FEW
+                if few and day_pages and day_pages[-1][2] and len(day_pages[-1][0]) + len(part) <= DAY_MAX:
+                    day_pages[-1][0] += part
+                else:
+                    day_pages.append([list(part), at, few])
+        for idx, at, _ in day_pages:
+            if (pages and len(pages[-1]) + len(idx) <= WEEK_MAX and week(pages[-1][-1]) == week(idx[0])
+                    and photos[pages[-1][-1]].item.taken.date() != photos[idx[0]].item.taken.date()
+                    and (page_where[-1] is None or at is None or km(page_where[-1], at) <= PLACE_KM)):
+                pages[-1] += idx
+                page_where[-1] = at or page_where[-1]
+            else:
+                pages.append(idx)
+                page_where.append(at)
     return pages
 
 
-def caption(photos: list[Page], idx: list[int]) -> str:
-    """La data sotto la pagina: il giorno, o i giorni (3 – 5 luglio 2026)."""
-    return date_range([photos[i] for i in idx])
+def _short_place(at: tuple[float, float]) -> str:
+    try:
+        name = places.offline(*at)
+    except Exception:
+        return ""
+    prefix = tr('vicino a {v0}', v0="")
+    near = name.startswith(prefix)
+    short = (name[len(prefix):] if near else name).split(" · ")[0].split(",")[0]
+    return tr('vicino a {v0}', v0=short) if near else short
+
+
+def place_name(gps: list, idx: list[int]) -> str:
+    """I luoghi della pagina in breve ("Los Angeles · Universal City"), dall'elenco incluso:
+    niente rete. Al massimo due, nell'ordine delle foto."""
+    names: list[str] = []
+    for i in idx:
+        if gps[i]:
+            n = _short_place(gps[i])
+            if n and n not in names:
+                names.append(n)
+    return " · ".join(names[:2])
+
+
+def caption(photos: list[Page], idx: list[int], place: str = "") -> str:
+    """Sotto la pagina: il giorno, o i giorni (3 – 5 luglio 2026), e il luogo."""
+    when = date_range([photos[i] for i in idx])
+    return f"{when} · {place}" if place else when
 
 
 def _trees(lo: int, hi: int, memo: dict) -> list:
@@ -281,7 +362,8 @@ class _Spread(QWidget):
                 p.drawText(num, Qt.AlignBottom | (Qt.AlignRight if side else Qt.AlignLeft), str(pg + 1))
                 f.setItalic(True)
                 p.setFont(f)
-                p.drawText(num, Qt.AlignBottom | Qt.AlignHCenter, caption(self.dlg.photos, self.dlg.pages[pg]))
+                p.drawText(num, Qt.AlignBottom | Qt.AlignHCenter, caption(self.dlg.photos, self.dlg.pages[pg],
+                                                                         self.dlg.places[pg] if pg < len(self.dlg.places) else ""))
         p.setPen(QPen(QColor(0, 0, 0, 70), 1))
         p.drawLine(QPointF(mid, b.top()), QPointF(mid, b.bottom()))
         for r, i in self._photos(spread):
@@ -473,6 +555,7 @@ class AlbumDialog(QDialog):
         self.setStyleSheet(f"QDialog {{ background: {C['bg_window']}; }}")
         self.photos = photos
         self.pages: list[list[int]] = []
+        self.places: list[str] = []   # luogo di ogni pagina (vuoto senza GPS)
         self.aspects: list[float] = []
         self.sources: list[str | None] = []
         self.images: LruCache = LruCache(48)
@@ -530,7 +613,12 @@ class AlbumDialog(QDialog):
         self._closing = False
         self.setWindowOpacity(0.0)
         self._fade = QPropertyAnimation(self, b"windowOpacity", self, duration=180)
-        fut = self._pool.submit(lambda: [(s, aspect(s)) for s in (source(session, pg) for pg in photos)])
+        def prepare():   # in sottofondo: file da mostrare, proporzioni, GPS, pagine e luoghi
+            srcs = [source(session, pg) for pg in photos]
+            gps = [gps_of(pg) for pg in photos]
+            pages = plan(photos, gps)
+            return srcs, [aspect(s) for s in srcs], pages, [place_name(gps, idx) for idx in pages]
+        fut = self._pool.submit(prepare)
         fut.add_done_callback(lambda f: self._bridge.sized.emit(None if f.exception() else f.result()))
 
     def showEvent(self, e):
@@ -577,10 +665,9 @@ class AlbumDialog(QDialog):
         self._want(s)
 
     def _sized(self, res) -> None:
-        res = res or [(None, 4 / 3)] * len(self.photos)
-        self.sources = [s for s, _ in res]
-        self.aspects = [a for _, a in res]
-        self.pages = plan(self.photos)
+        if res is None:   # qualcosa è andato storto: almeno le pagine per data
+            res = [None] * len(self.photos), [4 / 3] * len(self.photos), plan(self.photos), []
+        self.sources, self.aspects, self.pages, self.places = res
         self.spread_changed()
         self.view.update()
 
