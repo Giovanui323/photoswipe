@@ -196,16 +196,27 @@ def name(lat: float, lon: float) -> str:
 
 
 def info_html(m, color: str, link: str, esc) -> str:
-    """Riga del luogo nel pannello Info: puntino, nome del posto, coordinate e link alla mappa.
-    Senza GPS lo si dice (es. DJI Pocket: niente GPS se non è collegata al telefono)."""
+    """Luogo nel pannello Info, staccato dal resto: 📍 e nome del posto (con "Mappa"), sotto in
+    piccolo le coordinate, allineate al nome. Senza GPS una riga grigia lo dice (es. DJI Pocket)."""
+    from theme import COLORS
+    muted = COLORS["text_2"]
+
+    def row(pin: str, body: str) -> str:   # tabella: la seconda riga resta allineata al nome
+        return (f"<table cellspacing='0' cellpadding='0' style='margin-bottom:8px'>"
+                f"<tr><td style='padding-right:5px'>{pin}</td><td>{body}</td></tr></table>")
     if not m.gps:
-        return f"<div style='color:{color}'>📍 {esc(tr('Luogo non registrato nella foto'))}</div>"
+        return row(f"<span style='color:{muted}'>📍</span>",
+                   f"<span style='color:{muted}'>{esc(tr('Luogo non registrato nella foto'))}</span>")
     lat, lon = m.gps
     url = (f"https://maps.apple.com/?ll={lat},{lon}&q={lat},{lon}" if sys.platform == "darwin"
            else f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}")
     from metadata import fmt_gps
-    coords = esc(fmt_gps(lat, lon)) + (f" · {m.altitude:.0f} m" if m.altitude is not None else "")
-    head = (f"<div style='font-weight:600'>📍 {esc(m.place)}</div>"
-            f"<div style='font-size:11px'>{coords}") if m.place else f"<div>📍 {coords}"
-    return (f"<div style='color:{color}'>{head}"
-            + tr(" · <a style='color:{c}' href='{url}'>Mappa</a>", c=link, url=url) + "</div></div>")
+    coords = esc(fmt_gps(lat, lon)) + (f" · {m.altitude:.0f} m" if m.altitude else "")   # 0 m: niente
+    maps = tr(" · <a style='color:{c}' href='{url}'>Mappa</a>", c=link, url=url)
+    if m.place:
+        body = (f"<span style='color:{color}; font-weight:600'>{esc(m.place)}</span>"
+                f"<span style='font-size:12px'>{maps}</span>"
+                f"<br><span style='color:{muted}; font-size:11px'>{coords}</span>")
+    else:
+        body = f"<span style='color:{color}'>{coords}</span><span style='font-size:12px'>{maps}</span>"
+    return row("📍", body)

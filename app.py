@@ -50,7 +50,7 @@ from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, L
                      hide_keep_space, pil_to_qimage, qimage_to_pil, wait_downloads)
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
@@ -1753,7 +1753,7 @@ class MainWindow(QMainWindow):
                   self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn,
                   self.btn_return, self.zoom_pill):
             w.setEnabled(not on)
-        for w in (self.decision_bar, self.thumbs_strip, self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn):
+        for w in (self.decision_bar, self.scene_bar, self.thumbs_strip, self.btn_thumb_prev, self.btn_thumb_next, self.strip_filter_btn):
             hide_keep_space(w, on)
         self.update_photo_arrows()
         self.update_locate_btn()
