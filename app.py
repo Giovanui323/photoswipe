@@ -53,7 +53,7 @@ from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, L
                      hide_keep_space, pil_to_qimage, qimage_to_pil, wait_downloads)
 
 # Versione: sale di 1 a ogni build, a decine: 1.1.9 -> 1.2.0 (lo fa packaging/build_dmg.sh)
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 APP_TITLE = f"PhotoSwipe {APP_VERSION}"
 
 log = applog.setup(APP_TITLE)
