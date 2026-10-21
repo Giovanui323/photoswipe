@@ -1,12 +1,10 @@
 """Album delle foto approvate: si apre dal fotolibro del pannello Info e si sfoglia a doppia pagina.
 
 Tutte le approvate (e le foto prese dai video) nell'ordine della cartella, come stampe incollate
-su carta avorio, una pagina per giorno (fino a 5 foto; le altre dello stesso giorno nella pagina dopo) e i
-giorni con poche foto della stessa settimana insieme (fino a 4) se nello stesso posto. Il luogo
-(dal GPS) serve a mettere insieme: nello stesso giorno le foto dello stesso posto stanno sulla
-stessa pagina, le poche fatte altrove vanno su un'altra (insieme tra loro). Una foto da sola su
-una pagina è un'eccezione (l'avanzo di un gruppo, 5 + 5 + 1): le altre si uniscono alle vicine
-della stessa settimana anche se fatte altrove. Sotto: data e luogo. ← → (o la rotella, o le frecce ai lati) girano la pagina;
+su carta avorio, da 2 a 5 per pagina, raccolte per momento e luogo (vedi plan): le foto dello
+stesso posto e dello stesso giorno insieme, un altro posto o un altro giorno su un'altra pagina
+quando ci sono abbastanza foto da riempirla. Una foto da sola su una pagina è l'eccezione: solo
+per una foto lontana settimane da tutte le altre. Sotto: data e luogo. ← → (o la rotella, o le frecce ai lati) girano la pagina;
 clic su una foto = chiudi l'album e torna a quella foto; Esc chiude. All'apertura la copertina
 si apre sul dorso (poi non si vede più: da lì in poi solo foto, dalla prima all'ultima) e alla
 chiusura si richiude, con la finestra in dissolvenza. Si vede la versione
@@ -31,10 +29,9 @@ from photobook import PAPER, PAPER_SHADE, Page
 from theme import COLORS as C
 from widgets import LruCache
 
-DAY_MAX = 5    # foto dello stesso giorno in una pagina
-WEEK_MAX = 4   # giorni diversi della stessa settimana in una pagina
+PAGE_MAX = 5   # foto in una pagina
+PAGE_COST = {1: 8.0, 2: 1.2, 3: 0.3, 4: 0.0, 5: 0.0}   # una foto da sola solo in mancanza d'altro
 PLACE_KM = 2   # entro questa distanza: lo stesso luogo
-FEW = 2        # foto di un luogo così poche da stare con quelle di altri luoghi dello stesso giorno
 LONG_SIDE = 1600               # lato lungo delle foto caricate: nitide anche a tutto schermo
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".webp")
 SPREAD_ASPECT = 1.5            # due pagine 3 × 4 affiancate
@@ -123,13 +120,32 @@ def _by_place(day: list[int], gps: list) -> list[tuple[list[int], tuple | None]]
     return list(zip(groups, where))
 
 
+def _link(a: Page, b: Page, pa, pb) -> tuple[float, float]:
+    """Due foto una dopo l'altra: (quanto costa tenerle sulla stessa pagina, quanto costa
+    separarle). Stesso momento: separarle costa; altro posto o altro giorno: metterle insieme
+    costa, tanto più quanto sono lontane (oltre due settimane più di una foto da sola)."""
+    dt = abs((b.item.taken - a.item.taken).total_seconds())
+    days = abs((b.item.taken.date() - a.item.taken.date()).days)
+    away = pa is not None and pb is not None and km(pa, pb) > PLACE_KM
+    if days == 0:
+        if away:
+            return 1.0, 0.0
+        return 0.2 * min(1.0, dt / 10800), 0.6 / (1 + dt / 1200)   # dopo ore: un altro momento
+    if days <= 3:
+        return (3.0 if away else 1.5), 0.0
+    if days <= 14:
+        return (6.0 if away else 4.0), 0.0
+    return 12.0, 0.0
+
+
 def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
-    """Le foto divise in pagine per giorno, e nel giorno per luogo: le foto dello stesso posto
-    insieme (fino a DAY_MAX per pagina, poi la pagina dopo: 11 = 5 + 5 + 1); quelle di luoghi
-    con poche foto (fino a FEW) insieme tra loro su un'altra pagina, invece che una per pagina.
-    Poi le pagine di giorni diversi della stessa settimana e dello stesso luogo si uniscono fino
-    a WEEK_MAX, e una foto rimasta da sola (non l'avanzo di un gruppo) si unisce comunque alla
-    pagina accanto della stessa settimana. Senza GPS: solo le date."""
+    """Le foto divise in pagine come in un album fatto a mano. Nel giorno le foto si raccolgono
+    per luogo (anche se non sono una dopo l'altra); poi fra tutti i modi di tagliare la fila in
+    pagine da 1 a PAGE_MAX si sceglie quello che costa meno: separare foto dello stesso momento
+    costa, tenere insieme posti o giorni diversi costa, e una pagina con una foto sola costa più
+    di quasi tutto, così resta solo per una foto lontana settimane da tutte le altre. Le pagine
+    di uno stesso gruppo si dividono in parti simili (11 = 4 + 4 + 3, non 5 + 5 + 1), tagliando
+    dove c'è più distanza tra una foto e l'altra. Senza GPS: solo le date e le ore."""
     gps = gps or [None] * len(photos)
     days: list[list[int]] = []
     for i, pg in enumerate(photos):
@@ -137,44 +153,31 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
             days[-1].append(i)
         else:
             days.append([i])
-    pages: list[list[int]] = []
-    page_where: list = []
-    rest: list[bool] = []   # avanzo di un gruppo (5 + 5 + 1): può restare da solo
-    week = lambda i: photos[i].item.taken.isocalendar()[:2]  # noqa: E731
+    seq: list[int] = []
+    where: list = []   # luogo del gruppo di ogni foto (anche di quelle senza GPS)
     for day in days:
-        day_pages: list[list] = []   # [foto, luogo, solo luoghi con poche foto]
         for group, at in _by_place(day, gps):
-            for k in range(0, len(group), DAY_MAX):
-                part = group[k:k + DAY_MAX]
-                few = len(part) <= FEW
-                if few and day_pages and day_pages[-1][2] and len(day_pages[-1][0]) + len(part) <= DAY_MAX:
-                    day_pages[-1][0] += part
-                else:
-                    day_pages.append([list(part), at, few, k > 0])
-        for idx, at, _, leftover in day_pages:
-            if (pages and len(pages[-1]) + len(idx) <= WEEK_MAX and week(pages[-1][-1]) == week(idx[0])
-                    and photos[pages[-1][-1]].item.taken.date() != photos[idx[0]].item.taken.date()
-                    and (page_where[-1] is None or at is None or km(page_where[-1], at) <= PLACE_KM)):
-                pages[-1] += idx
-                page_where[-1] = at or page_where[-1]
-            else:
-                pages.append(idx)
-                page_where.append(at)
-                rest.append(leftover)
-    # foto rimaste da sole: con la pagina prima o dopo della stessa settimana, ovunque siano state fatte
-    k = 0
-    while k < len(pages):
-        if len(pages[k]) == 1 and not rest[k]:
-            for j in (k - 1, k + 1):
-                if 0 <= j < len(pages) and len(pages[j]) + 1 <= WEEK_MAX \
-                        and week(pages[j][0]) == week(pages[k][0]):
-                    pages[j] = pages[j] + pages[k] if j < k else pages[k] + pages[j]
-                    rest[j] = False   # con la foto in più non è più una pagina da una
-                    del pages[k], rest[k]
-                    k -= 1
-                    break
-        k += 1
-    return pages
+            seq += group
+            where += [at] * len(group)
+    n = len(seq)
+    links = [_link(photos[seq[k]], photos[seq[k + 1]], where[k], where[k + 1]) for k in range(n - 1)]
+    inside = [0.0]   # inside[k]: costo dei legami fra le prime k + 1 foto, tutte su una pagina
+    for keep, _ in links:
+        inside.append(inside[-1] + keep)
+    best = [0.0] + [math.inf] * n   # best[j]: il costo minore per le prime j foto
+    cut = [0] * (n + 1)
+    for j in range(1, n + 1):
+        for size in range(1, min(PAGE_MAX, j) + 1):
+            i = j - size
+            c = best[i] + PAGE_COST[size] + inside[j - 1] - inside[i] + (links[i - 1][1] if i else 0.0)
+            if c < best[j] - 1e-9:
+                best[j], cut[j] = c, i
+    pages: list[list[int]] = []
+    j = n
+    while j:
+        pages.append(seq[cut[j]:j])
+        j = cut[j]
+    return pages[::-1]
 
 
 def _short_place(at: tuple[float, float]) -> str:

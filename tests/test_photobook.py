@@ -77,8 +77,8 @@ def test_album_opens_with_all_approved_turns_pages_and_click_goes_back(qapp, win
 
 
 def test_album_pages_follow_days_and_weeks():
-    """Una pagina per giorno (fino a 5, le altre nella pagina dopo); giorni con poche foto della
-    stessa settimana insieme fino a 4; le caselle hanno le proporzioni delle foto (niente schiacciate)."""
+    """Da 2 a 5 foto per pagina, divise in parti simili (11 = 4 + 4 + 3); una foto da sola solo se
+    lontana settimane da tutte le altre; le caselle hanno le proporzioni delle foto (niente schiacciate)."""
     from datetime import datetime
     from pathlib import Path
 
@@ -91,12 +91,23 @@ def test_album_pages_follow_days_and_weeks():
     def pg(day, n):
         it = Item("photo", f"{day}_{n}.jpg", image=Path(f"{day}_{n}.jpg"), taken=datetime(2026, 7, day, 10, n))
         return Page(it.id, it.id, it.main, it, None)
-    # 3 lug: 1 · 4 lug: 5 · 5 lug: 7 · 8 e 9 lug (stessa settimana): 2 + 1 · 13 lug (settimana dopo): 1
+    # 3 lug: 1 (con le prime del 4) · 4 lug: 5 · 5 lug: 7 (4 + 3) · 8 e 9 lug: 2 + 1, con la sola del 13
     photos = [pg(3, 0)] + [pg(4, n) for n in range(5)] + [pg(5, n) for n in range(7)] \
         + [pg(8, 0), pg(8, 1), pg(9, 0), pg(13, 0)]
-    assert album.plan(photos) == [[0], [1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12], [13, 14, 15], [16]]
-    eleven = [pg(30, n) for n in range(11)]   # 11 foto dello stesso giorno: 5 + 5 + 1
-    assert [len(p) for p in album.plan(eleven)] == [5, 5, 1]
+    assert album.plan(photos) == [[0, 1, 2], [3, 4, 5], [6, 7, 8, 9], [10, 11, 12], [13, 14, 15, 16]]
+    for n, sizes in ((11, [4, 4, 3]), (6, [3, 3]), (12, [4, 4, 4])):   # stesso momento: parti simili
+        assert [len(p) for p in album.plan([pg(30, k) for k in range(n)])] == sizes
+    # stesso giorno, mattina e sera: si taglia tra i due momenti, non a metà di uno
+    def at(hour, n):
+        it = Item("photo", f"{hour}_{n}.jpg", image=Path(f"{hour}_{n}.jpg"), taken=datetime(2026, 7, 20, hour, n))
+        return Page(it.id, it.id, it.main, it, None)
+    day = [at(9, n) for n in range(3)] + [at(19, n) for n in range(3)]
+    assert album.plan(day) == [[0, 1, 2], [3, 4, 5]]
+    # una foto di gennaio e quattro di luglio: lei sola, l'unica eccezione
+    lonely = [Page(it.id, it.id, it.main, it, None) for it in
+              [Item("photo", "gen.jpg", image=Path("gen.jpg"), taken=datetime(2026, 1, 5, 10))]] \
+        + [pg(20, n) for n in range(4)]
+    assert album.plan(lonely) == [[0], [1, 2, 3, 4]]
     page = QRectF(0, 0, 300, 400)
     for aspects in ([0.75], [1.5, 0.75], [0.75, 0.75, 1.33, 1.33, 0.75]):
         rects = album.slots(page, aspects)
@@ -135,8 +146,8 @@ def test_album_layout_every_mix_of_landscape_portrait_pano_square():
 
 def test_album_pages_gather_by_place():
     """Il luogo mette insieme: nello stesso giorno le foto dello stesso posto sulla stessa pagina
-    (anche se non sono una dopo l'altra), quelle fatte altrove su un'altra; i luoghi con poche foto
-    insieme tra loro; giorni della stessa settimana insieme solo se nello stesso posto."""
+    (anche se non sono una dopo l'altra), quelle fatte altrove su un'altra se sono abbastanza da
+    riempirla; giorni vicini insieme se nello stesso posto; mai una foto da sola se ha vicine."""
     from datetime import datetime
     from pathlib import Path
 
@@ -149,21 +160,24 @@ def test_album_pages_gather_by_place():
                   taken=datetime(2026, month, day, 10, n))
         return Page(it.id, it.id, it.main, it, None)
     la, hollywood, sf = (34.05, -118.25), (34.13, -118.32), (37.77, -122.42)
-    # 4 a LA e 1 a Hollywood in mezzo: le 4 insieme, la quinta a parte
+    # 4 a LA e 1 a Hollywood in mezzo: le 4 insieme e Hollywood in fondo, non da sola
     day = [pg(7, 20, n) for n in range(5)]
-    assert album.plan(day, [la, la, hollywood, la, la]) == [[0, 1, 3, 4], [2]]
+    assert album.plan(day, [la, la, hollywood, la, la]) == [[0, 1, 3, 4, 2]]
+    six = [pg(7, 20, n) for n in range(6)]   # 3 + 3 o 4 + 2 in posti diversi: una pagina per posto
+    assert album.plan(six, [la] * 3 + [sf] * 3) == [[0, 1, 2], [3, 4, 5]]
+    assert album.plan(six, [la] * 4 + [hollywood] * 2) == [[0, 1, 2, 3], [4, 5]]
     # foto da sole in giorni e posti diversi della stessa settimana: insieme, non una per pagina
     singles = [pg(7, 21, 0), pg(7, 22, 0), pg(7, 23, 0)]
     assert album.plan(singles, [la, sf, hollywood]) == [[0, 1, 2]]
     eleven = [pg(7, 24, n) for n in range(11)] + [pg(7, 25, 0)]
-    assert [len(p) for p in album.plan(eleven, [la] * 11 + [sf])] == [5, 5, 2]   # la foto sola del 25 va con l'avanzo
+    assert [len(p) for p in album.plan(eleven, [la] * 11 + [sf])] == [4, 4, 4]   # la foto sola del 25 con le altre
     # 27 lug: 2 a LA, 1 senza GPS (resta con LA), 2 a Hollywood · 28 lug: 1 a Hollywood e 1 a SF
-    # (poche, insieme) che si uniscono alle 2 di Hollywood del giorno prima · 30 lug: 4 a LA, 3 a SF
-    # · 1 ago (stessa settimana, a SF): con le 3 di SF
+    # che si uniscono alle 2 di Hollywood del giorno prima · 30 lug: 4 a LA, 3 a SF
+    # · 1 ago (a SF): con le 3 di SF
     photos = [pg(7, 27, n) for n in range(5)] + [pg(7, 28, n) for n in range(2)] \
         + [pg(7, 30, n) for n in range(7)] + [pg(8, 1, 0)]
     gps = [la, la, None, hollywood, hollywood, hollywood, sf] + [la] * 4 + [sf] * 3 + [sf]
     assert album.plan(photos, gps) == [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10], [11, 12, 13, 14]]
-    assert album.plan(photos) == [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9, 10, 11], [12, 13, 14]]   # senza GPS: solo le date
+    assert album.plan(photos) == [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9, 10], [11, 12, 13, 14]]   # senza GPS: solo le date
     assert album.caption(photos, [0, 1], "Los Angeles").endswith("2026 · Los Angeles")
     assert album.place_name(gps, [2, 3]) and album.place_name([None], [0]) == ""
