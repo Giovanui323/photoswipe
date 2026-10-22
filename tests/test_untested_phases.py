@@ -78,13 +78,27 @@ def test_gives_up_without_crashing_when_download_never_arrives(tmp_path, monkeyp
 def test_clean_partial_removes_only_app_temp_copies(tmp_path):
     export = tmp_path / "export"
     (export / "Video").mkdir(parents=True)
-    (export / "a.JPG.part").write_bytes(b"x")
-    (export / "b.JPG.part.png").write_bytes(b"x")
+    (export / "Foto" / "Preferite").mkdir(parents=True)
+    (export / "Foto" / "a.JPG.part").write_bytes(b"x")
+    (export / "Foto" / "Preferite" / "b.JPG.part.png").write_bytes(b"x")
     (export / "Video" / "c.MOV.part").write_bytes(b"x")
-    (export / "keep.JPG").write_bytes(b"x")
-    (export / "notes.part.txt").write_bytes(b"x")      # non è un parziale dell'app
+    (export / "Foto" / "keep.JPG").write_bytes(b"x")
+    (export / "Foto" / "notes.part.txt").write_bytes(b"x")   # non è un parziale dell'app
     assert exporter.clean_partial(export) == 3
     assert sorted(p.name for p in export.rglob("*") if p.is_file()) == ["keep.JPG", "notes.part.txt"]
+
+
+def test_clean_partial_leaves_the_users_own_part_files(tmp_path):
+    # la cartella export può essere una cartella dell'utente (es. Download)
+    export = tmp_path / "Download"
+    (export / "deep").mkdir(parents=True)
+    (export / "Foto" / "album").mkdir(parents=True)
+    user = [export / "film.mkv.part", export / "deep" / "img.part.png",
+            export / "Foto" / "album" / "x.JPG.part"]
+    for f in user:
+        f.write_bytes(b"x")
+    assert exporter.clean_partial(export) == 0
+    assert all(f.exists() for f in user)
 
 
 def test_clean_partial_on_missing_folder_is_zero(tmp_path):

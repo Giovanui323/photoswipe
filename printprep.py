@@ -7,6 +7,8 @@ dietro Upscayl) se è installato; altrimenti un ingrandimento Lanczos con nitide
 L'originale non si tocca mai: la copia va in una cartella a parte."""
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import re
 import shutil
@@ -20,8 +22,9 @@ from PIL import Image, ImageFilter
 
 import edits
 from edits import jpeg_meta, load_full, open_unbounded
-
 from i18n import tr
+
+log = logging.getLogger("photoswipe")
 
 # Formati di stampa standard (cm, lato corto × lato lungo), dal più piccolo al più grande.
 PRINT_SIZES_CM = [(9, 13), (10, 15), (13, 18), (15, 20), (20, 25), (20, 30), (30, 40), (30, 45), (40, 50), (50, 70)]
@@ -97,6 +100,7 @@ def models_dir(engine: Path) -> Path:
 VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 _DLL_NOT_FOUND = 0xC0000135
 missing_runtime = False
+simple_upscale = False   # l'ultima copia è stata ingrandita senza Real-ESRGAN (va detto)
 
 
 _PERCENT = re.compile(r"(\d+(?:\.\d+)?)%")   # il motore scrive "16.67%" su stderr, tessera per tessera
@@ -133,7 +137,7 @@ def _open_big(path: Path, size: tuple[int, int]) -> Image.Image:
 
 
 def _enlarge(im: Image.Image, scale: float, progress=None) -> Image.Image:
-    global missing_runtime
+    global missing_runtime, simple_upscale
     w, h = round(im.width * scale), round(im.height * scale)
     engine = realesrgan_bin()
     if engine:
@@ -159,6 +163,8 @@ def _enlarge(im: Image.Image, scale: float, progress=None) -> Image.Image:
                         if m and progress:
                             progress(min(float(m.group(1)) / 100, 1.0))
                     code = proc.wait()
+                    if progress and not code:
+                        progress(1.0)   # il motore scrive l'ultima percentuale prima di finire
                 finally:
                     killer.cancel()
                     if code is None:   # errore a metà: il motore non resta acceso
@@ -176,12 +182,25 @@ def _enlarge(im: Image.Image, scale: float, progress=None) -> Image.Image:
         except InterruptedError:
             raise
         except subprocess.CalledProcessError as e:
+            log.warning("Real-ESRGAN non riuscito (codice %s): ingrandimento semplice", e.returncode)
             if sys.platform == "win32" and (e.returncode & 0xFFFFFFFF) == _DLL_NOT_FOUND:
                 missing_runtime = True   # manca il Visual C++ Redistributable
-        except Exception:  # noqa: BLE001 - motore non disponibile o fallito: si ripiega sul metodo classico
-            pass
+        except Exception as e:  # noqa: BLE001 - motore non disponibile o fallito: si ripiega sul metodo classico
+            log.warning("Real-ESRGAN non disponibile (%r): ingrandimento semplice", e)
+    simple_upscale = True
     return im.resize((w, h), Image.LANCZOS).filter(
         ImageFilter.UnsharpMask(radius=1.2, percent=60, threshold=2))
+
+
+def copy_path(export_dir: Path, item) -> Path:
+    """Dove sta la copia per la stampa: export/Stampa/<nome>_stampa.jpg. Due foto con lo stesso
+    nome in cartelle diverse (due schede) non si sovrascrivono: la seconda ha un segno in più."""
+    folder = Path(export_dir) / "Stampa"
+    name = f"{item.main.stem}_stampa"
+    folder_rel = item.id.rsplit("/", 1)[0] if "/" in item.id else ""
+    if folder_rel:
+        name += "_" + hashlib.sha1(folder_rel.encode("utf-8")).hexdigest()[:6]
+    return folder / f"{name}.jpg"
 
 
 def improve(src: Path, dst: Path, progress=None, edit: dict | None = None) -> str:
@@ -189,8 +208,8 @@ def improve(src: Path, dst: Path, progress=None, edit: dict | None = None) -> st
     progress(f) riceve l'avanzamento 0..1 quando il motore lo dice (altrimenti niente).
     edit: le modifiche di Regola / Ritaglia della foto (come nell'export), applicate prima di
     ingrandire, così la copia per l'album è uguale alla foto modificata."""
-    global missing_runtime
-    missing_runtime = False   # vale per questa copia, non per quelle di prima
+    global missing_runtime, simple_upscale
+    missing_runtime = simple_upscale = False   # vale per questa copia, non per quelle di prima
     # come l'export: 16 bit, CMYK, DNG a piena risoluzione, HEIC, orientamento come l'anteprima
     try:
         im, keep = load_full(src)
@@ -217,4 +236,6 @@ def improve(src: Path, dst: Path, progress=None, edit: dict | None = None) -> st
     if missing_runtime:
         note = tr(" (ingrandimento semplice: per la qualità migliore installa il Visual C++ "
                   "Redistributable gratuito di Microsoft: {url})", url=VC_REDIST_URL)
+    elif simple_upscale:
+        note = tr(" (ingrandimento semplice: il motore Real-ESRGAN non è disponibile)")
     return tr('{v0} × {v1} px: {v2}', v0=im.width, v1=im.height, v2=text) + note

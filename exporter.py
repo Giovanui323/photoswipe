@@ -4,6 +4,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -19,6 +20,8 @@ import edits
 import frames
 from scanner import Item, TRASH_DIR
 from i18n import tr
+
+log = logging.getLogger("photoswipe")
 
 SESSION_FILE = ".photoswipe-session.json"
 # export/Foto (preferite in export/Foto/Preferite) ed export/Video; ogni copia col nome che
@@ -223,12 +226,15 @@ def _copy(src: Path, folder: Path, name: str | None = None) -> Path:
 
 def clean_partial(export_dir: Path) -> int:
     """Toglie le copie a metà (*.part) lasciate da un'uscita durante un export: sono solo file
-    temporanei dell'app, la copia vera si rifà alla ripresa."""
+    temporanei dell'app, la copia vera si rifà alla ripresa. Si guarda solo nelle cartelle
+    dove l'app scrive (Foto, Foto/Preferite, Video), senza scendere: la cartella export può
+    essere una cartella dell'utente (es. Download) con suoi .part da non toccare."""
     n = 0
     if not export_dir.is_dir():
         return 0
+    folders = (photo_dir(export_dir), photo_dir(export_dir, True), video_dir(export_dir))
     for pat in ("*.part", "*.part.png"):
-        for f in export_dir.rglob(pat):
+        for f in (f for d in folders if d.is_dir() for f in d.glob(pat)):
             try:
                 if f.is_file():
                     f.unlink()
@@ -322,7 +328,7 @@ def _export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
         if frame is None:
             frame = frames.camera_frame(video, info, item.screennail)
         start, offset = frames.capture_times(item.taken, info, s.tz_override_hours)
-        when = start + timedelta(seconds=float(frame / info.fps))  # ora esatta del fotogramma
+        when = start + timedelta(seconds=info.seconds_of(frame))  # ora esatta del fotogramma
         stem = f"{video.stem}_f{frame + 1:04d}" if snapshot else video.stem
         name = dated(stem + (".png" if s.fmt == "png16" else ".jpg"), when)
 
@@ -335,7 +341,8 @@ def _export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
                 os.replace(tmp, path)
             else:
                 img = edits.render(frames.frame_rgb(video, info, frame), edit)
-                frames.save_jpeg(img, path, frames.FrameMeta(when, offset, video.name, frame))
+                make = "DJI" if video.name.upper().startswith("DJI_") else ""   # il modello non si sa
+                frames.save_jpeg(img, path, frames.FrameMeta(when, offset, video.name, frame, make))
 
         if (photos / name).exists():
             # forse già fatto (app chiusa prima di registrarlo), ma potrebbe essere un altro
@@ -958,6 +965,27 @@ class Session:
     def clear(self, item_id: str) -> None:
         self.decisions.pop(item_id, None)
         self.save()
+
+    def unrecord(self, item_id: str, revert) -> bool:
+        """Cambio di scelta: prima si salva che l'elemento è di nuovo da decidere, poi si tolgono
+        gli effetti della scelta di prima (revert: copie in export, file in “cancellare”). Così il
+        salvataggio non dice mai “copiata” o “in cancellare” per file che non ci sono più.
+        OSError = salvataggio non riuscito, niente toccato. False = revert non riuscito: la
+        scelta di prima resta."""
+        prev = self.decisions.pop(item_id)
+        try:
+            self.save()
+        except OSError:
+            self.decisions[item_id] = prev
+            raise
+        if revert():
+            return True
+        self.decisions[item_id] = prev
+        try:
+            self.save()
+        except OSError as e:
+            log.error("scelta di prima di %s non salvata di nuovo: %r", item_id, e)
+        return False
 
     def toggle_favorite(self, item_id: str) -> bool:
         if item_id in self.favorites:

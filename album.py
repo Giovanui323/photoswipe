@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QObject, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QImageIOHandler, QImageReader, QLinearGradient, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QImageIOHandler, QImageReader, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QToolTip, QVBoxLayout, QWidget
 
 import cloud
@@ -32,6 +32,7 @@ from widgets import LruCache
 PAGE_MAX = 5   # foto in una pagina
 PAGE_COST = {1: 8.0, 2: 1.2, 3: 0.3, 4: 0.0, 5: 0.0}   # una foto da sola solo in mancanza d'altro
 PLACE_KM = 2   # entro questa distanza: lo stesso luogo
+FAR_COST = 2 * PAGE_COST[1] + 1   # oltre due settimane: meglio due pagine da una foto che insieme
 LONG_SIDE = 1600               # lato lungo delle foto caricate: nitide anche a tutto schermo
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".webp")
 SPREAD_ASPECT = 1.5            # due pagine 3 × 4 affiancate
@@ -123,7 +124,8 @@ def _by_place(day: list[int], gps: list) -> list[tuple[list[int], tuple | None]]
 def _link(a: Page, b: Page, pa, pb) -> tuple[float, float]:
     """Due foto una dopo l'altra: (quanto costa tenerle sulla stessa pagina, quanto costa
     separarle). Stesso momento: separarle costa; altro posto o altro giorno: metterle insieme
-    costa, tanto più quanto sono lontane (oltre due settimane più di una foto da sola)."""
+    costa, tanto più quanto sono lontane (oltre due settimane più di due pagine da una foto:
+    due foto lontane mesi o anni non finiscono mai sulla stessa pagina)."""
     dt = abs((b.item.taken - a.item.taken).total_seconds())
     days = abs((b.item.taken.date() - a.item.taken.date()).days)
     away = pa is not None and pb is not None and km(pa, pb) > PLACE_KM
@@ -135,7 +137,7 @@ def _link(a: Page, b: Page, pa, pb) -> tuple[float, float]:
         return (3.0 if away else 1.5), 0.0
     if days <= 14:
         return (6.0 if away else 4.0), 0.0
-    return 12.0, 0.0
+    return FAR_COST, 0.0
 
 
 def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
@@ -148,7 +150,9 @@ def plan(photos: list[Page], gps: list | None = None) -> list[list[int]]:
     dove c'è più distanza tra una foto e l'altra. Senza GPS: solo le date e le ore."""
     gps = gps or [None] * len(photos)
     days: list[list[int]] = []
-    for i, pg in enumerate(photos):
+    # in ordine di scatto (la data può cambiare dopo il download da iCloud: la fila no)
+    for i in sorted(range(len(photos)), key=lambda k: photos[k].item.taken):
+        pg = photos[i]
         if days and photos[days[-1][-1]].item.taken.date() == pg.item.taken.date():
             days[-1].append(i)
         else:
@@ -383,8 +387,11 @@ class _Spread(QWidget):
                 p.drawText(num, Qt.AlignBottom | (Qt.AlignRight if side else Qt.AlignLeft), str(pg + 1))
                 f.setItalic(True)
                 p.setFont(f)
-                p.drawText(num, Qt.AlignBottom | Qt.AlignHCenter, caption(self.dlg.photos, self.dlg.pages[pg],
-                                                                         self.dlg.places[pg] if pg < len(self.dlg.places) else ""))
+                text = caption(self.dlg.photos, self.dlg.pages[pg],
+                               self.dlg.places[pg] if pg < len(self.dlg.places) else "")
+                fm = QFontMetrics(f)   # dentro la pagina, senza coprire il numero (centrato: spazio ai due lati)
+                free = num.width() - 2 * (fm.horizontalAdvance(str(pg + 1)) + fm.horizontalAdvance("  "))
+                p.drawText(num, Qt.AlignBottom | Qt.AlignHCenter, fm.elidedText(text, Qt.ElideRight, max(0, int(free))))
         p.setPen(QPen(QColor(0, 0, 0, 70), 1))
         p.drawLine(QPointF(mid, b.top()), QPointF(mid, b.bottom()))
         for r, i in self._photos(spread):

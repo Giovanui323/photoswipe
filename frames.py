@@ -8,6 +8,7 @@ Regole (verificate sui file della Pocket 4):
 """
 from __future__ import annotations
 
+import bisect
 import os
 import re
 import shutil
@@ -97,6 +98,9 @@ class VideoInfo:
     source: Path | None = None                     # video usato per l'anteprima, se diverso (LRF)
     original_dims: tuple[int, int] | None = None   # dimensioni dell'MP4 originale, se note
     created_local: datetime | None = None          # iPhone: ora dello scatto con il suo fuso
+    # istanti veri dei fotogrammi (s, dall'inizio del file come li conta ffmpeg -ss): ci sono anche
+    # coi video a frequenza variabile, l'audio più lungo del video o il video che parte in ritardo
+    times: tuple[float, ...] | None = None
 
     @property
     def megapixels(self) -> float:
@@ -108,9 +112,24 @@ class VideoInfo:
 
     def time_of(self, n: int) -> float:
         """Istante che fa scegliere a ffmpeg esattamente il fotogramma n (primo con pts >= t)."""
+        if self.times and 0 < n < len(self.times):
+            return (self.times[n - 1] + self.times[n]) / 2   # a metà fra il precedente e lui
+        if self.times and n <= 0:
+            return 0.0
         return max(0.0, float((n - Fraction(1, 2)) / self.fps))
 
+    def seconds_of(self, n: int) -> float:
+        """Quando si vede il fotogramma n (s dall'inizio)."""
+        if self.times and 0 <= n < len(self.times):
+            return self.times[n]
+        return float(n / self.fps)
+
     def frame_at(self, seconds: float) -> int:
+        if self.times:   # il fotogramma più vicino a quell'istante
+            i = bisect.bisect_left(self.times, seconds)
+            if i > 0 and (i == len(self.times) or seconds - self.times[i - 1] <= self.times[i] - seconds):
+                i -= 1
+            return max(0, min(self.frames - 1, i))
         return max(0, min(self.frames - 1, int(seconds * self.fps + Fraction(1, 2))))
 
 
@@ -164,8 +183,11 @@ def probe(path: Path) -> VideoInfo:
     pix = re.search(r"Video: [^,]+(?:\([^)]*\))*[^,]*, (\w+)(?:\(([^)]*)\))?", line)
     pix_fmt = pix.group(1) if pix else ""
     color = (pix.group(2) or "") if pix else ""
-    parts = [p.strip() for p in color.split(",")]
-    transfer = parts[-1] if len(parts) >= 2 else "bt709"
+    # "tv, bt709/bt709/arib-std-b67, progressive": si tolgono gamma (tv/pc) e ordine dei campi
+    parts = [p.strip() for p in color.split(",")
+             if p.strip() not in ("tv", "pc", "progressive", "top first", "bottom first",
+                                  "top coded first (swapped)", "bottom coded first (swapped)")]
+    transfer = parts[-1] if parts else "bt709"
     if "/" in transfer:  # forma "bt709/bt709/arib-std-b67"
         transfer = transfer.split("/")[-1]
     bits = 10 if "10" in pix_fmt else 12 if "12" in pix_fmt else 8
@@ -196,9 +218,39 @@ def probe(path: Path) -> VideoInfo:
     if created is None and local is not None:
         created = local.astimezone(timezone.utc)
     enc = re.search(r"encoder\s*:\s*(.+)", err)
-    return VideoInfo(w, h, fps, duration, max(1, int(duration * fps + Fraction(1, 2))),
+    times = frame_times(path)
+    count = len(times) if times else max(1, int(duration * fps + Fraction(1, 2)))
+    return VideoInfo(w, h, fps, duration, count,
                      transfer, bits, created, enc.group(1).strip() if enc else "",
-                     created_local=local)
+                     created_local=local, times=times)
+
+
+def frame_times(path: Path) -> tuple[float, ...] | None:
+    """Gli istanti veri di tutti i fotogrammi, senza decodificare (solo i pacchetti: -c copy).
+    Così il numero dei fotogrammi è quello vero (non la durata × fps, che conta anche l'audio
+    più lungo) e i video a frequenza variabile si scorrono un fotogramma vero alla volta.
+    None se non si riesce: si stima da durata e fps, come prima."""
+    try:
+        res = _run(["-i", str(path), "-map", "0:v:0", "-c", "copy", "-f", "framemd5", "-"], timeout=120)
+    except Exception:  # noqa: BLE001
+        return None
+    out = res.stdout.decode(errors="replace")
+    tb = re.search(r"^#tb 0: (\d+)/(\d+)", out, re.M)
+    if res.returncode != 0 or not tb:
+        return None
+    unit = Fraction(int(tb.group(1)), int(tb.group(2)))
+    pts = []
+    for line in out.splitlines():
+        if line and not line.startswith("#"):
+            f = line.split(",")
+            try:
+                pts.append(int(f[2]))
+            except (IndexError, ValueError):
+                return None
+    if not pts:
+        return None
+    pts.sort()
+    return tuple(max(0.0, float(t * unit)) for t in pts)
 
 
 def spotlight_dims(path: Path) -> tuple[int, int] | None:
@@ -352,7 +404,8 @@ class FrameMeta:
     offset: timedelta | None         # fuso orario di taken_local, se noto
     source: str                      # nome del file video
     frame: int
-    model: str = "Osmo Pocket 4"
+    make: str = ""                   # fotocamera, se nota (prima si scriveva sempre "DJI Osmo Pocket 4")
+    model: str = ""
 
 
 def capture_times(name_time: datetime, info: VideoInfo,
@@ -391,8 +444,10 @@ def _fmt_offset(off: timedelta) -> str:
 
 def _exif(meta: FrameMeta) -> bytes:
     ex = Image.Exif()
-    ex[0x010F] = "DJI"
-    ex[0x0110] = meta.model
+    if meta.make:
+        ex[0x010F] = meta.make
+    if meta.model:
+        ex[0x0110] = meta.model
     ex[0x010E] = f"{meta.source} - fotogramma {meta.frame + 1}"  # contati da 1, come a schermo
     ex[0x0131] = "PhotoSwipe"
     stamp = meta.taken_local.strftime("%Y:%m:%d %H:%M:%S")

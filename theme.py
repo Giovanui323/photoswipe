@@ -374,3 +374,19 @@ FOCUS_IN_SIDE = ("chev", "sectitle", "secundo", "auto", "opts", "reset", "cropok
 STYLE += qss("".join(f"QFrame#side QPushButton#{n}:focus {{ border: 2px solid $focus; }}\n" for n in FOCUS_IN_SIDE)
              + "QFrame#side QFrame#segbar QPushButton:focus { border: 2px solid $focus; }\n"
              + "QFrame#pill QPushButton:focus { border: 2px solid $focus; }\n")
+
+
+def help_html(text: str) -> str:
+    """Aiuto in HTML: titoletti (righe in MAIUSCOLO) piccoli, grigi e staccati dal testo."""
+    from html import escape
+    out = []
+    for line in text.split("\n"):
+        if line and line.isupper() and len(line) < 40:
+            out.append(f"<p style='color:{COLORS['text_2']}; font-size:11px; font-weight:700; letter-spacing:1px;"
+                       f" margin:16px 0 4px 0'>{escape(line)}</p>")
+        elif not line.strip():
+            out.append("<p style='margin:6px 0'></p>")
+        else:
+            lead = len(line) - len(line.lstrip(" "))
+            out.append(f"<p style='margin:2px 0 2px {lead * 6}px'>{escape(line.lstrip(' '))}</p>")
+    return "".join(out)

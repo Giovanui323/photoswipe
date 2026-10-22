@@ -33,12 +33,11 @@ def uncropped_tone_edit(e: dict, w: int, h: int) -> dict:
     pts = e.get("redeye") or []
     if pts:
         c = e.get("crop") or [0.0, 0.0, 1.0, 1.0]
-        k = max(c[2] * w, c[3] * h) / max(1, w, h)   # misura relativa al lato lungo del ritaglio
         flip = 1.0 if e.get("flip") else 0.0
         t["redeye"] = []
         for p in pts:
-            x, y = E.redeye_point(p, e)          # nel riquadro di adesso
-            size = p[2] if len(p) > 2 else E.get(e, "redeye_size")
-            t["redeye"].append([c[0] + x * c[2], c[1] + y * c[3], size * k,
+            # nel riquadro di adesso, con la forma della foto (raddrizza e prospettiva ne dipendono)
+            x, y, radius = E.redeye_spot(p, e, w / max(1, h), c[2] * w, c[3] * h)
+            t["redeye"].append([c[0] + x * c[2], c[1] + y * c[3], radius / max(1, w, h),
                                 flip, 0.0, 0.0, 1.0, 1.0])
     return t

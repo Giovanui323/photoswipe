@@ -409,3 +409,68 @@ def test_trash_from_subfolder_goes_to_root_trash_with_same_subpath(tmp_path):
     assert jpg.exists() and old.exists()
     assert not (root / exporter.TRASH_DIR).exists()                   # cartelle vuote tolte, solo quelle
     assert (root / "viaggio" / exporter.TRASH_DIR).is_dir()
+
+
+@NOT_ROOT
+def test_broken_link_and_untraversable_folder_do_not_stop_the_scan(tmp_path):
+    root = tmp_path / "foto"
+    jpeg(root / "a.jpg")
+    jpeg(root / "sub" / "b.jpg")
+    (root / "rotto.jpg").symlink_to(tmp_path / "non_c_e.jpg")
+    os.chmod(root / "sub", 0o444)   # leggibile ma non attraversabile
+    try:
+        ids = [i.id for i in scan(root)]
+    finally:
+        os.chmod(root / "sub", 0o755)
+    assert "a.jpg" in ids
+    assert "rotto.jpg" not in ids   # niente da mostrare
+
+
+def test_same_name_and_size_but_different_photo_is_not_a_duplicate(tmp_path):
+    # contatori che ripartono su ogni scheda, RAW non compressi tutti della stessa dimensione
+    root = tmp_path / "foto"
+    a = jpeg(root / "card1" / "DSC_0001.JPG", "2023:05:01 10:00:00", (200, 0, 0))
+    b = root / "card2" / "DSC_0001.JPG"
+    b.parent.mkdir(parents=True)
+    data = bytearray(a.read_bytes())
+    data[-10] ^= 0xFF   # stessa dimensione, contenuto diverso
+    b.write_bytes(bytes(data))
+    copy = root / "copia" / "DSC_0001.JPG"
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(a.read_bytes())   # questa invece è un doppione vero
+    ids = sorted(i.id for i in scan(root))
+    assert len(ids) == 2
+    assert "card2/DSC_0001.JPG" in ids
+
+
+def test_user_folders_named_panorama_or_misc_are_shown(tmp_path):
+    root = tmp_path / "foto"
+    jpeg(root / "Vacanze" / "Panorama" / "tramonto.jpg")
+    jpeg(root / "Vacanze" / "misc" / "varie.jpg")
+    jpeg(root / "SD" / "PANORAMA" / "001_0001" / "PANO0001.JPG")   # scatti singoli DJI
+    jpeg(root / "SD" / "MISC" / "THM" / "x.jpg")                   # file di sistema DJI
+    ids = sorted(i.id for i in scan(root))
+    assert ids == ["Vacanze/Panorama/tramonto.jpg", "Vacanze/misc/varie.jpg"]
+
+
+def test_capture_time_reads_exif_of_png_and_dng(tmp_path):
+    for name, fmt in (("a.png", "PNG"), ("b.dng", "TIFF")):
+        exif = Image.Exif()
+        exif[271] = "Camera"   # senza un tag base Pillow non scrive l'EXIF
+        exif[306] = "2025:06:01 10:00:00"   # nel TIFF Pillow non scrive il blocco Exif: c'è DateTime
+        exif.get_ifd(0x8769)[36867] = "2025:06:01 10:00:00"
+        Image.new("RGB", (8, 8)).save(tmp_path / name, fmt, exif=exif)
+        assert scanner.capture_time(tmp_path / name, True) == datetime(2025, 6, 1, 10, 0, 0)
+
+
+def test_iphone_video_uses_the_local_time_of_the_place(tmp_path):
+    # foto alle 10:00 ora di Tokyo, video alle 10:00:30 ora di Tokyo (01:00:30 UTC): il video
+    # va dopo la foto qualunque sia il fuso del Mac
+    import imageio_ffmpeg
+    v = tmp_path / "IMG_0002.MOV"
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "testsrc=size=64x48:rate=10:duration=5", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-metadata", "creation_time=2025-06-04T01:00:30Z",
+                    "-metadata", "com.apple.quicktime.creationdate=2025-06-04T10:00:30+0900",
+                    "-movflags", "use_metadata_tags", str(v)], check=True)
+    assert scanner.capture_time(v, True) == datetime(2025, 6, 4, 10, 0, 30)

@@ -251,6 +251,18 @@ def apply_crop(img: Image.Image, e: dict) -> Image.Image:
     x1, y1 = round((c[0] + c[2]) * w), round((c[1] + c[3]) * h)
     x0, y0 = max(0, min(w - 1, x0)), max(0, min(h - 1, y0))
     x1, y1 = max(x0 + 1, min(w, x1)), max(y0 + 1, min(h, y1))
+    ratio = aspect_ratio(e, w, h)
+    cw, ch = x1 - x0, y1 - y0
+    if ratio and abs(cw / ch / ratio - 1) < 0.02:
+        # Proporzioni: il riquadro è stato calcolato sull'anteprima, qui si arriva al pixel giusto
+        # alla piena risoluzione (Quadrato = lati uguali, non 4002 × 4000)
+        if cw / ch > ratio:
+            nw, nh = max(1, round(ch * ratio)), ch
+        else:
+            nw, nh = cw, max(1, round(cw / ratio))
+        x0 = max(0, min(w - nw, x0 + (cw - nw) // 2))
+        y0 = max(0, min(h - nh, y0 + (ch - nh) // 2))
+        x1, y1 = x0 + nw, y0 + nh
     return img.crop((x0, y0, x1, y1))
 
 
@@ -431,7 +443,13 @@ def _bw(x, e, scale: float):
     grain = get(e, "bw_grain")
     if grain > 1e-6:
         rng = np.random.default_rng(7)
-        noise = rng.standard_normal(g.shape).astype(np.float32)
+        # grana della stessa misura rispetto alla foto (come i raggi: scale): si genera a 2000 px
+        # di lato lungo e si porta alla misura vera, così anteprima ed export si somigliano
+        h, w = g.shape
+        gh, gw = max(1, round(h / scale)), max(1, round(w / scale))
+        noise = rng.standard_normal((gh, gw)).astype(np.float32)
+        if (gh, gw) != (h, w):
+            noise = np.asarray(Image.fromarray(noise).resize((w, h), Image.BILINEAR), np.float32)
         out = out + noise[..., None] * grain * 0.08
     return np.clip(out, 0, 1)
 

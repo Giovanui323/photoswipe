@@ -9,7 +9,7 @@ A fast, offline photo culling and sorting app for macOS (Windows and Linux from 
 
 ![Version](https://img.shields.io/badge/version-1.5.4-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-![Python](https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt-41CD52?logo=qt&logoColor=white)
 ![Offline](https://img.shields.io/badge/100%25-offline-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -50,11 +50,12 @@ an `export` folder. Your originals stay exactly where they are.
   save full-resolution stills (JPEG 4:4:4 q100 or **16-bit PNG** that keeps 10-bit color).
 - **Info panel**: date, place name with a 📍 (offline from GeoNames, more precise from OpenStreetMap when online: only the coordinates are sent, can be turned off in Settings), GPS coordinates (with "Open in Maps"), camera, aperture/shutter/ISO/focal
   length, resolution, video codec/fps/bitrate.
-- **Favorites**: one key to also drop a photo into `export/Preferite`.
-- **Smart duplicate skipping**: identical copies (same name and size) are shown only once.
+- **Favorites**: one key files a kept photo under `export/Foto/Preferite` instead of `export/Foto`.
+- **Smart duplicate skipping**: identical copies (same name, size and content) are shown only once.
 - **iCloud-aware**: always works on the full-quality original and pre-downloads the next 10 items.
-- **Time-zone fixer**: did your camera clock change while travelling? PhotoSwipe reads each file's
-  real UTC time, or lets you force a time zone for exported dates.
+- **Time-zone fixer**: photos and videos are sorted by the local time where they were shot
+  (iPhone videos included), and for videos and Live clips you can force a time zone for exported
+  dates if the camera clock was left on the home time zone.
 - **Private by design**: no account, no cloud, no telemetry. Nothing leaves your computer.
 
 ### 📷 Camera-specific smarts
@@ -91,7 +92,7 @@ still by default, and **Shift+Y** also copies the MOV to `export/Video`.
 **Requires macOS 12 Monterey or later on Apple Silicon (M1 or later).** Everything is bundled,
 ffmpeg included.
 
-### Run from source (macOS, Windows, Linux)
+### Run from source (macOS, Windows, Linux; Python 3.10 or later)
 
 ```bash
 git clone https://github.com/Giovanui323/photoswipe.git
@@ -113,8 +114,8 @@ first time.
 2. Pick the **export folder**.
 3. Hit **Start ▶** and start swiping.
 
-> **Note:** the interface is currently in **Italian**. The keyboard shortcuts below work the same
-> whatever the language. English localization is planned, and contributions are welcome!
+> **Note:** the interface is in **Italian** on Macs set to Italian and in **English** everywhere
+> else (set `PHOTOSWIPE_LANG=it` or `en` to choose). The keyboard shortcuts are the same.
 
 ## ⌨️ Keyboard shortcuts
 
@@ -126,12 +127,12 @@ first time.
 | **S** | **Skip**: review skipped items at the end |
 | **X** | Move the original to the `cancellare` (trash) subfolder. Undoable, never deleted |
 | **Z** | **Undo** the last choice (also removes the copied files) |
-| **↑** / **B** · **↓** | Previous / next item |
-| **.** | Toggle favorite (`export/Preferite`) |
+| **←** / **B** · **→** | Previous / next item |
+| **.** | Toggle favorite (`export/Foto/Preferite`) |
 | **I** | Show / hide the Info panel |
 | **L** | Toggle Live / still |
 | **C** | Change scene (Live and video) |
-| **← / →** (Shift = ×10) | Previous / next frame |
+| **↑ / ↓** (Shift = ×10) | Previous / next frame (Live and video) |
 | **P** | Jump to the sharpest nearby frame |
 | **R** | Back to the camera's chosen frame |
 | **F** | Grab the current frame as a photo |

@@ -55,7 +55,8 @@ class Quality:
 
 
 def _gray(img: Image.Image) -> np.ndarray:
-    g = img.convert("L")
+    import edits   # 16 bit (scansioni): convert("L") taglierebbe a 255, foto "bruciata"
+    g = edits.to_rgb(img)[0].convert("L") if img.mode not in ("L", "RGB") else img.convert("L")
     if max(g.size) > SIDE:
         g.thumbnail((SIDE, SIDE), Image.Resampling.BILINEAR)
     return np.asarray(g, np.float32)

@@ -367,3 +367,31 @@ def test_compare_says_what_you_see(qapp, win, sd):
     assert win.status.text() == "Originale"
     click(qapp, win, win.btn_compare)
     assert win.status.text() == "Modificata"
+
+
+def test_redeye_shows_in_crop_view_with_straighten_and_perspective():
+    import numpy as np
+    from editjob import render_edit_job
+    W, H = 900, 600
+    yy, xx = np.mgrid[0:H, 0:W]
+    a = np.full((H, W, 3), 170, np.uint8)
+    eyes = [(180, 180), (720, 420)]
+    for cx, cy in eyes:
+        a[(yy - cy) ** 2 + (xx - cx) ** 2 < 10 ** 2] = (235, 20, 20)
+    img = Image.fromarray(a)
+
+    def red(im):
+        x = np.asarray(im, np.int16)
+        return int(((x[..., 0] - np.maximum(x[..., 1], x[..., 2])) > 100).sum())
+    pts = [[cx / W, cy / H, 0.03] + E.redeye_frame({}) for cx, cy in eyes]
+    for geo in ({"straighten": 20}, {"vertical": 0.8}, {"straighten": -30, "horizontal": 0.6}):
+        assert red(render_edit_job(img, {"redeye": pts, **geo}, True)) == 0, geo
+
+
+def test_bw_grain_looks_the_same_in_preview_and_export():
+    full = Image.new("RGB", (3000, 2000), (128, 128, 128))
+    prev = full.resize((1200, 800))
+    e = {"bw_on": True, "bw_grain": 1.0}
+    f = np.asarray(E.render(full, e).resize((1200, 800), Image.LANCZOS), np.float32)
+    p = np.asarray(E.render(prev, e), np.float32)
+    assert 0.75 < p.std() / f.std() < 1.33   # prima: 4 volte più forte nell'anteprima

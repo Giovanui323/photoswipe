@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
+import edits
 import frames
 import places
 import printprep
@@ -79,6 +80,7 @@ def print_size(w: int, h: int) -> str:
 
 def read_image(path: Path) -> Meta:
     meta = Meta()
+    edits.register_heif()   # anche il primo HEIC aperto: senza, Pillow non lo legge
     try:
         with Image.open(path) as im:
             w, h = im.size
@@ -124,7 +126,9 @@ def read_image(path: Path) -> Meta:
             meta.gps = (lat, lon)
         alt = _ratio(gps.get(6))
         if alt is not None:
-            meta.altitude = -alt if gps.get(5) == 1 else alt
+            ref = gps.get(5)
+            ref = ref[0] if isinstance(ref, bytes) and ref else ref   # Pillow: b"\x01" = sotto il mare
+            meta.altitude = -alt if ref == 1 else alt
     meta.rows.append((tr('Dimensioni'), f"{w} × {h}  ({w * h / 1e6:.1f} MP)"))
     meta.size = (w, h)
     meta.rows.append((tr('Stampabilità'), print_size(w, h)))
@@ -161,18 +165,19 @@ def read_video(path: Path, info: frames.VideoInfo | None) -> Meta:
     v = re.search(r"Video: (\w+)[^\n]*", err)
     if info:
         fps = float(info.fps) if isinstance(info.fps, Fraction) else info.fps
-        meta.rows.append((tr('Video'), f"{info.width} × {info.height}  ·  {fps:.3g} fps  ·  "
+        fps_text = f"{fps:.2f}".rstrip("0").rstrip(".")   # 29,97 e 23,976 non diventano 30 e 24
+        meta.rows.append((tr('Video'), f"{info.width} × {info.height}  ·  {fps_text} fps  ·  "
                                    f"{info.bits} bit" + (f"  ·  {v.group(1).upper()}" if v else "")))
         if info.is_flat_profile:
             meta.rows.append((tr('Colore'), "HLG" if "b67" in info.transfer else f"log ({info.transfer})"))
         if info.duration:
-            s = info.duration
-            meta.rows.append((tr('Durata'), f"{int(s // 60)}:{s % 60:04.1f}"))
+            tenths = round(info.duration * 10)   # prima si arrotonda: 59,97 s = 1:00.0, non 0:60.0
+            meta.rows.append((tr('Durata'), f"{tenths // 600}:{tenths % 600 / 10:04.1f}"))
     br = re.search(r"bitrate: (\d+) kb/s", err)
     if br:
         meta.rows.append((tr('Bitrate'), f"{int(br.group(1)) / 1000:.1f} Mbit/s"))
     if "Audio: " in err:   # testo di ffmpeg: mai tradotto
-        a = re.search(r"Audio: (\w+)[^\n]*?(\d+) Hz[^\n]*?(mono|stereo|[\d.]+ channels)?", err)
+        a = re.search(r"Audio: (\w+)[^\n]*?(\d+) Hz(?:[^\n]*?(mono|stereo|[\d.]+ channels))?", err)
         meta.rows.append((tr('Audio'), f"{a.group(1).upper()} · {a.group(3) or ''}".strip(" ·") if a else tr('sì')))
     return meta
 

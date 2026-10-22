@@ -7,7 +7,8 @@ cd "$(dirname "$0")/.."
 VENV=build/venv
 if [ ! -x "$VENV/bin/python" ]; then
   # di default il Python "standalone" in build/pythons (minos 11.0), se c'è
-  PY="${PYTHON:-$(ls -d build/pythons/cpython-3.13*/bin/python3.13 2>/dev/null | tail -1)}"
+  # (|| true: senza build/pythons, al primo setup, si passa a python3.13 invece di uscire)
+  PY="${PYTHON:-$(ls -d build/pythons/cpython-3.13*/bin/python3.13 2>/dev/null | sort -V | tail -1 || true)}"
   PY="${PY:-python3.13}"
   echo "Creo $VENV con $PY"
   "$PY" -m venv "$VENV"

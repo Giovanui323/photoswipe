@@ -12,16 +12,15 @@ import time
 import uuid
 import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
-from fractions import Fraction
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QImage, QImageReader, QKeySequence, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-                               QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider,
-                               QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
+                               QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea,
+                               QSlider, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from PIL import Image
 
@@ -38,6 +37,7 @@ import navbar
 import photobook
 import places
 import printprep
+from procs import stop_child_processes
 import settingspop
 import similar
 import stripfilter
@@ -45,7 +45,7 @@ import thumbcache
 from thumbqueue import ThumbQueue
 from scanner import Item, mp4_duration, raw_preview, refresh_capture_time, scan
 from i18n import HELP, LANG, tr
-from theme import CHOICE_COLOR, COLORS as C, KIND_COLOR, STRIP_FRAME_COLORS, STYLE, apply_dark_palette
+from theme import CHOICE_COLOR, COLORS as C, KIND_COLOR, STRIP_FRAME_COLORS, STYLE, apply_dark_palette, help_html
 from datefmt import _MESI_LUNGHI, fmt_datetime  # noqa: F401
 from editjob import EDIT_FULL_MAX, EDIT_PROXY, print_takes_edit, render_edit_job  # noqa: F401
 from widgets import (AbandonedWait, Bridge, ElidedLabel, FilmStrip, ImageView, LruCache, OverlayLabel,  # noqa: F401
@@ -68,22 +68,6 @@ KIND_LABEL = {"photo": tr('FOTO'), "pano": tr('PANORAMA'), "live": tr('LIVE'), "
 CHOICE_NAME = {"yes": tr('✓ SÌ'), "no": tr('✗ NO'), "skip": tr('↪ Salta'), "trash": tr('🗑 In “cancellare”')}
 
 HELP_TEXT = HELP[LANG]
-
-
-def help_html(text: str) -> str:
-    """Aiuto in HTML: titoletti (righe in MAIUSCOLO) piccoli, grigi e staccati dal testo."""
-    from html import escape
-    out = []
-    for line in text.split("\n"):
-        if line and line.isupper() and len(line) < 40:
-            out.append(f"<p style='color:{C['text_2']}; font-size:11px; font-weight:700; letter-spacing:1px;"
-                       f" margin:16px 0 4px 0'>{escape(line)}</p>")
-        elif not line.strip():
-            out.append("<p style='margin:6px 0'></p>")
-        else:
-            lead = len(line) - len(line.lstrip(" "))
-            out.append(f"<p style='margin:2px 0 2px {lead * 6}px'>{escape(line.lstrip(' '))}</p>")
-    return "".join(out)
 
 
 FILE_MANAGER = "Finder" if sys.platform == "darwin" else tr('Esplora file')
@@ -571,7 +555,7 @@ class MainWindow(QMainWindow):
         # carica preferenze
         self.fmt.setCurrentIndex(1 if self.settings_store.value("fmt") == "png16" else 0)
         tz = self.settings_store.value("tz")
-        if tz not in (None, ""):
+        if str(tz).lstrip("+-").replace(".", "", 1).isdigit():   # valore rovinato: si ignora
             i = self.tz.findData(float(tz))
             if i >= 0:
                 self.tz.setCurrentIndex(i)
@@ -866,9 +850,9 @@ class MainWindow(QMainWindow):
         self.bg.submit(thumbcache.prune)   # la cache delle miniature su disco non cresce all'infinito
         # filtro della striscia: mostra solo le miniature con una certa scelta (o ancora da fare)
         # Pulsante che apre un popup personalizzato (il QComboBox nativo è brutto su macOS)
-        self._strip_filter_key = self.settings_store.value("strip_filter", "all")
-        self._strip_filter_label = dict(STRIP_FILTERS).get(self._strip_filter_key,
-                                                            STRIP_FILTERS[0][0])
+        saved = self.settings_store.value("strip_filter", "all")
+        self._strip_filter_key = saved if saved in [k for _l, k in STRIP_FILTERS] else "all"   # sconosciuto: tutte
+        self._strip_filter_label = STRIP_FILTERS[0][0]
         # Trova l'etichetta corrispondente alla chiave salvata
         for lbl, k in STRIP_FILTERS:
             if k == self._strip_filter_key:
@@ -1027,7 +1011,7 @@ class MainWindow(QMainWindow):
 
     def print_copy(self, item) -> Path:
         """Dove sta la copia per la stampa di questa foto (l'originale non si tocca mai)."""
-        return self.export_dir / "Stampa" / f"{item.main.stem}_stampa.jpg"
+        return printprep.copy_path(self.export_dir, item)
 
     def improve_for_print(self):
         """Migliora per la stampa: chiede conferma sotto il pulsante (Sì / Annulla)."""
@@ -2003,9 +1987,9 @@ class MainWindow(QMainWindow):
         c = info["counts"]
         fw = exporter.fmt_when
         total = info["total"] or "?"
-        detail = (f"Decise: {info['decided']} su {total}\n"
-                  f"✓ {c['yes']} approvate   ✗ {c['no']} scartate   ↪ {c['skip']} saltate"
-                  + (f"   🗑 {c['trash']} in “cancellare”" if c.get("trash") else "")
+        detail = (tr('Decise: {v0} su {v1}\n', v0=info['decided'], v1=total)
+                  + tr('✓ {v0} approvate   ✗ {v1} scartate   ↪ {v2} saltate', v0=c['yes'], v1=c['no'], v2=c['skip'])
+                  + (tr('   🗑 {v0} in “cancellare”', v0=c['trash']) if c.get("trash") else "")
                   + (tr('   📷 {v0} foto da video', v0=c['snap']) if c.get("snap") else "") + tr('\n\nIniziato il {v0}\nUltima modifica il {v1}\nExport: {v2}', v0=fw(info['created']), v1=fw(info['updated']), v2=info['export'])
                   + ("" if info.get("export_ok", True) else
                      tr("\n(questa cartella export non c'è su questo computer: riprendendo ti chiedo dove copiare)")))
@@ -2107,6 +2091,8 @@ class MainWindow(QMainWindow):
         def unless_cropping(k, fn):
             # Ritaglia aperto: Invio = OK, il resto aspetta (si conferma o si annulla prima)
             def run():
+                if k in ("Up", "Down") and isinstance(w := QApplication.focusWidget(), QAbstractSpinBox):
+                    return w.stepBy(1 if k == "Up" else -1)   # nel campo (es. proporzioni): le sue frecce
                 if not self.edit_pending() or k in ("?", "H", "I"):
                     fn()
                 elif k in ("Return", "Enter"):
@@ -2201,6 +2187,8 @@ class MainWindow(QMainWindow):
             self.pending.discard(("analyze", key))
             if isinstance(res, Exception):
                 self.status.setText(tr('Analisi video non riuscita: {res}', res=res))
+                if cur and cur.id == key:
+                    self.frame_label.setText(tr('analisi non riuscita'))   # non più "analisi del video…"
                 return
             info, cam = res
             self.infos[key] = info
@@ -3487,7 +3475,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def frame_ms(info: frames.VideoInfo, n: int) -> int:
         """Posizione del lettore (ms) che mostra il fotogramma n."""
-        return math.ceil(Fraction(n * 1000) / info.fps) + 1
+        return math.ceil(info.seconds_of(n) * 1000) + 1
 
     def ensure_player(self, item: Item):
         if self._player_item != item.id:
@@ -3701,12 +3689,12 @@ class MainWindow(QMainWindow):
                     and not self.showing_still(item):
                 self.update_stamp(self.player.position() / 1000)
             else:
-                self.update_stamp(float(self.shown_frame / info.fps))
+                self.update_stamp(info.seconds_of(self.shown_frame))
         else:
             self.update_stamp()
 
     def update_time_label(self, n: int, info):
-        t, total = float(n / info.fps), info.duration
+        t, total = info.seconds_of(n), info.duration
         self.time_label.setText(f"{int(t // 60)}:{t % 60:05.2f}")   # breve; la durata è nel suggerimento
         self.time_label.setToolTip(tr("Durata: {d}", d=f"{int(total // 60)}:{total % 60:05.2f}"))
 
@@ -3976,7 +3964,11 @@ class MainWindow(QMainWindow):
                 self.show_item()
                 self.flash(tr('Scelta confermata: {v0}', v0=CHOICE_NAME.get(choice, choice)))
                 return
-            if not self.revert_effects(item.id, prev):
+            try:   # prima si salva "da decidere", poi si tolgono gli effetti della scelta di prima
+                if not self.session.unrecord(item.id, lambda: self.revert_effects(item.id, prev)):
+                    return
+            except OSError as e:
+                self.status.setText(tr('Scelta non salvata: {e}', e=e), ms=0)
                 return
             item = self.items[self.idx]  # di nuovo al suo posto
         self.history.append((self.idx, item.id, prev))
@@ -4219,19 +4211,6 @@ class MainWindow(QMainWindow):
             self.session.close()
         log.info("uscita")
         super().closeEvent(e)
-
-
-def stop_child_processes() -> None:
-    """Ferma i processi figli ancora in corso (ffmpeg dei fotogrammi, Real-ESRGAN della stampa):
-    con os._exit resterebbero orfani e potrebbero lasciare file a metà."""
-    for name, kill in (("ffmpeg", frames.kill_running),
-                       ("stampa", getattr(printprep, "kill_running", lambda: None))):
-        try:
-            n = kill()
-            if n:
-                log.info("uscita: fermati %s processi %s", n, name)
-        except Exception as e:  # noqa: BLE001 - l'uscita non si blocca per questo
-            log.warning("uscita: non riesco a fermare %s: %r", name, e)
 
 
 def main():

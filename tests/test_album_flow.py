@@ -404,3 +404,16 @@ def test_every_name_has_one_date_in_the_same_style(tmp_path):
     moved = exporter.rename_by_date([("v", datetime(2024, 6, 15, 12, 34, 56), [str(old)])], export)
     foto = export / exporter.PHOTO_SUBDIR
     assert moved == {"v": [[str(old), str(foto / "20240615_123456_001_2.jpg")]]}
+
+def test_photos_years_apart_never_share_a_page():
+    from datetime import datetime
+    import album
+    from photobook import Page
+    from scanner import Item
+
+    def page(y, m=7, d=20):
+        it = Item("photo", f"{y}{m}{d}.jpg", taken=datetime(y, m, d, 12))
+        return Page(it.id, it.id, Path(it.id), it, None)
+    assert album.plan([page(2020), page(2026)]) == [[0], [1]]
+    pages = album.plan([page(2020), page(2023)] + [page(2026, 1, 1)] * 5)
+    assert [0, 1] not in pages

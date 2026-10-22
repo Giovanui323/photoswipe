@@ -430,3 +430,20 @@ def test_redeye_in_crop_mode_stays_on_the_eye():
     r, g, b = preview.getpixel((300, 300))
     assert r < 150, "in Ritaglia la correzione è finita fuori dall'occhio"
     assert preview.getpixel((200, 200)) == (120, 120, 120)
+
+
+@pytest.mark.parametrize("color, transfer", [
+    ("yuv420p(tv, bt709, progressive)", "bt709"),
+    ("yuv420p(tv, bt709/bt709/bt709, progressive)", "bt709"),
+    ("yuv420p(progressive)", "bt709"),
+    ("yuvj420p(pc, bt470bg/unknown/unknown, progressive)", "unknown"),
+    ("yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67, progressive)", "arib-std-b67"),
+    ("yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)", "arib-std-b67"),
+])
+def test_probe_field_order_is_not_a_color_profile(monkeypatch, tmp_path, color, transfer):
+    # ffmpeg 7 aggiunge ", progressive": non è un profilo log (avviso "colore piatto" falso)
+    _fake_run(monkeypatch, "Input #0\n  Duration: 00:00:02.00, start: 0\n"
+              f"  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), {color}, 1920x1080, 30 fps, 30 tbr\n")
+    info = frames.probe(tmp_path / "x.mp4")
+    assert info.transfer == transfer
+    assert info.is_flat_profile == (transfer == "arib-std-b67")

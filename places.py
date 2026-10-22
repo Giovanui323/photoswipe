@@ -96,7 +96,9 @@ def offline(lat: float, lon: float) -> str:
     region = idx.regions[i]
     name, reg = idx.names[i], idx.region_names.get(region, "")
     if idx.quarter[i]:   # quartiere: anche la città, es. "Trevi, Roma"
-        city = idx.names[int(np.argmin(np.where(idx.quarter, np.inf, a)))]
+        # la città della stessa regione (Trevi: Roma, non Città del Vaticano; Times Square: New York)
+        same = np.array([r == region for r in idx.regions], bool) if region else np.ones(len(a), bool)
+        city = idx.names[int(np.argmin(np.where(idx.quarter | ~same, np.inf, a)))]
         name = f"{name}, {city}" if city != name else name
     place = name + (f", {reg}" if reg and reg != name else "")
     country = idx.countries.get(region.split(".")[0], "")

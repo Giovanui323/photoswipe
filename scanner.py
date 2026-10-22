@@ -19,6 +19,7 @@ RAW_EXT = {".dng"}
 VIDEO_EXT = {".mp4", ".mov", ".m4v"}
 # MISC = file di sistema DJI; PANORAMA = singoli scatti già uniti dalla fotocamera
 SKIP_DIRS = {"MISC", "PANORAMA"}
+_MISC_SUBDIRS = {"THM", "GIS", "IDX", "LOG", "CACHE"}   # cosa c'è nella MISC di una scheda DJI
 TRASH_DIR = "cancellare"   # originali messi da parte da PhotoSwipe: mai da riproporre
 
 RAW_PREVIEW_MIN_PX = 1000  # anteprima DNG incorporata più piccola: si sviluppa il RAW
@@ -118,6 +119,70 @@ def mp4_created(path: Path) -> datetime | None:
         return None
 
 
+def mp4_local_created(path: Path) -> datetime | None:
+    """Ora locale dello scatto scritta dall'iPhone (com.apple.quicktime.creationdate, con il fuso
+    del posto): la stessa ora "da parete" delle foto, così foto e video di un viaggio restano in
+    ordine anche se il Mac è in un altro fuso. None se non c'è (si usa mp4_created)."""
+    try:
+        with open(path, "rb") as f:
+            end = os.fstat(f.fileno()).st_size
+            moov = _child(f, 0, end, b"moov")
+            udta = moov and _child(f, *moov, b"udta")
+            meta = moov and (_child(f, *moov, b"meta")   # iPhone: moov/meta; ffmpeg: moov/udta/meta
+                             or (udta and _child(f, *udta, b"meta")))
+            if not meta:
+                return None
+            start, stop = meta
+            f.seek(start + 4)
+            if f.read(4) != b"hdlr":   # meta "ISO" con versione/flag davanti (non QuickTime)
+                start += 4
+            keys, ilst = _child(f, start, stop, b"keys"), _child(f, start, stop, b"ilst")
+            if not (keys and ilst):
+                return None
+            f.seek(keys[0] + 4)
+            names = []
+            for _ in range(struct.unpack(">I", f.read(4))[0]):
+                size = struct.unpack(">I", f.read(4))[0]
+                f.read(4)   # namespace (mdta)
+                names.append(f.read(size - 8))
+            if b"com.apple.quicktime.creationdate" not in names:
+                return None
+            index = names.index(b"com.apple.quicktime.creationdate") + 1
+            item = _child(f, *ilst, struct.pack(">I", index))
+            data = item and _child(f, *item, b"data")
+            if not data:
+                return None
+            f.seek(data[0] + 8)   # tipo e lingua
+            text = f.read(min(data[1] - data[0] - 8, 64)).decode("utf-8", "replace")
+    except (OSError, struct.error, IndexError, ValueError):
+        return None
+    m = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)", text)
+    try:
+        return datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S") if m else None
+    except ValueError:
+        return None
+
+
+def _child(f, start: int, end: int, kind: bytes) -> tuple[int, int] | None:
+    """(inizio del contenuto, fine) del primo atom `kind` fra start e end."""
+    pos = start
+    while pos + 8 <= end:
+        f.seek(pos)
+        size, k = struct.unpack(">I4s", f.read(8))
+        header = 8
+        if size == 1:
+            size = struct.unpack(">Q", f.read(8))[0]
+            header = 16
+        elif size == 0:
+            size = end - pos
+        if size < header:
+            return None
+        if k == kind:
+            return pos + header, min(pos + size, end)
+        pos += size
+    return None
+
+
 def _find_mvhd(f, start: int, end: int) -> tuple[float, int]:
     """(durata in secondi, data di creazione in secondi dal 1904) dall'atom 'mvhd'."""
     pos = start
@@ -210,8 +275,22 @@ def spotlight_dates(paths: list[Path]) -> list[datetime | None]:
     return [_parse_mdls_date(t) for t in _mdls("kMDItemContentCreationDate", paths)]
 
 
+_HEIF = []
+
+
+def _register_heif() -> None:
+    """HEIC in Pillow (pi-heif) per leggerne l'EXIF; una volta sola, se c'è."""
+    if not _HEIF:
+        _HEIF.append(True)
+        try:
+            from pi_heif import register_heif_opener
+            register_heif_opener()
+        except Exception:  # noqa: BLE001 - pi-heif assente: resta Spotlight
+            pass
+
+
 def capture_time(path: Path, local: bool) -> datetime | None:
-    """Data di scatto: nome file DJI -> EXIF (JPEG, solo se già scaricato) -> data nel video.
+    """Data di scatto: nome file DJI -> EXIF (JPEG, PNG, HEIC, DNG, solo se già scaricato) -> data nel video.
     None se non c'è: si chiede a Spotlight, poi si usa la data del file (file_time)."""
     m = _DJI_TS.search(path.name)
     if m:
@@ -219,10 +298,12 @@ def capture_time(path: Path, local: bool) -> datetime | None:
             return datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
         except ValueError:
             pass
-    if local and path.suffix.lower() in {".jpg", ".jpeg"}:
+    if local and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".heic", ".heif", ".dng"}:
         try:
             from PIL import Image
-            with Image.open(path) as im:
+            if path.suffix.lower() in {".heic", ".heif"}:
+                _register_heif()
+            with Image.open(path) as im:   # il DNG è un TIFF: Pillow ne legge l'EXIF
                 exif = im.getexif()
                 raw = exif.get_ifd(0x8769).get(36867) or exif.get(306)
             if raw:
@@ -230,10 +311,30 @@ def capture_time(path: Path, local: bool) -> datetime | None:
         except Exception:
             pass
     if local and path.suffix.lower() in {".mp4", ".mov", ".m4v"}:
-        created = mp4_created(path)
+        created = mp4_local_created(path) or mp4_created(path)
         if created:
             return created
     return None
+
+
+def _same_content(a: Path, b: Path, chunk: int = 1 << 20) -> bool:
+    """Due file con stesso nome e dimensione sono lo stesso scatto? Si confrontano inizio e fine
+    (i RAW non compressi hanno tutti la stessa dimensione, e i contatori ripartono su ogni scheda).
+    Un file solo su iCloud non si legge (si scaricherebbe): si tiene per doppione, come prima."""
+    if not (cloud.is_local(a) and cloud.is_local(b)):
+        return True
+    try:
+        size = a.stat().st_size
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            if fa.read(chunk) != fb.read(chunk):
+                return False
+            if size > chunk:
+                fa.seek(-chunk, os.SEEK_END)
+                fb.seek(-chunk, os.SEEK_END)
+                return fa.read(chunk) == fb.read(chunk)
+            return True
+    except OSError:
+        return True
 
 
 def file_time(path: Path, local: bool) -> datetime:
@@ -241,7 +342,11 @@ def file_time(path: Path, local: bool) -> datetime:
     try:
         return datetime.fromtimestamp(path.stat().st_mtime)
     except OSError:
+        pass
+    try:
         return datetime.fromtimestamp(cloud.stub_for(path).stat().st_mtime)
+    except OSError:  # link rotto, o file sparito durante la scansione (iCloud che sincronizza)
+        return datetime.now()
 
 
 def refresh_capture_time(item: Item) -> bool:
@@ -304,19 +409,25 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
 
     for dirpath, dirnames, filenames in os.walk(root):
         d = Path(dirpath)
+        system: set[str] = set()   # MISC / PANORAMA della DJI (non le cartelle dell'utente con quel nome)
         for n in dirnames:
+            if n.upper() not in SKIP_DIRS:
+                continue
+            try:
+                subs = os.listdir(d / n)
+            except OSError:   # non leggibile: si salta, senza far fallire tutta la lettura
+                subs = []
             if n.upper() == "PANORAMA":
-                try:
-                    subs = os.listdir(d / n)
-                except OSError:   # non leggibile: si salta, senza far fallire tutta la lettura
-                    subs = []
                 for sub in subs:
                     m = _PANO_DIR.match(sub)
                     if m:
                         pano_indexes.add((d, m.group(1)))
+                        system.add(n)
+            elif {x.upper() for x in subs} & _MISC_SUBDIRS or any(x.upper() == "DCIM" for x in dirnames):
+                system.add(n)
         dirnames[:] = sorted(
             n for n in dirnames
-            if not n.startswith(".") and n.upper() not in SKIP_DIRS
+            if not n.startswith(".") and n not in system
             and n != TRASH_DIR   # anche quella di una sottocartella, aprendo la cartella madre
             and (d / n).resolve() not in excluded
             and not (d == root and n == "export")   # l'export proposto: mai riletto come sorgente
@@ -324,9 +435,11 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
         for name in sorted(filenames):
             if name.startswith("."):
                 name = cloud.real_name_of_stub(name) or ""
-                if not name or name.startswith("._"):
-                    continue  # file nascosti e "._" creati da macOS
+                if not name or name.startswith("."):
+                    continue  # file nascosti (anche solo su iCloud) e "._" creati da macOS
             p = d / name
+            if p.is_symlink() and not p.exists() and not cloud.stub_for(p).exists():
+                continue  # link rotto: non c'è niente da mostrare
             ext = p.suffix.lower()
             slot = ("image" if ext in IMAGE_EXT else "raw" if ext in RAW_EXT
                     else "video" if ext in VIDEO_EXT else None)
@@ -339,7 +452,7 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
                 free[slot] = p
 
     items: list[Item] = []
-    seen: dict[tuple[str, int], Item] = {}  # doppioni: stesso nome e stessa dimensione
+    seen: dict[tuple[str, int], tuple[Item, Path]] = {}  # doppioni: stesso nome, dimensione e contenuto
     # Prima le cartelle più profonde (DCIM originale), poi le copie fatte a mano
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[0][0].parts), str(kv[0][0])))
     unknown: list[Item] = []
@@ -347,7 +460,8 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     for (folder, stem), files in ((k, g) for k, slots in ordered for g in slots):
         main = files.get("image") or files.get("video") or files["raw"]
         size = _size(main)
-        kept = seen.get((main.name.upper(), size)) if size else None   # 0 = solo su iCloud, dimensione ignota
+        first = seen.get((main.name.upper(), size)) if size else None   # 0 = solo su iCloud, dimensione ignota
+        kept = first[0] if first and _same_content(first[1], main) else None
         if kept is not None:
             # doppione: si tiene il primo, ma se il doppione ha un file in più (es. il DNG, o il
             # MOV di una Live) lo si aggiunge, altrimenti non si vedrebbe/esporterebbe/sposterebbe mai.
@@ -363,8 +477,8 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
         it = Item(kind="photo", id=rel, image=files.get("image"),
                   raw=files.get("raw"), video=files.get("video"),
                   taken=taken or file_time(main, local), size=size)
-        if size:
-            seen[(main.name.upper(), size)] = it
+        if size and first is None:
+            seen[(main.name.upper(), size)] = (it, main)
         if taken is None and local:
             undated.append(it)
         if it.image:

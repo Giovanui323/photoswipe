@@ -100,3 +100,10 @@ def test_info_panel_shows_quality_and_points_to_the_sharpest_of_a_burst(qapp, wi
     card = win.info_card_text
     assert wait(qapp, lambda: "foto simili" in card.text()), card.text()
     assert "Sfocata" in card.text() and "la più nitida è la 1ª" in card.text()
+
+
+def test_16_bit_gray_scan_is_judged_like_the_8_bit_one():
+    g8 = _detail().convert("L")
+    g16 = Image.fromarray(np.asarray(g8, np.uint16) * 257)   # I;16, come una scansione a 16 bit
+    assert g16.mode == "I;16"
+    assert Q.assess(g16).summary() == Q.assess(g8).summary()   # prima: "bruciate 99%"

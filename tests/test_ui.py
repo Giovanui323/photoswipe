@@ -626,3 +626,74 @@ def test_photobook_shows_approved_photos_up_to_the_selected_thumbnail(qapp, win,
     win.photobook.opened.emit(win.photobook.items[-1].id)
     pump(qapp, 0.1)
     assert win.current().main.name == PHOTO1
+
+
+def test_changed_choice_with_failed_save_keeps_disk_and_files_in_step(qapp, win, sd, monkeypatch):
+    # Sì, poi tornati indietro: No con il salvataggio che non riesce (disco pieno)
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    click(qapp, win, win.btn_yes)
+    exports_done(qapp, win)
+    copy = win.export_dir / "Foto" / DATED1
+    assert copy.exists()
+    item_id = win.items[index_of(win, PHOTO1)].id
+    real_write = exporter.Session._write
+    writes = []
+
+    def full_after_first(self, path):   # "da decidere" si salva, la scelta nuova no
+        writes.append(path)
+        if len(writes) > 1:
+            raise OSError(28, "No space left on device")
+        real_write(self, path)
+    monkeypatch.setattr(exporter.Session, "_write", full_after_first)
+    go(qapp, win, PHOTO1)
+    click(qapp, win, win.btn_no)
+    exports_done(qapp, win)
+    monkeypatch.undo()
+    on_disk = exporter.Session.read(win.session.path)["decisions"]
+    assert item_id not in on_disk and item_id not in win.session.decisions   # di nuovo da decidere
+    assert not copy.exists()                                                 # e la copia è tolta
+
+    # disco pieno già dal primo salvataggio: non si tocca niente, la copia resta
+    go(qapp, win, PHOTO1)
+    click(qapp, win, win.btn_yes)
+    exports_done(qapp, win)
+    assert copy.exists()
+
+    def full(self, path):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(exporter.Session, "_write", full)
+    go(qapp, win, PHOTO1)
+    click(qapp, win, win.btn_no)
+    exports_done(qapp, win)
+    monkeypatch.undo()
+    assert exporter.Session.read(win.session.path)["decisions"][item_id]["choice"] == "yes"
+    assert win.session.get(item_id)["choice"] == "yes" and copy.exists()
+
+
+@pytest.mark.parametrize("tz, index", [("abc", 0), ("9.0", None), (-5.0, None)])
+def test_broken_time_zone_setting_does_not_stop_the_app(qapp, tz, index):
+    store = QSettings("PhotoSwipe", PROFILE)
+    store.clear()
+    store.setValue("tz", tz)
+    w = A.MainWindow()   # prima: ValueError e l'app non partiva più
+    try:
+        assert w.tz.currentIndex() == (index if index is not None else w.tz.findData(float(tz)))
+        assert w.tz.currentIndex() >= 0
+    finally:
+        w.close()
+        w.deleteLater()
+        store.clear()
+
+
+def test_unknown_saved_strip_filter_falls_back_to_all(qapp):
+    store = QSettings("PhotoSwipe", PROFILE)
+    store.clear()
+    store.setValue("strip_filter", "boh")
+    w = A.MainWindow()
+    try:
+        assert w._strip_filter_key == "all"
+    finally:
+        w.close()
+        w.deleteLater()
+        store.clear()

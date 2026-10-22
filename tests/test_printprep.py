@@ -61,3 +61,26 @@ def test_windows_without_vc_runtime_falls_back_and_explains(tmp_path, monkeypatc
     text = printprep.improve(src, tmp_path / "out.jpg")
     assert (tmp_path / "out.jpg").exists()
     assert "Visual C++" in text and printprep.missing_runtime
+
+
+def test_missing_engine_falls_back_and_says_so(tmp_path, monkeypatch):
+    """Motore assente o bloccato (es. Gatekeeper su macOS): la copia si fa lo stesso, e lo si dice."""
+    from PIL import Image
+    import printprep
+    src = tmp_path / "a.jpg"
+    Image.new("RGB", (800, 600), (120, 90, 60)).save(src)
+    monkeypatch.setattr(printprep, "realesrgan_bin", lambda: tmp_path / "non_c_e")
+    text = printprep.improve(src, tmp_path / "out.jpg")
+    assert (tmp_path / "out.jpg").exists()
+    assert "Real-ESRGAN" in text and printprep.simple_upscale
+
+
+def test_print_copies_of_same_name_photos_do_not_overwrite(tmp_path):
+    import printprep
+    from scanner import Item
+    a = Item("photo", "card1/IMG_0001.JPG", image=tmp_path / "card1" / "IMG_0001.JPG")
+    b = Item("photo", "card2/IMG_0001.JPG", image=tmp_path / "card2" / "IMG_0001.JPG")
+    top = Item("photo", "IMG_0001.JPG", image=tmp_path / "IMG_0001.JPG")
+    paths = {printprep.copy_path(tmp_path, it) for it in (a, b, top)}
+    assert len(paths) == 3
+    assert printprep.copy_path(tmp_path, top) == tmp_path / "Stampa" / "IMG_0001_stampa.jpg"   # come prima

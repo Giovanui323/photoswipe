@@ -373,3 +373,44 @@ def test_photo_yes_then_trash_moves_original_and_removes_copy_undo_restores(qapp
     assert original.read_bytes() == data            # originale al suo posto, identico
     assert exported(win) == [photo_rel(PHOTO1)]
     assert (win.export_dir / photo_rel(PHOTO1)).read_bytes() == data
+
+
+def _ff(*args):
+    subprocess.run([frames.ffmpeg_exe(), "-v", "error", "-y", *args], check=True)
+
+
+def _level(im) -> int:   # luminosità media (le prove partono da 20: sotto 16 è tutto nero)
+    return round(im.convert("L").resize((1, 1)).getpixel((0, 0)))
+
+
+def test_audio_longer_than_video_has_no_phantom_frames(tmp_path):
+    v = tmp_path / "a.mp4"
+    _ff("-f", "lavfi", "-i", "testsrc2=size=160x120:rate=30:duration=2",
+        "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(v))
+    info = frames.probe(v)
+    assert info.frames == 60                       # non 90 (3 s di audio)
+    frames.frame_rgb(v, info, info.frames - 1)     # l'ultimo si legge
+
+
+def test_variable_frame_rate_reaches_every_frame(tmp_path):
+    # 30 fotogrammi a 30 fps, poi 15 a 15 fps; ognuno con una luminosità diversa
+    v = tmp_path / "vfr.mp4"
+    _ff("-f", "lavfi", "-i", "color=black:size=64x48:rate=30:duration=1.5",
+        "-vf", "geq=lum='20+N*4':cb=128:cr=128,setpts='if(lt(N,30),N/30,1+(N-30)/15)/TB'",
+        "-fps_mode", "vfr", "-frames:v", "45", "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", str(v))
+    info = frames.probe(v)
+    assert info.frames == 45
+    seen = [_level(frames.frame_rgb(v, info, n)) for n in range(info.frames)]
+    assert len(set(seen)) == 45 and seen == sorted(seen)   # tutti diversi, in ordine
+    assert info.frame_at(info.seconds_of(40)) == 40
+
+
+def test_video_starting_after_the_audio_is_exact(tmp_path):
+    v = tmp_path / "late.mp4"
+    _ff("-f", "lavfi", "-i", "color=black:size=64x48:rate=30:duration=1",
+        "-f", "lavfi", "-i", "sine=duration=1.5",
+        "-vf", "geq=lum='20+N*7':cb=128:cr=128,setpts=PTS+0.5/TB", "-c:v", "libx264", "-qp", "0",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", str(v))
+    info = frames.probe(v)
+    seen = [_level(frames.frame_rgb(v, info, n)) for n in range(info.frames)]
+    assert info.frames == 30 and len(set(seen)) == 30

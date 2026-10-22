@@ -7,4 +7,5 @@ dist/
 backup_grafica/
 *.pyc
 .photoswipe-session*.json
-engines/windows/vcomp140.dll   # runtime Microsoft: non si ridistribuisce (vedi THIRD_PARTY_NOTICES)
+# runtime Microsoft: non si ridistribuisce (vedi THIRD_PARTY_NOTICES)
+engines/windows/vcomp140.dll

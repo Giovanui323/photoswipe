@@ -5,7 +5,11 @@ cd "$(dirname "$0")"
 # o se requirements.txt è cambiato: il segno si scrive solo a installazione riuscita.
 # Solo i pacchetti dell'app (requirements.txt); pytest e gli strumenti di sviluppo stanno in requirements-dev.txt
 if [ ! -x .venv/bin/python ] || ! cmp -s requirements.txt .venv/.requirements-ok; then
-  [ -x .venv/bin/python ] || python3 -m venv .venv || { echo "Serve Python 3 (python.org)"; read -r; exit 1; }
+  if [ ! -x .venv/bin/python ]; then
+    python3 -c "import sys; sys.exit(sys.version_info < (3, 10))" 2>/dev/null \
+      || { echo "Serve Python 3.10 o più recente (python.org)"; read -r; exit 1; }
+    python3 -m venv .venv || { echo "Serve Python 3 (python.org)"; read -r; exit 1; }
+  fi
   if .venv/bin/pip install -r requirements.txt; then
     cp requirements.txt .venv/.requirements-ok
   else

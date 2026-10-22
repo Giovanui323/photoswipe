@@ -31,7 +31,7 @@ OLD=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
 VER=$(echo "$OLD" | awk -F. '{ma=$1; mi=$2; pa=$3+1; if (pa>9){pa=0; mi++}; if (mi>9){mi=0; ma++}; printf "%d.%d.%d", ma, mi, pa}')
 sed -i '' "s/^APP_VERSION = \".*\"/APP_VERSION = \"$VER\"/" app.py
 # build fallita: la versione torna quella di prima (niente numeri saltati)
-trap 'sed -i "" "s/^APP_VERSION = \".*\"/APP_VERSION = \"$OLD\"/" app.py; echo "Build fallita: versione rimessa a $OLD"' ERR
+trap 'sed -i "" "s/^APP_VERSION = \".*\"/APP_VERSION = \"$OLD\"/" app.py; sed -i "" "s/version-[0-9.]*-blue/version-$OLD-blue/" README.md; echo "Build fallita: versione rimessa a $OLD"; exit 1' ERR INT TERM
 sed -i '' "s/version-[0-9.]*-blue/version-$VER-blue/" README.md
 echo "Versione: $OLD -> $VER"
 rm -rf build/work build/dist build/dmg
@@ -55,7 +55,7 @@ packaging/adhoc_sign.sh "$APP"
 mkdir -p build/dmg dist
 cp -R "$APP" build/dmg/
 ln -s /Applications build/dmg/Applicazioni
-cp packaging/LEGGIMI.txt build/dmg/ 2>/dev/null || true
+cp packaging/LEGGIMI.txt build/dmg/   # istruzioni per aprire l'app (Gatekeeper): non può mancare
 cp THIRD_PARTY_NOTICES.txt build/dmg/   # licenze dei componenti inclusi: vanno distribuite insieme
 cp -R packaging/licenses build/dmg/licenses   # testi completi LGPL/GPL citati nelle note
 DMG="dist/PhotoSwipe-$VER-arm64.dmg"

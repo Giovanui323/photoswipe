@@ -113,3 +113,30 @@ def test_place_missing_is_said(tmp_path):
     p = _photo(tmp_path, gps=False)
     m = metadata.read(Item("photo", p.name, image=p))
     assert "📍" in places.info_html(m, "#aaa", "#09f", str) and "href" not in places.info_html(m, "#aaa", "#09f", str)
+
+
+def test_altitude_below_sea_level_is_negative(tmp_path):
+    p = tmp_path / "IMG_0001.JPG"
+    im = Image.new("RGB", (40, 30))
+    ex = im.getexif()
+    g = ex.get_ifd(0x8825)
+    g[1], g[2], g[3], g[4] = "N", (31.0, 30.0, 0.0), "E", (35.0, 30.0, 0.0)   # Mar Morto
+    g[5], g[6] = b"\x01", 430.0
+    im.save(p, exif=ex)
+    assert metadata.read_image(p).altitude == -430.0
+
+
+def test_video_row_formats(monkeypatch, tmp_path):
+    import frames
+    from fractions import Fraction
+
+    class R:
+        stderr = (b"  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive), 1920x1080, 29.97 fps\n"
+                  b"  Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s\n")
+    monkeypatch.setattr(frames, "_run", lambda *a, **k: R())
+    info = frames.VideoInfo(1920, 1080, Fraction(30000, 1001), 59.97, 1797)
+    rows = dict(metadata.read_video(tmp_path / "v.mov", info).rows)
+    assert "29.97 fps" in rows["Video"]
+    assert rows["Durata"] == "1:00.0"
+    assert rows["Audio"] == "AAC · stereo"
+    assert "Colore" not in rows   # bt709 + progressive: non è un profilo log

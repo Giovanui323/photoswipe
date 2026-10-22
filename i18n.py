@@ -452,6 +452,12 @@ EN.update({
         "Creates a print copy in export/Stampa: upscales with Real-ESRGAN (if installed) or Lanczos and adds sharpening. The original is never touched.",
     " (ingrandimento semplice: per la qualità migliore installa il Visual C++ Redistributable gratuito di Microsoft: {url})":
         " (simple upscaling: for the best quality install Microsoft's free Visual C++ Redistributable: {url})",
+    "analisi non riuscita": "analysis failed",
+    "Decise: {v0} su {v1}\n": "Decided: {v0} of {v1}\n",
+    "✓ {v0} approvate   ✗ {v1} scartate   ↪ {v2} saltate": "✓ {v0} kept   ✗ {v1} rejected   ↪ {v2} skipped",
+    "   🗑 {v0} in “cancellare”": "   🗑 {v0} in “cancellare”",
+    " (ingrandimento semplice: il motore Real-ESRGAN non è disponibile)":
+        " (simple upscaling: the Real-ESRGAN engine is not available)",
     "Rinomina per data": "Rename by date",
     "Rinomina le copie approvate in export in ordine di data e ora di scatto. Gli originali non si toccano.":
         "Renames the approved copies in export in order of capture date and time. The originals are never touched.",

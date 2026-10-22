@@ -39,8 +39,8 @@ def real_name_of_stub(name: str) -> str | None:
 def is_local(path: Path) -> bool:
     try:
         st = os.stat(path)
-    except FileNotFoundError:
-        return False  # esiste solo lo stub .icloud
+    except OSError:
+        return False  # esiste solo lo stub .icloud (o non si può leggere: link rotto, permessi)
     if sys.platform == "darwin":
         return not (getattr(st, "st_flags", 0) & SF_DATALESS)
     if sys.platform == "win32":
