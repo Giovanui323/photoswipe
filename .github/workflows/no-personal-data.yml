@@ -14,6 +14,11 @@ jobs:
           TERMS: ${{ vars.FORBIDDEN_TERMS }}
         run: |
           if [ -z "$TERMS" ]; then
+            if [ "${{ github.event_name }}" = "pull_request" ] && \
+               [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+              echo "PR da un fork: le variabili del repository non sono disponibili, controllo saltato"
+              exit 0
+            fi
             echo "Variabile FORBIDDEN_TERMS non impostata"
             exit 1
           fi

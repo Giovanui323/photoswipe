@@ -8,7 +8,7 @@ ROOT="${1:?uso: $0 <app-o-cartella> [-v]}"
 VERBOSE="${2:-}"
 MAX=12.0
 while IFS= read -r -d '' f; do
-  file -b "$f" | grep -q 'Mach-O' || continue
+  [[ $(file -b "$f") == *Mach-O* ]] || continue   # senza pipe: con pipefail grep -q darebbe 141
   # LC_BUILD_VERSION -> "minos X"; i binari vecchi usano LC_VERSION_MIN_MACOSX -> "version X"
   m=$(otool -l "$f" 2>/dev/null | awk '
       /cmd LC_BUILD_VERSION/ {b=1} /cmd LC_VERSION_MIN_MACOSX/ {v=1}

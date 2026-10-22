@@ -395,3 +395,17 @@ def test_bw_grain_looks_the_same_in_preview_and_export():
     f = np.asarray(E.render(full, e).resize((1200, 800), Image.LANCZOS), np.float32)
     p = np.asarray(E.render(prev, e), np.float32)
     assert 0.75 < p.std() / f.std() < 1.33   # prima: 4 volte più forte nell'anteprima
+
+
+def test_xmp_orientation_is_reset_with_the_exif():
+    xmp = b'<x:xmpmeta><rdf:Description tiff:Orientation="6"/></x:xmpmeta>'
+    assert b'tiff:Orientation="1"' in E.jpeg_meta({"xmp": xmp}, (10, 10))["xmp"]
+    xmp2 = "<tiff:Orientation>8</tiff:Orientation>"
+    assert E.jpeg_meta({"xmp": xmp2}, (10, 10))["xmp"] == "<tiff:Orientation>1</tiff:Orientation>"
+
+
+def test_render_16_bit_is_scaled_and_broken_values_are_ignored():
+    g16 = Image.fromarray(np.full((20, 30), 128 * 257, np.uint16))
+    out = E.render(g16, {"exposure": 0.01})
+    assert abs(np.asarray(out, np.float32).mean() - 128) < 6   # prima: quasi bianca
+    assert E.clean({"exposure": None, "contrast": 0.2}) == {"contrast": 0.2}

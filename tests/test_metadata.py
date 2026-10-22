@@ -19,7 +19,7 @@ def _photo(tmp_path: Path, gps: bool) -> Path:
     sub[33437], sub[33434], sub[34855] = 2.0, (1, 250), 100
     if gps:
         g = ex.get_ifd(0x8825)
-        g[1], g[2], g[3], g[4] = "N", (40.0, 41.0, 52.0), "W", (14.0, 28.0, 48.0)
+        g[1], g[2], g[3], g[4] = "N", (40.0, 41.0, 52.0), "W", (74.0, 0.0, 21.0)   # New York
     im.save(p, exif=ex)
     return p
 
@@ -32,7 +32,7 @@ def test_exif_and_gps(tmp_path):
     assert "ƒ/2.0" in rows["Scatto"] and "1/250 s" in rows["Scatto"] and "ISO 100" in rows["Scatto"]
     assert rows["Dimensioni"].startswith("40 × 30")
     lat, lon = m.gps
-    assert abs(lat - 40.6978) < 1e-3 and abs(lon + 14.48) < 1e-3   # W = longitudine negativa
+    assert abs(lat - 40.6978) < 1e-3 and abs(lon + 74.0058) < 1e-3   # W = longitudine negativa
     assert "O" in metadata.fmt_gps(lat, lon)
 
 
@@ -62,6 +62,7 @@ def test_place_offline(monkeypatch):
     assert places.offline(45.9853, 9.2611).startswith("Bellagio, Lombardia · Italia")
     assert places.offline(41.9028, 12.4964).startswith("Trevi, Roma, Lazio · Italia")   # quartiere + città
     assert places.offline(43.0, 10.0).startswith("vicino a ")   # in mare: la costa più vicina
+    assert places.offline(30.0, -40.0) == ""   # in mezzo all'oceano: nessun "vicino a" a 1000 km
     monkeypatch.setattr(places, "_index", None)
 
 

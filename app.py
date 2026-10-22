@@ -40,10 +40,11 @@ import printprep
 from procs import stop_child_processes
 import settingspop
 import similar
+import stills
 import stripfilter
 import thumbcache
-from thumbqueue import ThumbQueue
-from scanner import Item, mp4_duration, raw_preview, refresh_capture_time, scan
+from thumbqueue import ScanBound, ThumbQueue
+from scanner import Item, mp4_duration, refresh_capture_time, scan
 from i18n import HELP, LANG, tr
 from theme import CHOICE_COLOR, COLORS as C, KIND_COLOR, STRIP_FRAME_COLORS, STYLE, apply_dark_palette, help_html
 from datefmt import _MESI_LUNGHI, fmt_datetime  # noqa: F401
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
         # copia per la stampa (Real-ESRGAN può metterci minuti): coda sua, non blocca il resto
         self.print_q = ThreadPoolExecutor(max_workers=1)
         self.thumb_q = ThumbQueue()   # miniature della striscia: dal centro, annullabili, riprovate
+        self.stills = stills.Stills()   # le prossime foto, decodificate in anticipo
         self._strip_idx: dict[str, int] = {}   # id -> indice, per le miniature ora nella striscia
         self.print_job: str | None = None   # id della foto in preparazione, None = nessun lavoro
         self.bridge = Bridge()
@@ -968,8 +970,10 @@ class MainWindow(QMainWindow):
         pop.show()
 
     def toggle_side(self):
+        if self.stack.currentWidget() is self.setup_page:
+            return   # nella schermata iniziale non si vede: la preferenza non si cambia di nascosto
         self.side_wanted = not self.side_wanted
-        self.side.setVisible(self.side_wanted and self.stack.currentWidget() is not self.setup_page)
+        self.side.setVisible(self.side_wanted)
         self.settings_store.setValue("side", "1" if self.side_wanted else "0")
         self.update_btn_info()
         QTimer.singleShot(0, self.balance_top)
@@ -2121,7 +2125,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ lavori in background
     # risultati che valgono solo per la cartella aperta quando sono stati chiesti
-    _SCAN_BOUND = ("analyze", "meta", "thumb", "strip", "ready", "proxy")
+    _SCAN_BOUND = ("analyze", "meta", "thumb", "strip", "ready", "proxy", "still")
 
     def submit(self, kind: str, key, fn, *args, queue=None) -> Future:
         fut = (queue or self.bg).submit(fn, *args)
@@ -2139,11 +2143,16 @@ class MainWindow(QMainWindow):
                     return
                 if kind == "preview":
                     res = StaleResult()   # libera la coda delle anteprime senza mostrarla
-            self.bridge.done.emit(kind, key, res)
+            # la cartella può cambiare anche mentre il risultato viaggia: si ricontrolla all'arrivo
+            self.bridge.done.emit(kind, key, ScanBound(gen, res) if kind in self._SCAN_BOUND else res)
         fut.add_done_callback(finished)
         return fut
 
     def on_done(self, kind: str, key, res):
+        if isinstance(res, ScanBound):
+            if res.gen != self._scan_gen:   # della cartella di prima (stesso id, altra foto)
+                return
+            res = res.res
         if kind == "edit":
             if isinstance(res, Exception):
                 log.error("modifica %s: %r", key, res, exc_info=res)
@@ -2205,6 +2214,8 @@ class MainWindow(QMainWindow):
             self.on_preview(key, res)
         elif kind == "proxy":
             self.on_proxy(key, res)
+        elif kind == "still":
+            self.stills.put(self.item_by_id(key), res)
         elif kind == "meta":
             self.pending.discard(("meta", key))
             self.meta[key] = res if not isinstance(res, Exception) else metadata.Meta()
@@ -2339,6 +2350,8 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_dir)))
 
     def start_scan(self):
+        if problem := exporter.export_dir_problem(self.root, self.export_dir):   # anche ripresa e riga di comando
+            return self.show_setup(problem)   # export non valido (es. uguale alla sorgente)
         self.root = self.root.resolve()  # come la scansione: link simbolici (es. ~/Dropbox)
         log.info("apro cartella %s -> export %s", self.root, self.export_dir)
         self.player.stop()
@@ -2366,7 +2379,7 @@ class MainWindow(QMainWindow):
         for k in list(self._ready_jobs):   # download chiesti per la cartella di prima
             self.drop_ready_job(k)
         for cache in (self.infos, self.camera_frames, self.meta, self.thumbs, self.next_thumbs,
-                      self.exact_cache, self.proxy_frames, self.pending, self.thumb_q):
+                      self.exact_cache, self.proxy_frames, self.pending, self.thumb_q, self.stills):
             cache.clear()
         self.export_q.submit(self.copy_paths.clear)   # copy_paths: solo dalla coda export
         # copie finite: l'esito è già nel salvataggio; un id uguale nella cartella nuova non è lo stesso
@@ -2524,7 +2537,7 @@ class MainWindow(QMainWindow):
             self.scene_bar.setVisible(True)
             if item.id not in self.infos and ("analyze", item.id) not in self.pending:
                 self.pending.add(("analyze", item.id))
-                self.submit("analyze", item.id, self.analyze, item)
+                self.submit("analyze", item.id, frames.analyze_item, item)
             self.live_view = False
             if item.kind == "live":
                 self.show_live_still()
@@ -2533,13 +2546,7 @@ class MainWindow(QMainWindow):
             self.update_scene_controls()
         else:
             self.scene_bar.setVisible(False)
-            reader = QImageReader(str(item.image or item.raw))
-            reader.setAutoTransform(True)
-            img = reader.read()
-            if img.isNull() and item.raw and not item.image:  # solo DNG: Qt non legge i RAW
-                pil = raw_preview(item.raw)
-                if pil is not None:
-                    img = pil_to_qimage(pil)
+            img = self.stills.take(item)   # già decodificata in anticipo, se c'è
             if img.isNull():
                 if item.raw and not item.image:
                     # DNG senza anteprima: si può comunque approvare (si copia l'originale)
@@ -2550,24 +2557,6 @@ class MainWindow(QMainWindow):
                 return
             self.set_still(img, item.id)
             self.stack.setCurrentWidget(self.image_view)
-
-    @staticmethod
-    def analyze(item: Item):
-        """Analisi sul video leggero (LRF) se l'originale non è sul disco: stessi fotogrammi."""
-        src = item.preview_video
-        info = frames.probe(src)
-        cam = info.frames // 2
-        if item.kind == "live":
-            cam = frames.camera_frame(src, info, item.screennail)
-        if src != item.video:
-            info.source = src
-            if cloud.is_local(item.video):
-                orig = frames.probe(item.video)   # una volta sola
-                dims = (orig.width, orig.height)
-            else:
-                dims = frames.spotlight_dims(item.video)
-            info.original_dims = dims
-        return info, cam
 
     # attesa prima di avviare i download dell'elemento corrente: scorrendo veloce non si
     # scaricano gli elementi solo sfiorati (l'anticipo dei successivi li prende comunque)
@@ -2630,6 +2619,9 @@ class MainWindow(QMainWindow):
         for it in window:
             if it.id not in self.ready and not all(cloud.is_local(p) for p in it.needed_files()):
                 self.request_ready(it, now=False)
+            elif it in window[:stills.AHEAD] and self.stills.want(it):   # le prossime foto, già pronte
+                self.stills.pending.add(it.id)
+                self.submit("still", it.id, stills.decode, it, queue=self.pre)
 
     def play(self, item: Item):
         self.ensure_player(item)  # sempre l'originale
@@ -3634,7 +3626,9 @@ class MainWindow(QMainWindow):
             return None
         if self.scene_mode or self.showing_still(item):
             return self.shown_frame
-        return info.frame_at(self.player.position() / 1000)
+        pos, f = self.player.position() / 1000, self.video_widget.videoSink().videoFrame()
+        shown = f.startTime() / 1e6 if f.isValid() and f.startTime() >= 0 else pos   # quello a schermo
+        return info.frame_at(shown if abs(shown - pos) < 0.15 else pos)   # la posizione resta un po' indietro
 
     def on_strip_picked(self, n: int):
         self.set_frame(n, manual=True)
@@ -3931,10 +3925,9 @@ class MainWindow(QMainWindow):
             return
         self.close_clean_drafts()   # aperti senza cambiare nulla: si chiudono e si va avanti
         item = self.current()
-        if item:
-            log.info("scelta %s%s su %s", choice, " +video" if with_video else "", item.id)
         if not item or self.stack.currentWidget() is self.setup_page:
             return
+        log.info("scelta %s%s su %s", choice, " +video" if with_video else "", item.id)
         # Se l'elemento non si apre (o si sta scaricando) si può comunque dire NO / Salta / X
         if self.stack.currentWidget() is self.msg_page and choice == "yes" \
                 and self._yes_without_preview != item.id:
@@ -4013,11 +4006,12 @@ class MainWindow(QMainWindow):
             self.player.stop()
             self.player.setSource(QUrl())  # rilascia il file prima di spostarlo
             self._player_item = None
-            try:
-                moved.extend(exporter.move_to_trash(item, self.root))  # tutto o niente
+            try:   # prima si registra dove vanno, poi si spostano (mai file in "cancellare" senza traccia)
+                moved.extend(exporter.trash_item(self.session, item, self.root))
+            except exporter.SessionSaveError:
+                raise
             except (OSError, ValueError) as e:
                 raise _MoveFailed(e) from e
-            self.session.set(item.id, "trash", moved=moved)
         else:
             self.session.set(item.id, choice)
 
@@ -4232,11 +4226,7 @@ def main():
     if len(sys.argv) > 1:  # cartella passata da riga di comando
         w.root = Path(sys.argv[1])
         w.export_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else w.root / "export"
-        problem = exporter.export_dir_problem(w.root, w.export_dir)
-        if problem:   # come dalla schermata iniziale: export non valido (es. uguale alla sorgente)
-            w.show_setup(problem)
-        else:
-            w.start_scan()
+        w.start_scan()
     rc = app.exec()
     stop_child_processes()   # anche se la finestra non è passata da closeEvent
     logging.shutdown()

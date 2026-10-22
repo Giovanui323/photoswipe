@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -86,6 +87,8 @@ def clean(e: dict) -> dict:
     out = {}
     for k, v in e.items():
         if k in DEFAULTS:
+            if v is None:   # salvataggio rovinato: il valore predefinito
+                continue
             if abs(float(v) - DEFAULTS[k]) > 1e-6:
                 out[k] = round(float(v), 5)
         elif k == "off":
@@ -636,7 +639,7 @@ def render(img: Image.Image, e: dict | None, crop: bool = True) -> Image.Image:
     e = e or {}
     if is_empty(e):
         return img
-    img = img.convert("RGB")
+    img = to_rgb(img)[0] if img.mode != "RGB" else img   # 16 bit: si scala, non si taglia a 255
     img = geometry_base(img, e)
     if crop:
         img = apply_crop(img, e)
@@ -1087,9 +1090,16 @@ def jpeg_meta(keep: dict, size: tuple[int, int]) -> dict:
             pass
         if len(kw["exif"]) > _JPEG_SEGMENT - 6:
             kw.pop("exif")   # PIL non lo scriverebbe: la foto si salva comunque
+    if kw.get("xmp"):   # la foto è già girata (EXIF a 1): anche l'XMP, se no la si gira due volte
+        kw["xmp"] = _XMP_ORIENT.sub(lambda m: m.group(1) + "1" + m.group(3), kw["xmp"]) \
+            if isinstance(kw["xmp"], str) else _XMP_ORIENT_B.sub(lambda m: m.group(1) + b"1" + m.group(3), kw["xmp"])
     if kw.get("xmp") and len(kw["xmp"]) + 29 > _JPEG_SEGMENT:
         kw.pop("xmp")
     return kw
+
+
+_XMP_ORIENT = re.compile(r"""(tiff:Orientation\s*=\s*["']|<tiff:Orientation>)(\d)(["']|</tiff:Orientation>)""")
+_XMP_ORIENT_B = re.compile(_XMP_ORIENT.pattern.encode())
 
 
 def save_edited(img: Image.Image, dst: Path, keep: dict) -> None:

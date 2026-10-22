@@ -474,3 +474,67 @@ def test_iphone_video_uses_the_local_time_of_the_place(tmp_path):
                     "-metadata", "com.apple.quicktime.creationdate=2025-06-04T10:00:30+0900",
                     "-movflags", "use_metadata_tags", str(v)], check=True)
     assert scanner.capture_time(v, True) == datetime(2025, 6, 4, 10, 0, 30)
+
+
+def test_trash_is_recorded_before_the_files_move(tmp_path, monkeypatch):
+    # l'app si chiude fra il salvataggio e lo spostamento: su disco c'è già la traccia
+    root, out = tmp_path / "src", tmp_path / "out"
+    jpeg(root / "IMG_0001.JPG")
+    [item] = scan(root)
+    s = exporter.Session(root, out, ids=[item.id])
+
+    def killed(*a, **k):
+        raise SystemExit("uscita a metà")
+    monkeypatch.setattr(exporter, "move_to_trash", killed)
+    with pytest.raises(SystemExit):
+        exporter.trash_item(s, item, root)
+    on_disk = exporter.Session.read(s.path)["decisions"][item.id]
+    assert on_disk["choice"] == "trash"
+    assert on_disk["moved"] == [[str(root.resolve() / "IMG_0001.JPG"),
+                                 str(root.resolve() / exporter.TRASH_DIR / "IMG_0001.JPG")]]
+    monkeypatch.undo()
+    # alla ripresa Annulla trova il file ancora al suo posto: niente da rimettere, niente perso
+    assert exporter.restore_from_trash(on_disk["moved"]) == []
+    assert (root / "IMG_0001.JPG").exists()
+
+
+def test_file_already_in_export_before_the_session_is_never_adopted(tmp_path):
+    # in export c'è già una copia identica messa dall'utente: Sì non la riusa, così Z non la toglie
+    root, out = tmp_path / "src", tmp_path / "out"
+    jpeg(root / "IMG_0001.JPG", SHOT)
+    [item] = scan(root)
+    mine = out / exporter.PHOTO_SUBDIR / f"{P}IMG_0001.JPG"
+    mine.parent.mkdir(parents=True)
+    mine.write_bytes(item.image.read_bytes())
+    s = exporter.Session(root, out, ids=[item.id])
+    s.created = datetime.fromtimestamp(mine.stat().st_mtime + 60).isoformat(timespec="seconds")   # dopo il file
+    s.set(item.id, "yes", [])
+    res = exporter.export_item(item, None, out, exporter.Settings())
+    assert res == [mine.with_name(f"{P}IMG_0001_2.JPG")]
+    exporter.remove_files([str(f) for f in res])   # Z
+    assert mine.exists()
+
+
+def test_move_new_never_overwrites_a_file_that_appeared_meanwhile(tmp_path, monkeypatch):
+    folder = tmp_path / "Foto"
+    folder.mkdir()
+    src = tmp_path / "a.part"
+    src.write_bytes(b"nuova")
+    real = exporter.unique_path
+
+    def racing(f, name):   # fra la scelta del nome e lo spostamento arriva un altro file
+        p = real(f, name)
+        if not p.exists() and name == "a.jpg" and not (f / "a.jpg").exists():
+            p.write_bytes(b"di un altro")
+        return p
+    monkeypatch.setattr(exporter, "unique_path", racing)
+    dst = exporter.move_new(src, folder, "a.jpg")
+    assert (folder / "a.jpg").read_bytes() == b"di un altro"
+    assert dst == folder / "a_2.jpg" and dst.read_bytes() == b"nuova" and not src.exists()
+
+
+def test_link_to_a_file_of_the_same_folder_is_shown_once(tmp_path):
+    root = tmp_path / "foto"
+    jpeg(root / "IMG_0005.JPG")
+    (root / "copia.JPG").symlink_to(root / "IMG_0005.JPG")
+    assert [i.id for i in scan(root)] == ["IMG_0005.JPG"]

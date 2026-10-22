@@ -15,7 +15,7 @@ by_depth() { awk -F/ '{print NF "\t" $0}' | sort -rn | cut -f2-; }
 n=0
 while IFS= read -r f; do
   [ "$f" = "$MAIN" ] && continue
-  file -b "$f" | grep -q 'Mach-O' || continue
+  [[ $(file -b "$f") == *Mach-O* ]] || continue   # senza pipe: con pipefail grep -q darebbe 141
   sign "$f"; n=$((n+1))
 done < <(find "$APP/Contents" -type f \( -name '*.so' -o -name '*.dylib' -o -perm +111 \) | by_depth)
 while IFS= read -r fw; do

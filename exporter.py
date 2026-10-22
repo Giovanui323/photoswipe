@@ -93,6 +93,27 @@ def unique_path(folder: Path, name: str) -> Path:
     return p
 
 
+def move_new(src: Path, folder: Path, name: str) -> Path:
+    """Sposta src in folder con un nome libero (name, name_2…) senza mai sovrascrivere: anche se
+    un file con quel nome compare nel frattempo (un'altra istanza, l'utente) si prende il nome
+    dopo. Dove i collegamenti non ci sono (exFAT delle schede) si sposta come prima."""
+    while True:
+        dst = unique_path(folder, name)
+        try:
+            os.link(src, dst)   # fallisce se dst c'è già
+        except FileExistsError:
+            continue
+        except OSError:
+            os.replace(src, dst)
+            return dst
+        try:
+            os.unlink(src)
+        except OSError:
+            os.unlink(dst)   # l'origine non si toglie (sola lettura): niente doppione
+            raise
+        return dst
+
+
 # ---- copie già fatte e mai registrate (app chiusa dopo la copia, esito "stale"): alla ripresa
 # si riusa la copia identica col nome esatto invece di farne una seconda (IMG_2.jpg).
 # Mai una copia che appartiene a un'altra scelta: né registrata in una sessione aperta, né fatta
@@ -176,9 +197,29 @@ def _adoptable(target: Path, content: Path) -> bool:
                 return False
         if keys & _recorded_files():
             return False
+        if not _made_during_session(target):
+            return False   # c'era già prima (messa dall'utente): Annulla la cancellerebbe
     except (OSError, RuntimeError):
         return False
     return _same_content(target, content)
+
+
+def _made_during_session(target: Path) -> bool:
+    """La copia è nata dopo l'inizio della sessione aperta (quindi l'ha fatta l'app, poi chiusa
+    prima di registrarla)? Un file che era già in export prima non si riusa: si fa una copia
+    nuova, così Annulla non toglie mai un file dell'utente. Senza sessioni aperte: sì, come prima."""
+    starts = []
+    for sess in list(_sessions):
+        try:
+            if Path(sess.export_dir).resolve() in target.resolve().parents:   # la sessione di questo export
+                starts.append(datetime.fromisoformat(sess.created))
+        except (TypeError, ValueError, OSError):
+            continue
+    if not starts:
+        return True
+    st = target.stat()
+    born = datetime.fromtimestamp(getattr(st, "st_birthtime", None) or st.st_ctime)
+    return born >= min(starts) - timedelta(seconds=2)
 
 
 def _adopted() -> set[Path]:
@@ -196,9 +237,7 @@ def _place(tmp: Path, folder: Path, name: str) -> Path:
         tmp.unlink()
         _adopted().add(target)
         return target
-    dst = unique_path(folder, name)
-    os.replace(tmp, dst)
-    return dst
+    return move_new(tmp, folder, name)
 
 
 def _staging(folder: Path, name: str) -> Path:
@@ -217,11 +256,9 @@ def _copy(src: Path, folder: Path, name: str | None = None) -> Path:
     if _adoptable(target, src):   # copia identica già fatta (app chiusa prima di registrarla)
         _adopted().add(target)
         return target
-    dst = unique_path(folder, name)
-    tmp = dst.with_name(dst.name + ".part")
+    tmp = unique_path(folder, name).with_name(name + ".part")
     shutil.copy2(src, tmp)  # copia identica, byte per byte
-    os.replace(tmp, dst)
-    return dst
+    return move_new(tmp, folder, name)
 
 
 def clean_partial(export_dir: Path) -> int:
@@ -332,16 +369,19 @@ def _export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
         stem = f"{video.stem}_f{frame + 1:04d}" if snapshot else video.stem
         name = dated(stem + (".png" if s.fmt == "png16" else ".jpg"), when)
 
+        make = "DJI" if video.name.upper().startswith("DJI_") else ""   # il modello non si sa
+
         def render(path: Path) -> None:
             if s.fmt == "png16" and not edit:
-                frames.save_png16(video, info, frame, path)
+                frames.save_png16(video, info, frame, path, frames.FrameMeta(when, offset, video.name, frame, make))
             elif s.fmt == "png16":   # modificata: PNG senza perdita (8 bit, dopo le regolazioni)
                 tmp = path.with_name(path.name + ".part.png")
-                edits.render(frames.frame_rgb(video, info, frame), edit).save(tmp, "PNG")
+                meta = frames.FrameMeta(when, offset, video.name, frame, make)
+                edits.render(frames.frame_rgb(video, info, frame), edit).save(
+                    tmp, "PNG", icc_profile=frames.SRGB_ICC, exif=frames.frame_exif(meta))
                 os.replace(tmp, path)
             else:
                 img = edits.render(frames.frame_rgb(video, info, frame), edit)
-                make = "DJI" if video.name.upper().startswith("DJI_") else ""   # il modello non si sa
                 frames.save_jpeg(img, path, frames.FrameMeta(when, offset, video.name, frame, make))
 
         if (photos / name).exists():
@@ -368,27 +408,43 @@ def _export_item(item: Item, frame: int | None, export_dir: Path, s: Settings,
     return out
 
 
-def move_to_trash(item: Item, root: Path) -> list[list[str]]:
+def plan_trash(item: Item, root: Path) -> list[list[str]]:
+    """Dove andrebbero gli originali dell'elemento in <root>/cancellare (stesse sottocartelle),
+    senza spostare niente: coppie [origine, destinazione]."""
+    root = root.resolve()  # la scansione usa percorsi risolti (link simbolici, es. ~/Dropbox)
+    trash = root / TRASH_DIR
+    planned: list[list[str]] = []
+    taken: set[Path] = set()
+    for src in [*item.files(), *item.companion_files()]:
+        if not src.exists():
+            src = cloud.stub_for(src)  # solo su iCloud: si sposta lo stub ".nome.icloud"
+            if not src.exists():
+                continue
+        dst = trash / src.relative_to(root)
+        stem, ext, i = dst.stem, dst.suffix, 2
+        while dst.exists() or dst in taken:   # come unique_path, senza creare cartelle
+            dst = dst.with_name(f"{stem}_{i}{ext}")
+            i += 1
+        taken.add(dst)
+        planned.append([str(src), str(dst)])
+    return planned
+
+
+def move_to_trash(item: Item, root: Path, planned: list[list[str]] | None = None) -> list[list[str]]:
     """Sposta gli originali dell'elemento in <root>/cancellare, con le stesse sottocartelle.
 
     Non cancella nulla. Ritorna le coppie [origine, destinazione] per poterli rimettere a posto.
     Tutto o niente: se un file non si sposta, quelli già spostati tornano al loro posto.
+    planned: le coppie già registrate nel salvataggio (trash_item), da seguire così come sono.
     """
-    root = root.resolve()  # la scansione usa percorsi risolti (link simbolici, es. ~/Dropbox)
-    trash = root / TRASH_DIR
     moved: list[list[str]] = []
     try:
-        for src in [*item.files(), *item.companion_files()]:
-            if not src.exists():
-                src = cloud.stub_for(src)  # solo su iCloud: si sposta lo stub ".nome.icloud"
-                if not src.exists():
-                    continue
-            dst = trash / src.relative_to(root)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if dst.exists():
-                dst = unique_path(dst.parent, dst.name)
-            shutil.move(str(src), str(dst))  # stesso disco: è solo uno spostamento, istantaneo
-            moved.append([str(src), str(dst)])
+        for src, dst in (planned if planned is not None else plan_trash(item, root)):
+            Path(dst).parent.mkdir(parents=True, exist_ok=True)
+            if Path(dst).exists():
+                raise FileExistsError(dst)   # mai sovrascrivere in "cancellare"
+            shutil.move(src, dst)  # stesso disco: è solo uno spostamento, istantaneo
+            moved.append([src, dst])
     except (OSError, ValueError):
         restore_from_trash(moved)
         raise
@@ -396,39 +452,39 @@ def move_to_trash(item: Item, root: Path) -> list[list[str]]:
 
 
 def trash_item(session: "Session", item: Item, root: Path, base: dict | None = None) -> list[list[str]]:
-    """X: sposta gli originali in "cancellare" E registra la scelta, insieme. Se il salvataggio
-    non riesce (disco pieno, permessi) gli originali tornano al loro posto e la scelta in memoria
-    torna quella di prima: mai file in "cancellare" senza traccia su disco. L'errore sale
-    (SessionSaveError). base: la scelta da registrare (es. Annulla che la rimette), con "moved"
-    aggiornato; senza base si registra una X nuova."""
+    """X: registra la scelta E sposta gli originali in "cancellare". Prima si salva dove andranno,
+    poi si spostano: anche se l'app si chiude a metà, mai file in "cancellare" senza traccia su
+    disco (alla ripresa Annulla li rimette a posto; quelli non ancora spostati si saltano).
+    Se il salvataggio non riesce (disco pieno, permessi) non si sposta niente e la scelta in
+    memoria torna quella di prima: l'errore sale (SessionSaveError). Se lo spostamento non
+    riesce, i file tornano al loro posto e sale l'errore dello spostamento.
+    base: la scelta da registrare (es. Annulla che la rimette), con "moved" aggiornato; senza
+    base si registra una X nuova."""
     prev = session.decisions.get(item.id)
-    moved = move_to_trash(item, root)   # tutto o niente
-    try:
-        if base is not None:
-            session.decisions[item.id] = {**base, "moved": moved}
-            session.save()
-        else:
-            session.set(item.id, "trash", moved=moved)
-    except OSError as e:
+
+    def back() -> None:   # la scelta di prima, in memoria
         if prev is None:
             session.decisions.pop(item.id, None)
         else:
             session.decisions[item.id] = prev
-        new_names: dict[Path, Path] = {}
+    planned = plan_trash(item, root)
+    try:
+        if base is not None:
+            session.decisions[item.id] = {**base, "moved": planned}
+            session.save()
+        else:
+            session.set(item.id, "trash", moved=planned)
+    except OSError:
+        back()
+        raise
+    try:
+        moved = move_to_trash(item, root, planned)   # tutto o niente
+    except (OSError, ValueError):
+        back()
         try:
-            restore_from_trash(moved, new_names)
-        except OSError as e2:
-            # né salvato né rimesso a posto: la traccia resta almeno in memoria (Annulla funziona)
-            session.decisions[item.id] = ({**base, "moved": moved} if base is not None else
-                                          {"choice": "trash", "files": [], "frame": None,
-                                           "with_video": False, "moved": moved})
-            raise SessionSaveError(tr(
-                '{e} — e non riesco a rimettere a posto gli originali ({e2}): sono in “{TRASH_DIR}”:\n{v0}',
-                e=e, e2=e2, TRASH_DIR=TRASH_DIR, v0="\n".join(d for _, d in moved))) from e
-        for attr in ("image", "raw", "video"):   # posto originale occupato: l'elemento è il file rinominato
-            p = getattr(item, attr)
-            if p is not None and p in new_names:
-                setattr(item, attr, new_names[p])
+            session.save()
+        except OSError as e2:   # resta "trash" su disco: Annulla trova i file al loro posto e li salta
+            log.error("scelta di prima di %s non salvata dopo uno spostamento fallito: %r", item.id, e2)
         raise
     return moved
 
@@ -480,8 +536,7 @@ def relocate_exports(files: list[str], old_root: Path, new_root: Path) -> list[l
             continue  # non è sotto la cartella di partenza: si lascia dov'è
         if not src.exists():
             continue
-        dst = unique_path((new_root / rel).parent, src.name)
-        os.replace(src, dst)
+        dst = move_new(src, (new_root / rel).parent, src.name)
         release_claims([src])
         _claim([dst])
         out.append([str(src), str(dst)])
@@ -509,8 +564,7 @@ def refile_favorite(files: list[str], export_dir: Path, favorite: bool) -> list[
             continue   # già al posto giusto
         if favorite and in_fav:
             continue   # già fra le preferite (posizione vecchia): resta lì
-        dst = unique_path(target, src.name)
-        os.replace(src, dst)
+        dst = move_new(src, target, src.name)
         release_claims([src])
         _claim([dst])
         out.append([str(src), str(dst)])
@@ -553,8 +607,7 @@ def rename_by_date(entries: list[tuple[str, datetime, list[str]]], export_dir: P
             if name == src.name and src.parent == folder:
                 continue
             try:
-                dst = unique_path(folder, name)
-                os.replace(src, dst)
+                dst = move_new(src, folder, name)
             except OSError as e:   # si continua: i file già spostati vanno comunque registrati
                 if errors is not None:
                     errors.append(f"{src.name}: {e}")

@@ -253,7 +253,7 @@ def test_analyze_probes_the_original_once(monkeypatch, sd):
     monkeypatch.setattr(frames, "probe", lambda p: calls.append(Path(p)) or real(p))
     lrf = item.video.with_suffix(".LRF")
     monkeypatch.setattr(Item, "preview_video", property(lambda self: lrf))
-    info, _ = A.MainWindow.analyze(item)
+    info, _ = frames.analyze_item(item)
     assert calls.count(item.video) == 1 and calls.count(lrf) == 1
     assert info.original_dims == (640, 360)
 

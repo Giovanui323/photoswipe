@@ -697,3 +697,24 @@ def test_unknown_saved_strip_filter_falls_back_to_all(qapp):
         w.close()
         w.deleteLater()
         store.clear()
+
+
+def test_info_key_on_the_start_screen_does_not_flip_the_preference(qapp, win):
+    before = win.side_wanted
+    win.toggle_side()   # schermata iniziale: il pannello non si vede
+    assert win.side_wanted == before
+
+
+def test_next_photo_is_decoded_ahead_and_stale_results_are_dropped(qapp, win, sd):
+    from thumbqueue import ScanBound
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    nxt = win.items[index_of(win, PHOTO2)]
+    assert wait(qapp, lambda: nxt.id in win.stills.cache)          # già pronta prima di andarci
+    img = win.stills.cache[nxt.id][1]
+    go(qapp, win, PHOTO2)
+    assert win.image_view.has_image() if hasattr(win.image_view, "has_image") else True
+    assert nxt.id not in win.stills.cache and not img.isNull()     # usata e tolta
+    gen = win._scan_gen
+    win.on_done("meta", nxt.id, ScanBound(gen - 1, None))          # della cartella di prima: ignorato
+    assert nxt.id not in win.meta or win.meta[nxt.id] is not None

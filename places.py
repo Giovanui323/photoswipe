@@ -25,6 +25,7 @@ from i18n import LANG, tr
 DATA = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "data" / "places.tsv.gz"
 USER_AGENT = "PhotoSwipe (+https://github.com/Giovanui323/photoswipe)"
 NEAR_KM = 4   # più lontano dalla località più vicina: "vicino a …"
+FAR_KM = 50   # ancora più lontano (in mare, nel deserto): nessun nome, sarebbe fuorviante
 ONLINE = True   # l'utente può spegnerlo nelle impostazioni
 
 # paesi più comuni in italiano; gli altri restano col nome inglese di GeoNames
@@ -93,6 +94,8 @@ def offline(lat: float, lon: float) -> str:
     a = np.sin((idx.lat - la) / 2) ** 2 + math.cos(la) * np.cos(idx.lat) * np.sin((idx.lon - lo) / 2) ** 2
     i = int(np.argmin(a))
     km = 2 * 6371 * math.asin(math.sqrt(min(1.0, float(a[i]))))
+    if km > FAR_KM:
+        return ""
     region = idx.regions[i]
     name, reg = idx.names[i], idx.region_names.get(region, "")
     if idx.quarter[i]:   # quartiere: anche la città, es. "Trevi, Roma"

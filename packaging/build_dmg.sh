@@ -6,6 +6,11 @@ cd "$(dirname "$0")/.."
 SETUP_HINT="  packaging/setup_build_venv.sh   (versioni esatte in packaging/requirements-build.txt)"
 # il venv di build deve avere tutto quello che usa l'app: senza rawpy i DNG non hanno anteprima,
 # senza pi_heif niente HEIC (l'errore sarebbe silenzioso nell'app impacchettata)
+# Python 3.13, come nelle note (LEGGIMI, THIRD_PARTY_NOTICES) e nei binari standalone per macOS 12
+build/venv/bin/python -c "import sys; sys.exit(sys.version_info[:2] != (3, 13))" || {
+  echo "ERRORE: build/venv non usa Python 3.13. Rifallo con:"; echo "$SETUP_HINT"
+  exit 1
+}
 build/venv/bin/python -c "import rawpy, pi_heif, numpy, PIL, imageio_ffmpeg, PySide6.QtMultimedia" || {
   echo "ERRORE: nel venv di build manca un pacchetto. Prepara il venv con:"; echo "$SETUP_HINT"
   exit 1
@@ -25,6 +30,8 @@ VENV_MINOS=$(packaging/macos_minos.sh "$SP" -v)
   echo "$SETUP_HINT"
   exit 1
 }
+# la DMG contiene solo codice salvato in git: niente modifiche non committate dentro
+git diff --quiet HEAD -- || { echo "ERRORE: ci sono modifiche non committate (git status): committa prima della DMG"; exit 1; }
 # Versione: sale di 1 a ogni build, a decine (1.1.5 -> 1.1.6 ... 1.1.9 -> 1.2.0), scritta in app.py
 OLD=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
 # contatore a decine: 1.0.9 -> 1.1.0, 1.9.9 -> 2.0.0
@@ -42,12 +49,21 @@ build/venv/bin/pyinstaller --noconfirm --clean --windowed --name PhotoSwipe \
 APP=build/dist/PhotoSwipe.app
 plutil -replace CFBundleShortVersionString -string "$VER" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$VER" "$APP/Contents/Info.plist"
+plutil -replace NSHumanReadableCopyright -string "© 2026 Giovanui323 · MIT" "$APP/Contents/Info.plist"
+plutil -replace LSApplicationCategoryType -string "public.app-category.photography" "$APP/Contents/Info.plist"
 # macOS minimo = il più alto richiesto dai binari inclusi (.so, .dylib, framework Qt, ffmpeg), almeno 12
 MINOS=$(packaging/macos_minos.sh "$APP" -v)
 echo "macOS minimo: $MINOS"
 if [ "$MINOS" != "12.0" ]; then   # LEGGIMI e README promettono macOS 12: meglio fermarsi che mentire
   echo "ERRORE: i binari elencati sopra richiedono macOS $MINOS. Riallinea il venv: $SETUP_HINT"; false
 fi
+# ogni binario deve avere arm64: un .so solo x86_64 non partirebbe su un Mac con chip Apple
+NOARM=$(find "$APP" -type f \( -name '*.so' -o -name '*.dylib' -o -perm +111 \) -print0 |
+  while IFS= read -r -d '' f; do
+    [[ $(file -b "$f") == *Mach-O* ]] || continue
+    [[ " $(lipo -archs "$f" 2>/dev/null) " == *" arm64 "* ]] || echo "  $f"
+  done)
+if [ -n "$NOARM" ]; then echo "ERRORE: binari senza arm64:"; echo "$NOARM"; false; fi
 plutil -replace LSMinimumSystemVersion -string "$MINOS" "$APP/Contents/Info.plist"
 # firma ad-hoc (nessun certificato Apple, niente notarizzazione): binari annidati, framework, poi l'app;
 # va fatta dopo ogni modifica a Info.plist. Lo script verifica con codesign --verify --deep --strict
@@ -62,3 +78,4 @@ DMG="dist/PhotoSwipe-$VER-arm64.dmg"
 rm -f "$DMG"
 hdiutil create -volname "PhotoSwipe $VER" -srcfolder build/dmg -ov -format UDZO "$DMG"
 echo "DMG: $DMG"
+echo "Poi: git commit -am \"$VER: build DMG\" && git tag v$VER"

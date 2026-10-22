@@ -8,7 +8,14 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable
+from typing import Any, Callable, NamedTuple
+
+
+class ScanBound(NamedTuple):
+    """Risultato legato alla cartella aperta quando è stato chiesto (gen): se nel frattempo se
+    n'è aperta un'altra, all'arrivo si butta (stesso id può essere un'altra foto)."""
+    gen: int
+    res: Any
 
 
 class ThumbQueue:

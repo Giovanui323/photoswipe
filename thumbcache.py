@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -19,7 +20,11 @@ MAX_FILES = 20000   # ~15 KB l'una: la cache resta sotto i 300 MB
 
 
 def cache_dir() -> Path:
-    return Path(os.environ.get("PHOTOSWIPE_THUMB_CACHE") or Path.home() / "Library/Caches/PhotoSwipe/thumbs")
+    if os.environ.get("PHOTOSWIPE_THUMB_CACHE"):
+        return Path(os.environ["PHOTOSWIPE_THUMB_CACHE"])
+    base = (Path.home() / "Library" / "Caches" / "PhotoSwipe" if sys.platform == "darwin"
+            else Path.home() / ".photoswipe")   # come la cache dei luoghi (places.py)
+    return base / "thumbs"
 
 
 def _cache_path(item: Item) -> Path | None:
@@ -79,8 +84,8 @@ def make_thumb(item: Item) -> QImage:
     if item.is_clip:
         if item.screennail and cloud.is_local(item.screennail):
             img = QImageReader(str(item.screennail)).read()
-            if not img.isNull():
-                return img
+            if not img.isNull():   # l'anteprima .SCR è grande: alla misura delle altre miniature
+                return img.scaledToHeight(208, Qt.SmoothTransformation) if img.height() > 208 else img
         src = item.proxy if item.proxy and cloud.is_local(item.proxy) else item.video
         ims = frames.strip_thumbs(src, frames.probe(src), count=1, height=208)
         return pil_to_qimage(ims[0]) if ims else QImage()

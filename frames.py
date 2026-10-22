@@ -13,15 +13,19 @@ import os
 import re
 import shutil
 import statistics
+import struct
 import subprocess
 import sys
 import threading
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageCms, ImageFilter, ImageOps, ImageStat
+
+import cloud
 from i18n import tr
 
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # niente finestre console su Windows
@@ -101,6 +105,7 @@ class VideoInfo:
     # istanti veri dei fotogrammi (s, dall'inizio del file come li conta ffmpeg -ss): ci sono anche
     # coi video a frequenza variabile, l'audio più lungo del video o il video che parte in ritardo
     times: tuple[float, ...] | None = None
+    matrix: str = ""               # matrice colore del video (bt709, bt470bg…); "" = non scritta
 
     @property
     def megapixels(self) -> float:
@@ -190,6 +195,7 @@ def probe(path: Path) -> VideoInfo:
     transfer = parts[-1] if parts else "bt709"
     if "/" in transfer:  # forma "bt709/bt709/arib-std-b67"
         transfer = transfer.split("/")[-1]
+    matrix = parts[0].split("/")[0] if parts else ""
     bits = 10 if "10" in pix_fmt else 12 if "12" in pix_fmt else 8
     rot = re.search(r"rotation of (-?[\d.]+) degrees", err)
     try:
@@ -222,7 +228,7 @@ def probe(path: Path) -> VideoInfo:
     count = len(times) if times else max(1, int(duration * fps + Fraction(1, 2)))
     return VideoInfo(w, h, fps, duration, count,
                      transfer, bits, created, enc.group(1).strip() if enc else "",
-                     created_local=local, times=times)
+                     created_local=local, times=times, matrix=matrix)
 
 
 def frame_times(path: Path) -> tuple[float, ...] | None:
@@ -269,10 +275,18 @@ def spotlight_dims(path: Path) -> tuple[int, int] | None:
 _SCALE_EXACT = "scale=flags=accurate_rnd+full_chroma_int+full_chroma_inp"
 
 
+def _scale_exact(info: VideoInfo) -> str:
+    """Conversione esatta in RGB. Un video HD senza la matrice colore scritta è quasi sempre
+    BT.709 (ffmpeg userebbe BT.601, dei video SD: colori un po' spostati)."""
+    if info.matrix in ("", "unknown") and min(info.width, info.height) >= 720:
+        return _SCALE_EXACT + ":in_color_matrix=bt709"
+    return _SCALE_EXACT
+
+
 def frame_rgb(video: Path, info: VideoInfo, n: int) -> Image.Image:
     """Fotogramma n a risoluzione piena, RGB 8 bit."""
     res = _run(["-ss", f"{info.time_of(n):.6f}", "-i", str(video), "-map", "0:v:0",
-                "-frames:v", "1", "-vf", f"{_SCALE_EXACT},format=rgb24",
+                "-frames:v", "1", "-vf", f"{_scale_exact(info)},format=rgb24",
                 "-f", "rawvideo", "-"])
     need = info.width * info.height * 3
     if len(res.stdout) < need:
@@ -286,7 +300,8 @@ def frame_preview(video: Path, info: VideoInfo, n: int, max_side: int = 1600) ->
     w, h = (max(2, int(info.width * scale) // 2 * 2), max(2, int(info.height * scale) // 2 * 2)) \
         if scale < 1 else (info.width, info.height)
     res = _run(["-ss", f"{info.time_of(n):.6f}", "-i", str(video), "-map", "0:v:0",
-                "-frames:v", "1", "-vf", f"scale={w}:{h}:flags=bicubic,format=rgb24",
+                "-frames:v", "1", "-vf", f"scale={w}:{h}:flags=bicubic"
+                + _scale_exact(info).removeprefix(_SCALE_EXACT) + ",format=rgb24",
                 "-f", "rawvideo", "-"])
     if len(res.stdout) < w * h * 3:
         raise RuntimeError(tr('anteprima non letta'))
@@ -468,16 +483,53 @@ def save_jpeg(img: Image.Image, out: Path, meta: FrameMeta) -> None:
     os.replace(tmp, out)
 
 
-def save_png16(video: Path, info: VideoInfo, n: int, out: Path) -> None:
-    """PNG a 16 bit: conserva i 10 bit del video (utile per cieli sfumati)."""
+def save_png16(video: Path, info: VideoInfo, n: int, out: Path, meta: FrameMeta | None = None) -> None:
+    """PNG a 16 bit: conserva i 10 bit del video (utile per cieli sfumati). Con meta: profilo
+    sRGB e EXIF (data, fuso, fotogramma) come nel JPEG."""
     tmp = out.with_name(out.name + ".part.png")
     res = _run(["-y", "-ss", f"{info.time_of(n):.6f}", "-i", str(video), "-map", "0:v:0",
-                "-frames:v", "1", "-update", "1", "-vf", f"{_SCALE_EXACT},format=rgb48be",
+                "-frames:v", "1", "-update", "1", "-vf", f"{_scale_exact(info)},format=rgb48be",
                 str(tmp)])
     if res.returncode != 0 or not tmp.exists():
         tmp.unlink(missing_ok=True)   # interrotto (uscita) o fallito: niente file a metà
         raise RuntimeError(res.stderr.decode(errors="replace")[-400:])
+    if meta is not None:
+        _png_add_meta(tmp, _SRGB, _exif(meta))
     os.replace(tmp, out)
+
+
+def _png_add_meta(path: Path, icc: bytes, exif: bytes) -> None:
+    """Aggiunge iCCP (profilo) ed eXIf a un PNG già scritto, subito dopo IHDR. Pillow non sa
+    scrivere PNG RGB a 16 bit: si aggiungono i pezzi a mano, senza toccare i pixel."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    data = path.read_bytes()
+    end = 8 + 8 + struct.unpack(">I", data[8:12])[0] + 4   # firma + IHDR
+    exif = exif[6:] if exif.startswith(b"Exif\x00\x00") else exif
+    extra = chunk(b"iCCP", b"sRGB\x00\x00" + zlib.compress(icc)) + chunk(b"eXIf", exif)
+    path.write_bytes(data[:end] + extra + data[end:])
+
+
+def analyze_item(item):
+    """Analisi sul video leggero (LRF) se l'originale non è sul disco: stessi fotogrammi."""
+    src = item.preview_video
+    info = probe(src)
+    cam = info.frames // 2
+    if item.kind == "live":
+        cam = camera_frame(src, info, item.screennail)
+    if src != item.video:
+        info.source = src
+        if cloud.is_local(item.video):
+            orig = probe(item.video)   # una volta sola
+            dims = (orig.width, orig.height)
+        else:
+            dims = spotlight_dims(item.video)
+        info.original_dims = dims
+    return info, cam
+
+
+SRGB_ICC = _SRGB
+frame_exif = _exif   # per l'export del PNG modificato
 
 
 def set_file_time(path: Path, when: datetime) -> None:

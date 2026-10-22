@@ -399,6 +399,8 @@ def _size(path: Path) -> int:
 
 def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
     root = root.resolve()
+    if not root.is_dir():   # disco scollegato, cartella spostata: va detto, non "nessuna foto"
+        raise FileNotFoundError(tr('Cartella non trovata: {v0}', v0=root))
     if exclude is None:
         exclude = []
     excluded = {p.resolve() for p in (exclude if isinstance(exclude, list) else [exclude])}
@@ -438,8 +440,11 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
                 if not name or name.startswith("."):
                     continue  # file nascosti (anche solo su iCloud) e "._" creati da macOS
             p = d / name
-            if p.is_symlink() and not p.exists() and not cloud.stub_for(p).exists():
-                continue  # link rotto: non c'è niente da mostrare
+            if p.is_symlink():
+                if not p.exists() and not cloud.stub_for(p).exists():
+                    continue  # link rotto: non c'è niente da mostrare
+                if root in Path(os.path.realpath(p)).parents:
+                    continue  # link a un file della stessa cartella: si vede già com'è
             ext = p.suffix.lower()
             slot = ("image" if ext in IMAGE_EXT else "raw" if ext in RAW_EXT
                     else "video" if ext in VIDEO_EXT else None)

@@ -414,3 +414,25 @@ def test_video_starting_after_the_audio_is_exact(tmp_path):
     info = frames.probe(v)
     seen = [_level(frames.frame_rgb(v, info, n)) for n in range(info.frames)]
     assert info.frames == 30 and len(set(seen)) == 30
+
+
+def test_png16_keeps_16_bits_and_gets_srgb_and_date(tmp_path):
+    from datetime import datetime
+    from PIL import Image
+    v = tmp_path / "h.mp4"
+    _ff("-f", "lavfi", "-i", "gradients=size=320x240:duration=0.5:rate=30", "-c:v", "libx264",
+        "-pix_fmt", "yuv420p", str(v))
+    info = frames.probe(v)
+    out = tmp_path / "f.png"
+    frames.save_png16(v, info, 3, out, frames.FrameMeta(datetime(2025, 6, 1, 10), None, v.name, 3))
+    assert out.read_bytes()[24] == 16                 # profondità nell'IHDR: 16 bit
+    im = Image.open(out)
+    assert im.info.get("icc_profile") and im.getexif().get(306) == "2025:06:01 10:00:00"
+
+
+def test_untagged_hd_video_is_converted_as_bt709():
+    hd = frames.VideoInfo(1920, 1080, frames.Fraction(30), 1.0, 30)
+    sd = frames.VideoInfo(640, 480, frames.Fraction(30), 1.0, 30)
+    tagged = frames.VideoInfo(1920, 1080, frames.Fraction(30), 1.0, 30, matrix="bt470bg")
+    assert "in_color_matrix=bt709" in frames._scale_exact(hd)
+    assert "in_color_matrix" not in frames._scale_exact(sd) + frames._scale_exact(tagged)
