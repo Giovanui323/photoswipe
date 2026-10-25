@@ -208,6 +208,7 @@ QLabel#toast { background: rgba(44, 44, 46, 235); color: $text_danger; font-size
 
 /* barra della striscia (Live e video): pillola che galleggia sotto la foto */
 QFrame#scenebar { background: $bg_control; border: 1px solid $line_soft; border-radius: 18px; }
+QFrame#snap_bar { background: rgba(28, 28, 30, 215); border: 1px solid $line_soft; border-radius: 10px; }
 QFrame#scenebar QLabel { color: $text_2; font-size: 12px; }
 QFrame#scenebar QPushButton { background: $bg_hover; border: none; border-radius: 13px; padding: 5px 12px; }
 QFrame#scenebar QPushButton:hover { background: $bg_pressed; }
@@ -260,6 +261,7 @@ QPushButton#no[chosen="true"]    { background: rgba(255, 68, 88, 80); border-wid
 QPushButton#yes[chosen="true"]   { background: rgba(42, 212, 142, 80); border-width: 4px; }
 QPushButton#skip[chosen="true"]  { background: rgba(60, 164, 255, 80); border-width: 4px; }
 QPushButton#trash[chosen="true"] { background: rgba(180, 108, 255, 80); border-width: 4px; }
+QPushButton#yesvideo[chosen="true"] { background: rgba(79, 209, 197, 80); border-width: 4px; }
 QPushButton[round="true"]:disabled { background: $bg_sunken; border-color: $line_soft; color: $text_off; }
 /* con l'ID le regole sopra vincono su [round]:disabled: serve ripeterlo per ogni pulsante */
 QPushButton#no:disabled, QPushButton#yes:disabled, QPushButton#skip:disabled,

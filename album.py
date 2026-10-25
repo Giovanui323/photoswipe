@@ -319,6 +319,7 @@ class _Spread(QWidget):
         self._anim.finished.connect(self._flip_done)
         self._flip: tuple[QPixmap, QPixmap, int] | None = None   # vecchia, nuova, verso (+1 avanti)
         self._then = None   # cosa fare a pagina girata (chiusura: chiudere la finestra)
+        self._hover_key: str | None = None
 
     # ---- geometria
     def book(self) -> QRectF:
@@ -549,11 +550,20 @@ class _Spread(QWidget):
     def mouseMoveEvent(self, e):
         i = self.at(e.position())
         self.setCursor(Qt.PointingHandCursor if i is not None else Qt.ArrowCursor)
-        if i is None:
+        key = self.dlg.photos[i].key if i is not None and i < len(self.dlg.photos) else None
+        if key != self._hover_key:
+            self._hover_key = key
+            if key is None:
+                QToolTip.hideText()
+            else:
+                QToolTip.showText(e.globalPosition().toPoint(),
+                                  tr('{v0}\nClic: chiudi l\'album e torna a questa foto', v0=self.dlg.photos[i].main.name), self)
+
+    def leaveEvent(self, e):
+        if self._hover_key is not None:
+            self._hover_key = None
             QToolTip.hideText()
-        else:
-            QToolTip.showText(e.globalPosition().toPoint(),
-                              tr('{v0}\nClic: chiudi l\'album e torna a questa foto', v0=self.dlg.photos[i].main.name), self)
+        super().leaveEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
@@ -639,10 +649,12 @@ class AlbumDialog(QDialog):
         self.resize(max(720, int(avail.width() * 0.9)), max(520, int(avail.height() * 0.9)))
         self.spread_changed()
         self._closing = False
+        self._shown_once = False
         self.setWindowOpacity(0.0)
         self._fade = QPropertyAnimation(self, b"windowOpacity", self, duration=180)
-        def prepare():   # in sottofondo: file da mostrare, proporzioni, GPS, pagine e luoghi
-            srcs = [source(session, pg) for pg in photos]
+        sources = {pg.key: source(session, pg) for pg in photos}
+        def prepare(sources=sources):   # in sottofondo: file da mostrare, proporzioni, GPS, pagine e luoghi
+            srcs = [sources.get(pg.key) for pg in photos]
             gps = [gps_of(pg) for pg in photos]
             pages = plan(photos, gps)
             return srcs, [aspect(s) for s in srcs], pages, [place_name(gps, idx) for idx in pages]
@@ -651,6 +663,9 @@ class AlbumDialog(QDialog):
 
     def showEvent(self, e):
         super().showEvent(e)
+        if self._shown_once:
+            return
+        self._shown_once = True
         self._fade.stop()
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)

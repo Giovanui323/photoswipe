@@ -56,7 +56,7 @@ class SettingsPopup(QFrame):
 
         for w in (self.btn_open, self.btn_export, self.btn_show_export, self.view_filter, self.fmt, self.tz,
                   self.btn_help):
-            w.setFocusPolicy(Qt.NoFocus)
+            w.setFocusPolicy(Qt.TabFocus)
         for b in (self.btn_open, self.btn_export, self.btn_show_export):
             b.setObjectName("small")
         for b in (self.btn_open, self.btn_export, self.btn_show_export, self.btn_help):
@@ -132,3 +132,42 @@ class SettingsPopup(QFrame):
             else:
                 g.addWidget(w, r, 1)
         v.addLayout(g)
+
+
+def reveal_log() -> None:
+    import subprocess
+    import sys
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+    import applog
+    path = applog.log_path()
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)])
+    else:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+
+def show_help_dialog(parent, app_title: str, help_text: str, reveal_fn=reveal_log) -> None:
+    from PySide6.QtWidgets import QDialog, QTextBrowser
+    from theme import COLORS as C, help_html
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(tr('Come funziona') + f" — {app_title}")
+    v = QVBoxLayout(dlg)
+    text = QTextBrowser()
+    text.setHtml(help_html(help_text))
+    text.setStyleSheet(f"QTextBrowser {{ background: {C['bg_panel']}; border: 1px solid {C['line_divider']};"
+                       " border-radius: 10px; padding: 10px; font-size: 13px; }")
+    v.addWidget(text, 1)
+    row = QHBoxLayout()
+    logs = QPushButton(tr('Mostra il file di log'))
+    logs.clicked.connect(reveal_fn)
+    close = QPushButton(tr('Chiudi'))
+    close.setObjectName("primary")
+    close.clicked.connect(dlg.accept)
+    row.addWidget(logs)
+    row.addStretch(1)
+    row.addWidget(close)
+    v.addLayout(row)
+    avail = parent.screen().availableGeometry()
+    dlg.resize(min(680, avail.width() - 60), min(720, int(avail.height() * 0.85)))
+    dlg.exec()

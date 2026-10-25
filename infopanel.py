@@ -104,3 +104,122 @@ def open_links(files: list[str]) -> list[tuple[str, str]]:
         if f:
             links.append((label, f))
     return links
+
+
+def snap_html(rows: list[tuple[str, str]]) -> str:
+    """Tabella dei metadati e stampabilità per una foto estratta da un video."""
+    plain = lambda x: str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    out = []
+    for k, v in rows:
+        hot = k == tr('Stampabilità')
+        vs = f"<span style='color:{C['text_ok']}; font-weight:700'>{plain(v)}</span>" if hot else plain(v)
+        out.append(f"<tr><td width='78' style='color:{C['text_2']}; padding:3px 10px 3px 0; vertical-align:top'>"
+                   f"{plain(k)}</td><td style='color:{C['text']}; padding:3px 0'>{vs}</td></tr>")
+    return "<table cellspacing='0'>" + "".join(out) + "</table>"
+
+
+def file_status(d: dict | None, choice_color: dict[str, str]) -> tuple[str, str, list[tuple[str, str]]]:
+    """Cosa è successo ai file dell'elemento: (colore, testo, link 'Apri …')."""
+    if not d:
+        return C["text_2"], tr('da decidere · niente copiato né spostato'), []
+    choice = d["choice"]
+    if choice == "no":
+        return choice_color["no"], tr("✗ scartata · niente copiato, l'originale resta al suo posto"), []
+    if choice == "skip":
+        return choice_color["skip"], tr('↪ saltata · niente copiato né spostato'), []
+    if choice == "trash":
+        moved = [dst for _, dst in d.get("moved", [])]
+        return (choice_color["trash"], tr('🗑 originale SPOSTATO in “cancellare” (Z lo rimette a posto)'),
+                open_links(moved))
+    if choice == "yes" and d.get("noexport"):
+        return choice_color["yes"], tr('✓ approvata · video non copiato (tenute solo le foto prese)'), []
+    if d.get("export_failed"):
+        return (C["text_warn"],
+                tr('⚠ copia non riuscita: {v0}\n(si riprova alla prossima apertura)', v0=d['export_failed']), [])
+    files = d.get("files") or []
+    if not files:
+        return C["text_warn"], tr('⏳ copia in export in corso…'), []
+    return (choice_color["yes"], tr("✓ approvata · COPIATA in export (l'originale resta al suo posto)"),
+            open_links(files))
+
+
+def save_info_html(ses, short_folder, short_path, export_dir) -> tuple[str, str]:
+    """Testo HTML e tooltip per lo stato del salvataggio automatico."""
+    from datetime import date
+    saved = ses.path.exists()
+    when = ses.updated[11:19] if saved and len(ses.updated) >= 19 else ""
+    day = ses.updated[:10] if saved else ""
+    if saved and day != date.today().isoformat():
+        when = f"{day[8:10]}/{day[5:7]} {when}"
+    state = (tr("<span style='color:{c}'>✓ Salvato alle {when}</span>", c=C["text_ok"], when=when) if saved else
+             tr("<span style='color:{c}'>Non ancora salvato</span>", c=C["text_warn"]))
+    where = short_folder(str(ses.path.parent))
+    tip = tr('Si salva da solo a ogni scelta: puoi chiudere quando vuoi e riprendere da qui.\n'
+             'Progressi: {v1}/{v2}\nFoto scelte: {v3}',
+             v1=where, v2=ses.path.name, v3=short_path(export_dir))
+    return state, tip
+
+
+def done_html(done: int, total: int) -> str:
+    """Riga di avanzamento nella sidebar ('X di Y già fatte · ne mancano Z')."""
+    rest = (f"<span style='font-size:12px; color:{C['text_2']};'>"
+            + tr('  ·  ne mancano {n}', n=total - done) + "</span>"
+            if done < total else
+            f"<span style='font-size:12px; color:{C['yes']};'>" + tr('  ·  tutte decise') + "</span>")
+    return tr("<span style='font-size:13px; font-weight:600; color:{c};'>{done} di {v1} già fatte</span>",
+              c=C["text"], done=done, v1=total) + rest
+
+
+def counter_text(c: dict, busy: int, hidden: int) -> str:
+    """Riepilogo compatto delle scelte nella sidebar."""
+    extra = tr('   ⏳ export {busy}', busy=busy) if busy else ""
+    if hidden:
+        extra += tr('   ({hidden} nascosti dal filtro)', hidden=hidden)
+    return (tr('{v2} approvate · {v3} scartate · {v4} saltate', v2=c['yes'], v3=c['no'], v4=c['skip'])
+            + (tr(' · {v0} in “cancellare”', v0=c['trash']) if c.get("trash") else "")
+            + (tr(' · {v0} dai video', v0=c['snap']) if c.get("snap") else "")
+            + (f"\n{extra.strip()}" if extra else ""))
+
+
+def end_summary_text(c: dict, hidden: int, left: int) -> str:
+    """Testo di riepilogo a fine cartella."""
+    rest = tr('manca 1 elemento') if left == 1 else tr('mancano {n} elementi', n=left)
+    head = tr('Sei in fondo, ma {rest} da decidere più indietro.', rest=rest) if left else tr('Finito!')
+    counts = tr('✓ {yes} approvate    ✗ {no} scartate    ↪ {skip} saltate',
+                yes=c['yes'], no=c['no'], skip=c['skip'])
+    return (f"{head}\n\n{counts}"
+            + (tr('\n\n🎬 {hidden} nascosti dal filtro attivo', hidden=hidden) if hidden else "")
+            + tr('\n\n← = torna indietro a rivedere'))
+
+
+def download_message_text(dl_files: list[Path], elapsed: float, speed: float, prefetch: int) -> str:
+    """Testo di avanzamento durante il download da iCloud."""
+    secs = int(elapsed)
+    names = "\n".join(f"{p.name}  ·  {p.stat().st_size / 1e6:.0f} MB" if p.exists() else p.name
+                      for p in dl_files)
+    dots = "." * (secs % 4)
+    total_mb = sum(p.stat().st_size for p in dl_files if p.exists()) / 1e6
+    expected = max(1.0, total_mb / speed + 2)
+    pct = min(95, int(100 * elapsed / expected))
+    bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+    left = max(0, int(expected - elapsed))
+    eta = tr('circa {left} s rimanenti', left=left) if left else tr('quasi finito…')
+    return tr('☁️  Scarico da iCloud{dots}\n\n{names}\n\n{bar}  ≈ {pct}%\n⏱  {secs} s  ·  {eta}   '
+              '(stima su {speed:.1f} MB/s)\nmacOS non dice la percentuale vera: la stima usa la velocità '
+              'dei download già fatti.\nI prossimi {PREFETCH} elementi si stanno già scaricando in automatico.\n\n'
+              'Intanto puoi premere  S = salta,  N = no,  X = sposta in “cancellare”.',
+              dots=dots, names=names, bar=bar, pct=pct, secs=secs, eta=eta, speed=speed, PREFETCH=prefetch)
+
+
+def saved_work_detail(info: dict, fmt_when) -> str:
+    """Dettaglio per il dialogo di ripresa sessione."""
+    c = info["counts"]
+    total = info["total"] or "?"
+    return (tr('Decise: {v0} su {v1}\n', v0=info['decided'], v1=total)
+            + tr('✓ {v0} approvate   ✗ {v1} scartate   ↪ {v2} saltate', v0=c['yes'], v1=c['no'], v2=c['skip'])
+            + (tr('   🗑 {v0} in “cancellare”', v0=c['trash']) if c.get("trash") else "")
+            + (tr('   📷 {v0} foto da video', v0=c['snap']) if c.get("snap") else "")
+            + tr('\n\nIniziato il {v0}\nUltima modifica il {v1}\nExport: {v2}',
+                 v0=fmt_when(info['created']), v1=fmt_when(info['updated']), v2=info['export'])
+            + ("" if info.get("export_ok", True) else
+               tr("\n(questa cartella export non c'è su questo computer: riprendendo ti chiedo dove copiare)")))

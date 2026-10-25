@@ -5,19 +5,21 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
 
 log = logging.getLogger("photoswipe")
 
 # Velocità misurate dei download iCloud (MB/s): servono per stimare la percentuale,
 # perché macOS consegna il file tutto insieme e non dice quanto manca.
-speed_samples: list[float] = []
+speed_samples: deque[float] = deque(maxlen=8)
 DEFAULT_SPEED_MBS = 1.5
 
 
 def estimated_speed() -> float:
-    recent = sorted(speed_samples[-8:])
+    recent = sorted(speed_samples)
     return recent[len(recent) // 2] if recent else DEFAULT_SPEED_MBS
 
 SF_DATALESS = 0x40000000                       # macOS: file presente solo nel cloud
@@ -49,12 +51,14 @@ def is_local(path: Path) -> bool:
     return True
 
 
-def download(path: Path, timeout: float = 900) -> bool:
+def download(path: Path, timeout: float = 300, abandon: threading.Event | None = None) -> bool:
     """Scarica il file se serve. Blocca finché è disponibile in locale (da usare in un thread).
 
     Leggere il file ne forza il download ed è risultato ~2 volte più veloce di 'brctl download'.
     'brctl' resta per i vecchi stub '.nome.icloud', dove il file vero non esiste ancora.
     """
+    if abandon is not None and abandon.is_set():
+        return False
     if is_local(path):
         return True
     if not path.exists() and not stub_for(path).exists():
@@ -65,7 +69,8 @@ def download(path: Path, timeout: float = 900) -> bool:
         try:
             with open(path, "rb") as f:
                 while f.read(8 * 1024 * 1024):
-                    pass
+                    if abandon is not None and abandon.is_set():
+                        return False
             mb, secs = path.stat().st_size / 1e6, time.monotonic() - t0
             if mb > 3 and secs > 0.5:
                 speed_samples.append(mb / secs)
@@ -74,6 +79,8 @@ def download(path: Path, timeout: float = 900) -> bool:
         except OSError as e:
             log.warning("iCloud: lettura di %s non riuscita (%s), provo brctl", path.name, e)
     if sys.platform == "darwin":
+        if abandon is not None and abandon.is_set():
+            return False
         try:
             target = path if path.exists() else stub_for(path)
             subprocess.run(["brctl", "download", str(target)], capture_output=True, timeout=30)
@@ -81,10 +88,16 @@ def download(path: Path, timeout: float = 900) -> bool:
             pass
         end = time.monotonic() + timeout
         while time.monotonic() < end:
+            if abandon is not None and abandon.is_set():
+                return False
             if is_local(path):
                 log.info("iCloud: scaricato con brctl %s in %.1f s", path.name, time.monotonic() - t0)
                 return True
-            time.sleep(0.3)
+            if abandon is not None:
+                if abandon.wait(0.3):
+                    return False
+            else:
+                time.sleep(0.3)
     ok = is_local(path)
     if not ok:
         log.error("iCloud: download NON riuscito %s dopo %.0f s", path, time.monotonic() - t0)

@@ -160,3 +160,56 @@ def test_idle_crop_closes_when_moving_to_another_photo(qapp, win, sd):
     assert win.image_view.crop_mode and not win.edit_pending()
     go(qapp, win, PHOTO2)
     assert not win.image_view.crop_mode and win.crop_draft is None
+
+
+def test_discard_edits_on_approved_photo_shows_edit_badge(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    win.auto_enhance()
+    win.confirm_edit()
+    win.decide("yes")
+    exports_done(qapp, win)
+    go(qapp, win, PHOTO1)
+    win.discard_edits()
+    assert win.edit_badge.isVisible() and "Modificata dopo il Sì" in win.edit_badge.text()
+    assert win.side_foot.isVisible()
+
+
+def test_snap_open_fix_save_and_close_stays_paused(qapp, win, sd):
+    from test_core import LONG
+    open_folder(qapp, win, sd)
+    go(qapp, win, f"{LONG}.MP4")
+    assert wait(qapp, lambda: win.current().id in win.infos)
+    win.set_frame(2, manual=True)
+    assert wait(qapp, lambda: win.still_owner == win.current().id)
+    win.take_photo()
+    exports_done(qapp, win)
+    key = f"{win.current().id}#f2"
+    win.open_snap(key)
+    assert win.snap_bar.isVisible() and win.side_info.isVisible()
+    win.fix_snap()
+    assert wait(qapp, lambda: win.still_owner == win.current().id)
+    win.on_side_tab("regola")
+    assert win.side_tab == "regola" and win.snap_save.isVisible()
+    win.on_regola_changed({"exposure": 0.25})
+    assert win.edit_pending()
+    win.save_snap_fix()
+    exports_done(qapp, win)
+    assert not win.snap_bar.isVisible() and win.snap_key is None
+    assert win.scene_mode and not win.side_info.isVisible()
+    assert win.session.get(key)["edit"].get("exposure") == 0.25
+
+
+def test_show_chosen_highlights_yes_video_and_flash_resets_on_error(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, f"{LIVE}.MP4")
+    assert wait(qapp, lambda: win.current().id in win.infos)
+    win.decide("yes", with_video=True)
+    exports_done(qapp, win)
+    go(qapp, win, f"{LIVE}.MP4")
+    assert win.btn_yes_video.property("chosen") == "true"
+    assert win.btn_yes.property("chosen") == "false"
+    win.flash("Tutto bene")
+    assert "color:" in win.status.styleSheet()
+    win.status.setText("Errore grave")
+    assert win.status.styleSheet() == ""

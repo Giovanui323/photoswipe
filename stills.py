@@ -3,6 +3,8 @@ dell'interfaccia (un panorama da 100 MP richiede secondi), così passando alla f
 l'interfaccia non si blocca. In memoria al massimo MAX_BYTES."""
 from __future__ import annotations
 
+from concurrent.futures import Future
+
 from PySide6.QtGui import QImage, QImageReader
 
 from scanner import Item, raw_preview
@@ -33,10 +35,20 @@ def _stamp(item: Item):
         return None
 
 
+class _Pending(dict):
+    """Mappa id -> Future in corso; accetta anche .add()/.discard() come un set."""
+
+    def add(self, key: str, fut: Future | None = None) -> None:
+        self[key] = fut
+
+    def discard(self, key: str) -> None:
+        self.pop(key, None)
+
+
 class Stills:
     def __init__(self):
         self.cache: LruCache = LruCache(AHEAD + 1)
-        self.pending: set[str] = set()
+        self.pending: dict[str, Future | None] = _Pending()
 
     def want(self, item: Item) -> bool:
         """Da decodificare in anticipo? (foto, non già pronta né in corso)"""
@@ -45,18 +57,32 @@ class Stills:
     def put(self, item: Item | None, img) -> None:
         if item is None:
             return
-        self.pending.discard(item.id)
+        self.pending.pop(item.id, None)
         if isinstance(img, QImage) and not img.isNull() and img.sizeInBytes() <= MAX_BYTES // 2:
             self.cache[item.id] = (_stamp(item), img)
             while sum(v[1].sizeInBytes() for v in self.cache.values()) > MAX_BYTES:
                 self.cache.popitem(last=False)
 
     def take(self, item: Item) -> QImage:
-        """La foto pronta se c'è (e il file non è cambiato), se no si decodifica adesso."""
-        hit = self.cache.pop(item.id, None)
-        if hit is not None and hit[0] == _stamp(item):
-            return hit[1]
-        return decode(item)
+        """La foto pronta se c'è (e il file non è cambiato), se no aspetta l'anticipo o decodifica."""
+        hit = self.cache.get(item.id)
+        if hit is not None:
+            if hit[0] == _stamp(item):
+                self.cache.move_to_end(item.id)
+                return hit[1]
+            self.cache.pop(item.id, None)
+        fut = self.pending.pop(item.id, None)
+        if fut is not None and hasattr(fut, "result"):
+            try:
+                img = fut.result()
+                if isinstance(img, QImage):
+                    self.put(item, img)
+                    return img
+            except Exception:
+                pass
+        img = decode(item)
+        self.put(item, img)
+        return img
 
     def clear(self) -> None:
         self.cache.clear()

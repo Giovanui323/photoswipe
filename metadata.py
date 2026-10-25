@@ -14,6 +14,7 @@ from PIL import Image
 
 import edits
 import frames
+import i18n
 import places
 import printprep
 import quality
@@ -49,8 +50,9 @@ def _dms(values, ref: str) -> float | None:
 
 
 def fmt_gps(lat: float, lon: float) -> str:
+    west = "W" if i18n.current_lang() == "en" else "O"
     return (f"{abs(lat):.5f}° {'N' if lat >= 0 else 'S'},  "
-            f"{abs(lon):.5f}° {'E' if lon >= 0 else 'O'}")
+            f"{abs(lon):.5f}° {'E' if lon >= 0 else west}")
 
 
 def _exposure(t: float) -> str:

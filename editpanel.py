@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import copy
 
+import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
@@ -78,6 +79,7 @@ class ValueBar(KeyboardSlider, QWidget):
     """Cursore a barra di Foto: nome a sinistra, valore a destra, si trascina in orizzontale.
     Doppio clic = valore predefinito."""
     changed = Signal(float)
+    pressed = Signal(bool)
 
     def __init__(self, label: str, lo: float = -1.0, hi: float = 1.0, default: float = 0.0,
                  fmt=None, origin: float | None = None):
@@ -89,9 +91,11 @@ class ValueBar(KeyboardSlider, QWidget):
         self.setFixedHeight(26)
         self.setFocusPolicy(Qt.TabFocus)
         self.setAccessibleName(label)
+        self.setMouseTracking(True)
         self.setCursor(Qt.SizeHorCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._press: tuple[float, float] | None = None
+        self._hover = False
 
     def set_value(self, v: float) -> None:
         self.value = max(self.lo, min(self.hi, float(v)))
@@ -100,9 +104,20 @@ class ValueBar(KeyboardSlider, QWidget):
     def _frac(self, v: float) -> float:
         return (v - self.lo) / (self.hi - self.lo)
 
+    def enterEvent(self, e):
+        self._hover = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self.update()
+        super().leaveEvent(e)
+
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self._press = (e.position().x(), self.value)
+            self.pressed.emit(True)
 
     def mouseMoveEvent(self, e):
         if self._press is None:
@@ -119,7 +134,11 @@ class ValueBar(KeyboardSlider, QWidget):
             self.changed.emit(v)
 
     def mouseReleaseEvent(self, e):
-        self._press = None
+        if self._press is not None and e.button() == Qt.LeftButton:
+            self._press = None
+            self.pressed.emit(False)
+        else:
+            self._press = None
 
     def mouseDoubleClickEvent(self, e):
         self.value = self.default
@@ -132,7 +151,8 @@ class ValueBar(KeyboardSlider, QWidget):
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
         path.addRoundedRect(r, 6, 6)
-        p.fillPath(path, QColor(C["bar_bg"] if self.isEnabled() else C["bar_bg_off"]))
+        bg = C["bg_hover"] if (self._hover and self.isEnabled()) else (C["bar_bg"] if self.isEnabled() else C["bar_bg_off"])
+        p.fillPath(path, QColor(bg))
         p.setClipPath(path)
         x0 = r.left() + r.width() * self._frac(self.origin)
         x1 = r.left() + r.width() * self._frac(self.value)
@@ -143,12 +163,27 @@ class ValueBar(KeyboardSlider, QWidget):
             p.setPen(QPen(QColor(C["bar_mark"]), 2))
             p.drawLine(QPointF(x1, r.top()), QPointF(x1, r.bottom()))
         p.setClipping(False)
-        p.setPen(QColor(C["text"] if self.isEnabled() else C["text_off"]))
+        modified = abs(self.value - self.default) > 1e-4
         f = p.font()
         f.setPixelSize(13)
+        f.setWeight(QFont.DemiBold if (modified and self.isEnabled()) else QFont.Normal)
         p.setFont(f)
-        p.drawText(r.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignLeft, self.label)
-        p.drawText(r.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignRight, self.fmt(self.value))
+        val_str = self.fmt(self.value)
+        val_w = p.fontMetrics().horizontalAdvance(val_str)
+        p.setPen(QColor(C["accent"] if (modified and self.isEnabled()) else (C["text"] if self.isEnabled() else C["text_off"])))
+        p.drawText(r.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignRight, val_str)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        left_pad = 10.0
+        if modified and self.isEnabled():
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(C["accent"]))
+            p.drawEllipse(QPointF(r.left() + 7, r.center().y()), 2.0, 2.0)
+            left_pad = 14.0
+        p.setPen(QColor((C["text_strong"] if modified else C["text"]) if self.isEnabled() else C["text_off"]))
+        avail_w = max(20, int(r.width() - left_pad - val_w - 18))
+        elided = p.fontMetrics().elidedText(self.label, Qt.ElideRight, avail_w)
+        p.drawText(r.adjusted(left_pad, 0, -10 - val_w - 6, 0), Qt.AlignVCenter | Qt.AlignLeft, elided)
         a11y.paint_focus(p, self, 6)
 
 
@@ -352,21 +387,138 @@ class CircleToggle(QPushButton):
 
 class CurvePreview(QWidget):
     """Disegno della curva (Curve), sopra i cursori dei 5 punti."""
+    NODES = ("curve_blacks", "curve_shadows", "curve_mid", "curve_high", "curve_whites")
+    point_changed = Signal(str, float)
 
     def __init__(self):
         super().__init__()
         self.setFixedHeight(120)
-        self.lut = None
+        self.setMouseTracking(True)
+        self.lut = E._curve_lut({})
+        self._edit: dict = {}
+        self.hist: list[float] | None = None
+        self._hover_idx: int | None = None
+        self._drag_idx: int | None = None
 
     def set_edit(self, e: dict) -> None:
-        self.lut = E._curve_lut(e)
+        self._edit = dict(e or {})
+        self.lut = E._curve_lut(self._edit)
         self.update()
+
+    def set_histogram(self, bins: list[float] | None) -> None:
+        if bins is None or not len(bins):
+            self.hist = None
+        else:
+            mx = max(max(float(b) for b in bins), 1e-6)
+            self.hist = [max(0.0, min(1.0, float(b) / mx)) for b in bins]
+        self.update()
+
+    def set_image(self, qimg: QImage | None) -> None:
+        if qimg is None or qimg.isNull():
+            self.set_histogram(None)
+            return
+        small = qimg.scaled(160, 160, Qt.KeepAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGB888)
+        w, h, bpl = small.width(), small.height(), small.bytesPerLine()
+        buf = np.frombuffer(small.constBits(), dtype=np.uint8, count=bpl * h).reshape(h, bpl)[:, :w * 3].reshape(h, w, 3)
+        lum = 0.2126 * buf[..., 0] + 0.7152 * buf[..., 1] + 0.0722 * buf[..., 2]
+        counts, _ = np.histogram(lum, bins=64, range=(0.0, 255.0))
+        self.set_histogram(counts.astype(float).tolist())
+
+    def _plot_rect(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(6, 6, -6, -6)
+
+    def _node_points(self, r: QRectF) -> list[QPointF]:
+        if self.lut is None:
+            return []
+        n = len(self.lut)
+        pts = []
+        for i in range(5):
+            x_t = i * 0.25
+            idx = min(n - 1, max(0, round(x_t * (n - 1))))
+            y_t = float(self.lut[idx])
+            pts.append(QPointF(r.left() + r.width() * x_t, r.bottom() - r.height() * y_t))
+        return pts
+
+    def _hit_node(self, pos: QPointF) -> int | None:
+        r = self._plot_rect()
+        pts = self._node_points(r)
+        best_i, best_d = None, 14.0
+        for i, pt in enumerate(pts):
+            d = (pos.x() - pt.x()) ** 2 + (pos.y() - pt.y()) ** 2
+            if d <= best_d ** 2:
+                best_d = d ** 0.5
+                best_i = i
+        return best_i
+
+    def _drag_to(self, idx: int, y: float) -> None:
+        r = self._plot_rect()
+        x_t = idx * 0.25
+        y_t = max(0.0, min(1.0, (r.bottom() - y) / max(1.0, r.height())))
+        val = max(-1.0, min(1.0, (y_t - x_t) / 0.25))
+        if abs(val) < 0.015:
+            val = 0.0
+        key = self.NODES[idx]
+        if abs(val - E.get(self._edit, key)) > 1e-6:
+            self._edit[key] = val
+            self.lut = E._curve_lut(self._edit)
+            self.update()
+            self.point_changed.emit(key, val)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            hit = self._hit_node(e.position())
+            if hit is not None:
+                self._drag_idx = hit
+                self._drag_to(hit, e.position().y())
+                self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag_idx is not None:
+            self._drag_to(self._drag_idx, e.position().y())
+            return
+        hit = self._hit_node(e.position())
+        if hit != self._hover_idx:
+            self._hover_idx = hit
+            self.setCursor(Qt.SizeVerCursor if hit is not None else Qt.ArrowCursor)
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_idx is not None and e.button() == Qt.LeftButton:
+            self._drag_idx = None
+            self.update()
+
+    def mouseDoubleClickEvent(self, e):
+        hit = self._hit_node(e.position())
+        if hit is not None:
+            key = self.NODES[hit]
+            self._edit[key] = 0.0
+            self.lut = E._curve_lut(self._edit)
+            self.update()
+            self.point_changed.emit(key, 0.0)
+
+    def leaveEvent(self, e):
+        if self._hover_idx is not None and self._drag_idx is None:
+            self._hover_idx = None
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(e)
 
     def paintEvent(self, ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.fillRect(r, QColor(C["bg_sunken"]))
+        outer = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.fillRect(outer, QColor(C["bg_sunken"]))
+        r = self._plot_rect()
+        if self.hist and len(self.hist) > 1:
+            hpath = QPainterPath(QPointF(r.left(), r.bottom()))
+            nb = len(self.hist)
+            for i, b in enumerate(self.hist):
+                hx = r.left() + r.width() * i / (nb - 1)
+                hy = r.bottom() - r.height() * 0.85 * b
+                hpath.lineTo(QPointF(hx, hy))
+            hpath.lineTo(QPointF(r.right(), r.bottom()))
+            hpath.closeSubpath()
+            p.fillPath(hpath, QColor(255, 255, 255, 28))
         p.setPen(QPen(QColor(C["line_divider"]), 1))
         for i in range(1, 4):
             p.drawLine(QPointF(r.left() + r.width() * i / 4, r.top()), QPointF(r.left() + r.width() * i / 4, r.bottom()))
@@ -383,6 +535,14 @@ class CurvePreview(QWidget):
         path.lineTo(QPointF(r.right(), r.bottom() - r.height() * float(self.lut[-1])))
         p.setPen(QPen(QColor(C["text"]), 2))
         p.drawPath(path)
+        active = self._drag_idx if self._drag_idx is not None else self._hover_idx
+        for i, pt in enumerate(self._node_points(r)):
+            is_act = (i == active)
+            mod = abs(E.get(self._edit, self.NODES[i])) > 1e-4
+            rad = 5.0 if is_act else 3.8
+            p.setPen(QPen(QColor(C["accent"] if (is_act or mod) else C["text_strong"]), 1.8))
+            p.setBrush(QColor(C["accent"] if is_act else C["bg_sunken"]))
+            p.drawEllipse(pt, rad, rad)
 
 
 def _deg(v: float) -> str:
@@ -754,12 +914,13 @@ class RegolaPanel(QWidget):
         # Curve
         s = section("curves", "⌇", tr('Curve'))
         self.curve_preview = CurvePreview()
+        self.curve_preview.point_changed.connect(lambda k, val: self._set(k, val))
         s.body_lay.addWidget(self.curve_preview)
         for k, lab in (("curve_blacks", tr('Neri')), ("curve_shadows", tr('Ombre')), ("curve_mid", tr('Mezzitoni')),
                        ("curve_high", tr('Luci')), ("curve_whites", tr('Bianco'))):
             s.body_lay.addWidget(bar(k, lab))
         # Livelli
-        s = section("levels", "▥", "Livelli", auto=True)
+        s = section("levels", "▥", tr("Livelli"), auto=True)
         for k, lab, lo, hi in (("lv_black", tr('Nero (ingresso)'), 0, 0.5), ("lv_gamma", tr('Mezzitoni'), -1, 1),
                                ("lv_white", tr('Bianco (ingresso)'), 0.5, 1), ("lv_out_black", tr('Nero (uscita)'), 0, 0.5),
                                ("lv_out_white", tr('Bianco (uscita)'), 0.5, 1)):
@@ -804,7 +965,7 @@ class RegolaPanel(QWidget):
         s.body_lay.addWidget(bar("sharp_amount", tr('Intensità'), 0, 1, pct))
         s.body_lay.addWidget(bar("sharp_edges", tr('Bordi'), 0, 1, pct))
         s.body_lay.addWidget(bar("sharp_falloff", tr('Attenuazione'), 0, 1, pct))
-        s = section("vignette", "◎", "Vignettatura")
+        s = section("vignette", "◎", tr("Vignettatura"))
         s.body_lay.addWidget(bar("vig_amount", tr('Intensità')))
         s.body_lay.addWidget(bar("vig_radius", tr('Raggio'), 0, 1, pct))
         s.body_lay.addWidget(bar("vig_soft", tr('Morbidezza'), 0, 1, pct))
@@ -911,6 +1072,14 @@ class RegolaPanel(QWidget):
 
     def set_thumbs(self, sec: str, thumbs: list[QImage]) -> None:
         self.scrubbers[sec].set_thumbs(thumbs)
+        if sec == "light" and thumbs:
+            self.curve_preview.set_image(thumbs[len(thumbs) // 2])
+
+    def set_histogram(self, bins: list[float] | None) -> None:
+        self.curve_preview.set_histogram(bins)
+
+    def set_image(self, qimg: QImage | None) -> None:
+        self.curve_preview.set_image(qimg)
 
     def redeye_open(self) -> bool:
         return self.sections["redeye"].is_open()
@@ -921,6 +1090,9 @@ class RitagliaPanel(QWidget):
     """Raddrizza, prospettiva, capovolgi e proporzioni. Il ritaglio vale solo con OK."""
     changed = Signal(dict)    # bozza del ritaglio (solo le chiavi della geometria)
     aspect_changed = Signal(dict)
+    grid_changed = Signal(bool)
+    grid_Changed = grid_changed
+    scrubbing = Signal(bool)
     ok = Signal()
     cancel = Signal()
     auto = Signal()
@@ -947,6 +1119,7 @@ class RitagliaPanel(QWidget):
             row.addWidget(SectionIcon(k))
             row.addWidget(b, 1)
             b.changed.connect(lambda val, kk=k: self._set(kk, val))
+            b.pressed.connect(self._on_bar_pressed)
             v.addLayout(row)
         self.bars["straighten"].setToolTip(tr('Ruota la foto (doppio clic = 0°). ⌥ mentre trascini = più preciso.'))
         self.bars["vertical"].setToolTip(tr('Raddrizza le linee verticali che convergono (palazzi).'))
@@ -1058,6 +1231,13 @@ class RitagliaPanel(QWidget):
                 if long_first == portrait:
                     name = f"{b_}:{a_}"
             b.setText(("✓    " if b.isChecked() else "       ") + name)
+
+    def _on_bar_pressed(self, down: bool) -> None:
+        self.grid_changed.emit(down)
+        self.scrubbing.emit(down)
+        win = self.window()
+        if win is not None and hasattr(win, "image_view"):
+            win.image_view.set_grid_dense(down)
 
     def _emit(self) -> None:
         self.refresh()

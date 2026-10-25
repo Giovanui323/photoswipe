@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import math
+import os
 import threading
 from collections import OrderedDict
 from concurrent.futures import Future
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QImage, QImageReader, QLinearGradient, QPainter, QPainterPath, QPen,
-                           QPixmap)
+from PySide6.QtGui import (QColor, QFont, QImage, QImageReader, QLinearGradient, QPainter, QPainterPath,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QGraphicsPixmapItem, QGraphicsScene,
                                QGraphicsView, QLabel, QProxyStyle, QPushButton, QSizePolicy, QStyle, QStyleOption,
                                QWidget)
@@ -108,7 +109,8 @@ def chevron_file() -> str:
     """Freccia ⌄ dei menu a tendina, disegnata e salvata in un PNG temporaneo (il foglio di stile
     vuole un file); senza, i menu sembrano normali pulsanti."""
     import tempfile
-    path = Path(tempfile.gettempdir()) / "photoswipe-chevron.png"
+    uid = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
+    path = Path(tempfile.gettempdir()) / f"photoswipe-chevron{uid}.png"
     pm = QPixmap(20, 12)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -133,12 +135,16 @@ class TrashButton(QPushButton):
         self.setIconSize(QSize(22, 22))
         self.refresh_icon()
 
-    def refresh_icon(self) -> None:
+    def refresh_icon(self, size: int | None = None) -> None:
+        sz = size if size is not None else max(22, self.iconSize().width())
+        if size is not None and self.iconSize().width() != size:
+            self.setIconSize(QSize(size, size))
         state = ("off" if not self.isEnabled()
                  else "filled" if self.underMouse() or self.property("chosen") == "true" else "normal")
-        if getattr(self, "_state", None) != state:
+        if getattr(self, "_state", None) != state or getattr(self, "_icon_sz", None) != sz:
             self._state = state
-            self.setIcon(trash_pixmap(self.COLORS[state], 22, max(2.0, self.devicePixelRatioF())))
+            self._icon_sz = sz
+            self.setIcon(trash_pixmap(self.COLORS[state], sz, max(2.0, self.devicePixelRatioF())))
 
     def enterEvent(self, e):
         super().enterEvent(e)
@@ -168,10 +174,21 @@ class OverlayLabel(QLabel):
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
-        self.timer.timeout.connect(lambda: self.setText(""))
+        self.timer.timeout.connect(self._clear)
         self.hide()
 
-    def setText(self, text: str, ms: int | None = None) -> None:
+    def _clear(self) -> None:
+        self._auto_color = False
+        self.setStyleSheet("")
+        self.setText("")
+
+    def setText(self, text: str, ms: int | None = None, color: str = "") -> None:
+        if color:
+            self.setStyleSheet(f"color:{color};")
+            self._auto_color = True
+        elif getattr(self, "_auto_color", False) or not text:
+            self._auto_color = False
+            self.setStyleSheet("")
         super().setText(text)
         self.place()
         ms = self.hide_after_ms if ms is None else ms
@@ -231,7 +248,11 @@ def wait_downloads(files: list[Path], abandon: threading.Event, delay: float = 0
 
         def run(p=p, f=f):
             try:
-                f.set_result(cloud.download(p))
+                try:
+                    res = cloud.download(p, abandon=abandon)
+                except TypeError:
+                    res = cloud.download(p)
+                f.set_result(res)
             except BaseException as e:  # noqa: BLE001 - riportato dall'attesa
                 f.set_exception(e)
         threading.Thread(target=run, name=f"icloud-{p.name}", daemon=True).start()
@@ -289,6 +310,9 @@ class ImageView(QGraphicsView):
         self.crop = [0.0, 0.0, 1.0, 1.0]
         self.crop_ratio: float | None = None   # larghezza/altezza in pixel della foto (None = libero)
         self._crop_drag: tuple[str, QPointF, list[float]] | None = None
+        self._crop_hover: str | None = None
+        self._grid_dense: bool = False
+        self._badge_text: str = ""
         self.pick_enabled = False              # Occhi rossi: un clic indica l'occhio
         self._press_pos: QPointF | None = None
         # clic semplice: si aspetta un attimo, così il doppio clic (foto intera) non lo fa scattare
@@ -297,6 +321,20 @@ class ImageView(QGraphicsView):
         self._click_timer.setInterval(QApplication.doubleClickInterval())
         self._click_timer.timeout.connect(self.clicked.emit)
 
+    def set_badge(self, text: str) -> None:
+        text = text or ""
+        if self._badge_text != text:
+            self._badge_text = text
+            self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if (self.crop_mode or self._badge_text)
+                                       else QGraphicsView.MinimalViewportUpdate)
+            self.viewport().update()
+
+    def set_grid_dense(self, dense: bool) -> None:
+        dense = bool(dense)
+        if self._grid_dense != dense:
+            self._grid_dense = dense
+            self.viewport().update()
+
     # ---- Ritaglia
     CROP_MARGIN = 28   # Ritaglia: spazio intorno alla foto, così angoli e lati sul bordo si prendono
 
@@ -304,9 +342,14 @@ class ImageView(QGraphicsView):
         was_on, self.crop_mode = self.crop_mode, on
         self.crop = list(crop or [0.0, 0.0, 1.0, 1.0])
         self.crop_ratio = ratio
+        if not on:
+            self._crop_drag = None
+            self._crop_hover = None
+            self._grid_dense = False
+            self.viewport().unsetCursor()
         self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
         # il riquadro e l'ombra intorno coprono tutta la vista: si ridisegna sempre tutta
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if on
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate if (on or self._badge_text)
                                    else QGraphicsView.MinimalViewportUpdate)
         if on or (was_on and not self.zoomed):   # all'uscita la foto torna a tutta finestra
             self.fit()
@@ -369,19 +412,39 @@ class ImageView(QGraphicsView):
         a = self._aspect_n()
         if a:
             nw, nh = x1 - x0, y1 - y0
+            min_nh = max(mn, mn / a)
             if mode in ("t", "b"):          # lato orizzontale: la larghezza segue, centrata
+                cx = start[0] + start[2] / 2
+                max_nh = min(y1 if mode == "t" else 1.0 - y0, 2.0 * min(cx, 1.0 - cx) / a)
+                nh = max(min(min_nh, max_nh), min(nh, max_nh))
                 nw = nh * a
-                cx = (start[0] + start[2] / 2)
                 x0, x1 = cx - nw / 2, cx + nw / 2
+                if mode == "t":
+                    y0 = y1 - nh
+                else:
+                    y1 = y0 + nh
             elif mode in ("l", "r"):        # lato verticale: l'altezza segue, centrata
+                cy = start[1] + start[3] / 2
+                max_nw = min(x1 if mode == "l" else 1.0 - x0, 2.0 * min(cy, 1.0 - cy) * a)
+                min_nw = min_nh * a
+                nw = max(min(min_nw, max_nw), min(nw, max_nw))
                 nh = nw / a
-                cy = (start[1] + start[3] / 2)
                 y0, y1 = cy - nh / 2, cy + nh / 2
+                if mode == "l":
+                    x0 = x1 - nw
+                else:
+                    x1 = x0 + nw
             else:                           # angolo: l'angolo opposto resta fermo
                 if nw / max(nh, 1e-6) > a:
                     nh = nw / a
                 else:
                     nw = nh * a
+                max_w = x1 if "l" in mode else 1.0 - x0
+                max_h = y1 if "t" in mode else 1.0 - y0
+                max_nw = min(max_w, max_h * a)
+                min_nw = min_nh * a
+                nw = max(min(min_nw, max_nw), min(nw, max_nw))
+                nh = nw / a
                 if "l" in mode:
                     x0 = x1 - nw
                 else:
@@ -390,38 +453,72 @@ class ImageView(QGraphicsView):
                     y0 = y1 - nh
                 else:
                     y1 = y0 + nh
-            # fuori dalla foto: si riduce mantenendo le proporzioni
-            if x0 < 0 or y0 < 0 or x1 > 1 or y1 > 1:
-                return list(start)
         return [x0, y0, x1 - x0, y1 - y0]
 
     def drawForeground(self, painter: QPainter, rect) -> None:
         super().drawForeground(painter, rect)
-        if not self.crop_mode or self.full.isNull():
+        has_crop = self.crop_mode and not self.full.isNull()
+        if not has_crop and not self._badge_text:
             return
         painter.save()
         painter.resetTransform()
         vr = QRectF(self.viewport().rect())
-        c = self._crop_view_rect()
-        outside = QPainterPath()
-        outside.addRect(vr)
-        hole = QPainterPath()
-        hole.addRect(c)
-        painter.fillPath(outside.subtracted(hole), QColor(0, 0, 0, 150))
-        painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
-        for i in (1, 2):   # regola dei terzi
-            painter.drawLine(QPointF(c.left() + c.width() * i / 3, c.top()),
-                             QPointF(c.left() + c.width() * i / 3, c.bottom()))
-            painter.drawLine(QPointF(c.left(), c.top() + c.height() * i / 3),
-                             QPointF(c.right(), c.top() + c.height() * i / 3))
-        painter.setPen(QPen(QColor(C["text_strong"]), 1.5))
-        painter.drawRect(c)
-        painter.setPen(QPen(QColor(C["text_strong"]), 4, Qt.SolidLine, Qt.SquareCap))
-        L = min(22.0, c.width() / 3, c.height() / 3)
-        for (px, py, sx, sy) in ((c.left(), c.top(), 1, 1), (c.right(), c.top(), -1, 1),
-                                 (c.left(), c.bottom(), 1, -1), (c.right(), c.bottom(), -1, -1)):
-            painter.drawLine(QPointF(px, py), QPointF(px + sx * L, py))
-            painter.drawLine(QPointF(px, py), QPointF(px, py + sy * L))
+        if has_crop:
+            c = self._crop_view_rect()
+            outside = QPainterPath()
+            outside.addRect(vr)
+            hole = QPainterPath()
+            hole.addRect(c)
+            painter.fillPath(outside.subtracted(hole), QColor(0, 0, 0, 150))
+            if self._grid_dense:
+                painter.setPen(QPen(QColor(255, 255, 255, 65), 1))
+                for i in range(1, 9):
+                    if i % 3 == 0:
+                        continue
+                    painter.drawLine(QPointF(c.left() + c.width() * i / 9, c.top()),
+                                     QPointF(c.left() + c.width() * i / 9, c.bottom()))
+                    painter.drawLine(QPointF(c.left(), c.top() + c.height() * i / 9),
+                                     QPointF(c.right(), c.top() + c.height() * i / 9))
+            painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
+            for i in (1, 2):   # regola dei terzi
+                painter.drawLine(QPointF(c.left() + c.width() * i / 3, c.top()),
+                                 QPointF(c.left() + c.width() * i / 3, c.bottom()))
+                painter.drawLine(QPointF(c.left(), c.top() + c.height() * i / 3),
+                                 QPointF(c.right(), c.top() + c.height() * i / 3))
+            active_handle = self._crop_drag[0] if self._crop_drag else self._crop_hover
+            painter.setPen(QPen(QColor(C["accent"] if active_handle == "move" else C["text_strong"]), 1.5))
+            painter.drawRect(c)
+            L = min(22.0, c.width() / 3, c.height() / 3)
+            for name, px, py, sx, sy in (("tl", c.left(), c.top(), 1, 1),
+                                         ("tr", c.right(), c.top(), -1, 1),
+                                         ("bl", c.left(), c.bottom(), 1, -1),
+                                         ("br", c.right(), c.bottom(), -1, -1)):
+                col = QColor(C["accent"] if active_handle == name else C["text_strong"])
+                painter.setPen(QPen(col, 4, Qt.SolidLine, Qt.SquareCap))
+                painter.drawLine(QPointF(px, py), QPointF(px + sx * L, py))
+                painter.drawLine(QPointF(px, py), QPointF(px, py + sy * L))
+            hs = min(8.0, c.width() / 6, c.height() / 6)
+            cx, cy = c.center().x(), c.center().y()
+            for name, p1, p2 in (("t", QPointF(cx - hs, c.top()), QPointF(cx + hs, c.top())),
+                                 ("b", QPointF(cx - hs, c.bottom()), QPointF(cx + hs, c.bottom())),
+                                 ("l", QPointF(c.left(), cy - hs), QPointF(c.left(), cy + hs)),
+                                 ("r", QPointF(c.right(), cy - hs), QPointF(c.right(), cy + hs))):
+                col = QColor(C["accent"] if active_handle == name else C["text_strong"])
+                painter.setPen(QPen(col, 4, Qt.SolidLine, Qt.SquareCap))
+                painter.drawLine(p1, p2)
+        if self._badge_text:
+            f = painter.font()
+            f.setPixelSize(12)
+            f.setWeight(QFont.DemiBold)
+            painter.setFont(f)
+            tw = painter.fontMetrics().horizontalAdvance(self._badge_text)
+            bw, bh = tw + 24, 26
+            br = QRectF((vr.width() - bw) / 2, 14, bw, bh)
+            painter.setPen(QPen(QColor(255, 255, 255, 45), 1))
+            painter.setBrush(QColor(28, 28, 30, 210))
+            painter.drawRoundedRect(br, 13, 13)
+            painter.setPen(QColor(C["accent"]))
+            painter.drawText(br, Qt.AlignCenter, self._badge_text)
         painter.restore()
 
     def mousePressEvent(self, e):
@@ -430,6 +527,7 @@ class ImageView(QGraphicsView):
             mode = self._crop_hit(e.position())
             if mode:
                 self._crop_drag = (mode, e.position(), list(self.crop))
+                self.viewport().update()
             return
         super().mousePressEvent(e)
 
@@ -441,6 +539,9 @@ class ImageView(QGraphicsView):
                 self.viewport().update()
             else:
                 hit = self._crop_hit(e.position())
+                if hit != self._crop_hover:
+                    self._crop_hover = hit
+                    self.viewport().update()
                 cur = {"move": Qt.SizeAllCursor, "t": Qt.SizeVerCursor, "b": Qt.SizeVerCursor,
                        "l": Qt.SizeHorCursor, "r": Qt.SizeHorCursor, "tl": Qt.SizeFDiagCursor,
                        "br": Qt.SizeFDiagCursor, "tr": Qt.SizeBDiagCursor, "bl": Qt.SizeBDiagCursor}
@@ -448,11 +549,18 @@ class ImageView(QGraphicsView):
             return
         super().mouseMoveEvent(e)
 
+    def leaveEvent(self, e):
+        if self._crop_hover is not None:
+            self._crop_hover = None
+            self.viewport().update()
+        super().leaveEvent(e)
+
     def mouseReleaseEvent(self, e):
         if self.crop_mode:
-            if self._crop_drag:
+            if e.button() == Qt.LeftButton and self._crop_drag:
                 self._crop_drag = None
                 self.crop_changed.emit(list(self.crop))
+                self.viewport().update()
             return
         super().mouseReleaseEvent(e)
         still = self._press_pos is not None and (e.position() - self._press_pos).manhattanLength() < 4
@@ -608,6 +716,7 @@ class FilmStrip(QWidget):
         super().__init__()
         self.setFixedHeight(72)   # in alto c'è posto per il pallino della foto originale
         self.setMinimumWidth(200)
+        self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.owner: str | None = None
@@ -619,6 +728,7 @@ class FilmStrip(QWidget):
         self.original: int | None = None   # Live: foto scelta dalla fotocamera (pallino)
         self._drag = False
         self._last: int | None = None
+        self._hover_x: float | None = None
 
     def set_video(self, frames_: int, owner: str | None = None) -> None:
         self.owner, self.frames, self.thumbs = owner, frames_, []
@@ -666,8 +776,16 @@ class FilmStrip(QWidget):
             self._emit(e.position().x())
 
     def mouseMoveEvent(self, e):
+        self._hover_x = e.position().x()
         if self._drag:
             self._emit(e.position().x())
+        self.update()
+
+    def leaveEvent(self, e):
+        if self._hover_x is not None:
+            self._hover_x = None
+            self.update()
+        super().leaveEvent(e)
 
     def mouseReleaseEvent(self, e):
         self._drag = False
@@ -687,9 +805,22 @@ class FilmStrip(QWidget):
             for i, im in enumerate(self.thumbs):  # ogni miniatura riempie la sua casella (ritaglio centrale)
                 cell = QRectF(r.left() + i * w, r.top(), w + 0.5, r.height())
                 k = max(cell.width() / im.width(), cell.height() / im.height())
-                sw, sh = cell.width() / k, cell.height() / k
+                sw, sh = cell.width() / k, r.height() / k
                 p.drawImage(cell, im, QRectF((im.width() - sw) / 2, (im.height() - sh) / 2, sw, sh))
             p.restore()
+        else:
+            p.save()
+            p.setClipPath(clip)
+            p.setPen(QPen(QColor(255, 255, 255, 24), 1))
+            step = 16
+            x_tick = r.left() + step
+            while x_tick < r.right():
+                p.drawLine(QPointF(x_tick, r.top() + 6), QPointF(x_tick, r.bottom() - 6))
+                x_tick += step
+            p.restore()
+        if self._hover_x is not None and r.left() <= self._hover_x <= r.right():
+            p.setPen(QPen(QColor(255, 255, 255, 110), 1.5))
+            p.drawLine(QPointF(self._hover_x, r.top()), QPointF(self._hover_x, r.bottom()))
         if self.frames <= 0:
             return
         for n in self.marks:  # foto già salvate
@@ -783,10 +914,23 @@ class SnapGallery(QWidget):
                 return i
         return None
 
+    def invalidate(self, path: str | None = None) -> None:
+        if path is None:
+            self._cache.clear()
+        else:
+            for k in [k for k in self._cache if (k[0] if isinstance(k, tuple) else k) == path]:
+                self._cache.pop(k, None)
+        self.update()
+
     def _thumb(self, path: str | None) -> QImage | None:
         if not path:
             return None
-        if path not in self._cache:
+        try:
+            mtime_ns = os.stat(path).st_mtime_ns
+        except OSError:
+            return None
+        ckey = (path, mtime_ns)
+        if ckey not in self._cache:
             reader = QImageReader(path)
             reader.setAutoTransform(True)
             size = reader.size()
@@ -795,8 +939,8 @@ class SnapGallery(QWidget):
             im = reader.read()
             if im.isNull():
                 return None      # export non ancora finito: si riprova al prossimo aggiornamento
-            self._cache[path] = im
-        return self._cache[path]
+            self._cache[ckey] = im
+        return self._cache[ckey]
 
     def mouseMoveEvent(self, e):
         i = self._at(e.position())
@@ -880,11 +1024,13 @@ class ThumbStrip(QWidget):
         self.setFixedHeight(self.CELL_H + 18)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
         self.entries: list[tuple[int, QImage | None, str | None, bool, str]] = []
         self.current: int | None = None
         self._rects: list[tuple[QRectF, int]] = []
+        self._hover_idx: int | None = None
         self.frame_color = C["selected"]   # bordo della miniatura attuale (vedi update_thumb_strip)
         self.outside = False          # quella attuale non rientra nel filtro: bordo grigio tratteggiato
         self._shown: list[int] = []   # ultime miniature in vista (vedi wanted)
@@ -976,6 +1122,10 @@ class ThumbStrip(QWidget):
 
     def mouseMoveEvent(self, e):
         if self._press is None:
+            hov = next((i for r, i in self._rects if r.contains(e.position())), None)
+            if hov != self._hover_idx:
+                self._hover_idx = hov
+                self.update()
             return
         x0, pan0, last = self._press
         x = e.position().x()
@@ -984,6 +1134,12 @@ class ThumbStrip(QWidget):
             self._vel = x - last                   # serve per l'inerzia al rilascio
             self._press = (x0, pan0, x)
             self.update()
+
+    def leaveEvent(self, e):
+        if self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+        super().leaveEvent(e)
 
     def mouseReleaseEvent(self, e):
         if self._press is None:
@@ -1034,13 +1190,28 @@ class ThumbStrip(QWidget):
                 p.drawImage(r, img, QRectF((img.width() - sw) / 2, (img.height() - sh) / 2, sw, sh))
                 p.restore()
             else:
+                p.setPen(QPen(QColor(C["text_2"]), 1.2))
+                p.setBrush(Qt.NoBrush)
+                ic = QRectF(r.center().x() - 9, r.top() + 9, 18, 13)
+                p.drawRoundedRect(ic, 2.5, 2.5)
+                if clip:
+                    tri = QPainterPath(QPointF(ic.center().x() - 2, ic.center().y() - 3))
+                    tri.lineTo(QPointF(ic.center().x() + 3, ic.center().y()))
+                    tri.lineTo(QPointF(ic.center().x() - 2, ic.center().y() + 3))
+                    tri.closeSubpath()
+                    p.fillPath(tri, QColor(C["text_2"]))
+                else:
+                    p.drawEllipse(ic.center(), 3.2, 3.2)
                 p.setPen(QColor(C["text_2"]))
                 f = p.font()
                 f.setPixelSize(10)
                 p.setFont(f)
-                p.drawText(r.adjusted(4, 4, -4, -4), Qt.AlignCenter | Qt.TextWrapAnywhere, name)
+                tr_rect = QRectF(r.left() + 4, r.bottom() - 16, r.width() - 8, 13)
+                elided = p.fontMetrics().elidedText(name, Qt.ElideMiddle, max(10, int(tr_rect.width())))
+                p.drawText(tr_rect, Qt.AlignCenter, elided)
             if i != self.current:
-                p.fillPath(path, QColor(0, 0, 0, 70 if choice is None else 120))  # già decise: più scure
+                alpha = 30 if i == self._hover_idx else (70 if choice is None else 120)
+                p.fillPath(path, QColor(0, 0, 0, alpha))  # già decise: più scure
             if clip:   # ▶ su un dischetto scuro: leggibile anche su miniature chiare
                 disc = QRectF(r.left() + 4, r.bottom() - 18, 14, 14)
                 p.setPen(Qt.NoPen)

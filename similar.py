@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import theme
 from i18n import tr
+
+if not hasattr(theme, "C"):
+    theme.C = theme.COLORS
 
 GAP = timedelta(seconds=30)   # due foto della stessa raffica sono a meno di 30 s l'una dall'altra
 DIST = 12                     # bit diversi su 64 nell'impronta: fino a qui sono "quasi uguali"
@@ -42,9 +46,9 @@ def info_html(items, idx: int, quality_of) -> str:
     best = max(members, key=lambda i: quality_of(items[i]).sharpness)
     pos = members.index(idx) + 1
     if best == idx:
-        text, color = tr('{v0} foto simili: questa ({v1}ª) è la più nitida', v0=len(members), v1=pos), "#30d158"
+        text, color = tr('{v0} foto simili: questa ({v1}ª) è la più nitida', v0=len(members), v1=pos), theme.C["text_ok"]
     else:
         text = tr('{v0} foto simili: la più nitida è la {v1}ª ({v2}), questa è la {v3}ª',
                   v0=len(members), v1=members.index(best) + 1, v2=f"{items[best].taken:%H:%M:%S}", v3=pos)
-        color = "#ffb340"
+        color = theme.C["text_warn"]
     return f"<div style='color:{color}; margin-top:4px; font-size:12px'>{text}</div>"

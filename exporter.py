@@ -96,7 +96,8 @@ def unique_path(folder: Path, name: str) -> Path:
 def move_new(src: Path, folder: Path, name: str) -> Path:
     """Sposta src in folder con un nome libero (name, name_2…) senza mai sovrascrivere: anche se
     un file con quel nome compare nel frattempo (un'altra istanza, l'utente) si prende il nome
-    dopo. Dove i collegamenti non ci sono (exFAT delle schede) si sposta come prima."""
+    dopo. Dove i collegamenti non ci sono (exFAT delle schede, o un altro disco) si copia con
+    O_EXCL senza mai sovrascrivere."""
     while True:
         dst = unique_path(folder, name)
         try:
@@ -104,8 +105,17 @@ def move_new(src: Path, folder: Path, name: str) -> Path:
         except FileExistsError:
             continue
         except OSError:
-            os.replace(src, dst)
-            return dst
+            try:
+                fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            except FileExistsError:
+                continue
+            try:
+                with os.fdopen(fd, "wb") as out_f, open(src, "rb") as in_f:
+                    shutil.copyfileobj(in_f, out_f)
+                shutil.copystat(src, dst)
+            except BaseException:
+                dst.unlink(missing_ok=True)
+                raise
         try:
             os.unlink(src)
         except OSError:
@@ -150,10 +160,20 @@ def release_claims(paths) -> None:
             _claims.difference_update(_path_keys(p))
 
 
+def _live_sessions() -> list["Session"]:
+    for _ in range(5):
+        try:
+            with _claims_lock:
+                return list(_sessions)
+        except RuntimeError:
+            continue
+    return []
+
+
 def _recorded_files() -> set[str]:
     """Tutte le copie registrate nelle scelte delle sessioni aperte (di qualsiasi elemento)."""
     out: set[str] = set()
-    for sess in list(_sessions):
+    for sess in _live_sessions():
         for _ in range(5):   # le scelte cambiano nel thread dell'interfaccia: si riprova
             try:
                 decisions = list(sess.decisions.values())
@@ -209,7 +229,7 @@ def _made_during_session(target: Path) -> bool:
     prima di registrarla)? Un file che era già in export prima non si riusa: si fa una copia
     nuova, così Annulla non toglie mai un file dell'utente. Senza sessioni aperte: sì, come prima."""
     starts = []
-    for sess in list(_sessions):
+    for sess in _live_sessions():
         try:
             if Path(sess.export_dir).resolve() in target.resolve().parents:   # la sessione di questo export
                 starts.append(datetime.fromisoformat(sess.created))
@@ -612,6 +632,7 @@ def rename_by_date(entries: list[tuple[str, datetime, list[str]]], export_dir: P
                 if errors is not None:
                     errors.append(f"{src.name}: {e}")
                 continue
+            _claim([dst])
             release_claims([src])
             out.setdefault(item_id, []).append([str(src), str(dst)])
     return out
@@ -831,7 +852,8 @@ class Session:
         self.saved_elsewhere: Path | None = None  # salvato in export perché nella cartella non si poteva
         self._protected: set[str] = set()   # salvataggi illeggibili lasciati al loro posto: mai sovrascritti
         self.fresh = False   # "Ricomincia da capo": non riprendere salvataggi di altri livelli
-        _sessions.add(self)
+        with _claims_lock:
+            _sessions.add(self)
         fallback = export_dir / SESSION_FILE
         # il proprio salvataggio, e quello in export (vecchie versioni, o salvato lì perché nella
         # cartella non si poteva): vince il più recente
@@ -1055,6 +1077,10 @@ class Session:
             return False
         moved = {a: b for a, b in pairs}
         d["files"] = [moved.get(f, f) for f in d["files"]]
+        try:
+            d["stamps"] = [file_stamp(Path(f)) for f in d["files"]]
+        except OSError:
+            d.pop("stamps", None)
         self.save()
         return True
 
@@ -1184,4 +1210,4 @@ def fmt_when(iso: str | None) -> str:
     if not iso:
         return "—"
     d = datetime.fromisoformat(iso)
-    return f"{d:%d/%m/%Y} alle {d:%H:%M}"
+    return f"{d:%d/%m/%Y} {tr('alle')} {d:%H:%M}"

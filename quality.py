@@ -10,7 +10,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+import theme
 from i18n import tr
+
+if not hasattr(theme, "C"):
+    theme.C = theme.COLORS
 
 SIDE = 1024        # lato lungo della copia analizzata: le soglie sono tarate su questa misura
 GRID = 6           # riquadri per lato: si prende il più nitido
@@ -49,7 +53,7 @@ class Quality:
     def info_html(self) -> str:
         """Riga per la scheda del pannello Info: verde se va tutto bene, arancione se no."""
         text, bad = self.summary()
-        color = "#ffb340" if bad else "#30d158"
+        color = theme.C["text_warn"] if bad else theme.C["text_ok"]
         return (f"<div style='color:{color}; margin-top:8px; font-size:12px'>"
                 f"{tr('Qualità')}: {text}</div>")
 

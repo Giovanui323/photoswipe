@@ -15,11 +15,19 @@ def _detect() -> str:
     return "it" if QLocale().language() == QLocale.Language.Italian else "en"
 
 
+_BOOT_ENV = os.environ.get("PHOTOSWIPE_LANG", "").strip().lower()
 LANG = _detect()
 
 
+def current_lang() -> str:
+    env = os.environ.get("PHOTOSWIPE_LANG", "").strip().lower()
+    if env in ("it", "en") and env != _BOOT_ENV:
+        return env
+    return LANG
+
+
 def tr(text: str, **kw) -> str:
-    if LANG == "en":
+    if current_lang() == "en":
         text = EN.get(text, text)
     return text.format(**kw) if kw else text
 
@@ -551,6 +559,21 @@ EN.update({
         "Export tidied: {v0} copies moved into Foto / Video with the date in the name",
     "{v0} copie in export non si sono potute rinominare: restano com'erano":
         "{v0} copies in export could not be renamed: they were left as they were",
+    "Livelli": "Levels",
+    "Vignettatura": "Vignette",
+    "alle": "at",
+    "fotogramma": "frame",
+    "verticali corrette ({deg:+d}°)": "verticals corrected ({deg:+d}°)",
+    "circa {left} s rimanenti": "about {left} s remaining",
+    "stampa fino a {hint}": "prints up to {hint}",
+    "⚠ bassa risoluzione: stampa max {hint}": "⚠ low resolution: max print {hint}",
+    "  ·  ne mancano {n}": "  ·  {n} left",
+    "  ·  tutte decise": "  ·  all decided",
+    "✓ {yes} approvate    ✗ {no} scartate    ↪ {skip} saltate":
+        "✓ {yes} approved    ✗ {no} rejected    ↪ {skip} skipped",
+    "Sfoglia l'album delle approvate": "Browse approved album",
+    "ORIGINALE": "ORIGINAL",
+    "COPIA PER LA STAMPA": "PRINT COPY",
 })
 
 

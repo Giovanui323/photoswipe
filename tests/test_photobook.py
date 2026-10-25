@@ -181,3 +181,37 @@ def test_album_pages_gather_by_place():
     assert album.plan(photos) == [[0, 1, 2, 3, 4], [5, 6], [7, 8, 9, 10], [11, 12, 13, 14]]   # senza GPS: solo le date
     assert album.caption(photos, [0, 1], "Los Angeles").endswith("2026 · Los Angeles")
     assert album.place_name(gps, [2, 3]) and album.place_name([None], [0]) == ""
+
+
+def test_photobook_snap_waits_for_file_and_uses_edited_export(qapp, tmp_path):
+    from datetime import datetime
+    import exporter
+    import photobook
+    from scanner import Item
+
+    root, exp = tmp_path / "src", tmp_path / "exp"
+    root.mkdir()
+    exp.mkdir()
+    orig = root / "IMG_1.JPG"
+    edited_copy = exp / "20260720_100000_IMG_1.JPG"
+    from PIL import Image
+    Image.new("RGB", (80, 60), (20, 30, 40)).save(orig)
+    Image.new("RGB", (80, 60), (220, 180, 40)).save(edited_copy)
+    it_photo = Item("photo", "IMG_1.JPG", image=orig, taken=datetime(2026, 7, 20, 10, 0))
+    it_video = Item("video", "VID_1.MP4", video=root / "VID_1.MP4", taken=datetime(2026, 7, 20, 10, 5))
+    s = exporter.Session(root, exp, ids=[it_photo.id, it_video.id])
+    s.set(it_photo.id, "yes", files=[str(edited_copy)])
+    s.set_edit(it_photo.id, {"exposure": 0.5})
+    s.decisions[f"{it_video.id}#f10"] = {"choice": "snap", "frame": 10, "files": []}
+
+    pages = photobook.last_accepted(s, [it_photo, it_video], 1)
+    assert pages[0].key == f"{it_video.id}#f10" and pages[0].path is None
+    assert pages[1].key == it_photo.id and pages[1].path == str(edited_copy)
+
+    pb = photobook.PhotoBook()
+    pb.refresh(s, [it_photo, it_video], 1)
+    # Lo snap senza file non deve chiedere _thumb (che userebbe il primo fotogramma del video)
+    assert f"{it_video.id}#f10" not in pb.book._asked and f"{it_video.id}#f10" not in pb.book._thumbs
+    pb.clear()
+    assert pb.items == [] and not pb.book._thumbs and not pb.book._asked
+    pb.shutdown()

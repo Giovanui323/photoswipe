@@ -409,3 +409,84 @@ def test_render_16_bit_is_scaled_and_broken_values_are_ignored():
     out = E.render(g16, {"exposure": 0.01})
     assert abs(np.asarray(out, np.float32).mean() - 128) < 6   # prima: quasi bianca
     assert E.clean({"exposure": None, "contrast": 0.2}) == {"contrast": 0.2}
+
+
+def test_fixed_aspect_crop_drag_clamps_and_crop_cleanup(qapp):
+    import os
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QImage
+    from widgets import ImageView, OverlayLabel, SnapGallery, TrashButton, chevron_file
+
+    iv = ImageView()
+    iv.resize(500, 400)
+    img = QImage(400, 300, QImage.Format_RGB888)
+    img.fill(0x808080)
+    iv.set_image(img)
+    start = [0.2, 0.2, 0.4, 0.4]
+    iv.set_crop_mode(True, start, ratio=4 / 3)   # a = 1.0 in coords normalizzate
+    # Trascinando oltre il bordo con rapporto fisso si ferma al bordo senza saltare a start
+    box = iv._drag_crop("br", QPointF(2000, 2000), start)
+    assert abs(box[0] - 0.2) < 1e-6 and abs(box[1] - 0.2) < 1e-6
+    assert abs(box[2] - 0.8) < 1e-5 and abs(box[3] - 0.8) < 1e-5
+    top_box = iv._drag_crop("t", QPointF(0, -2000), start)
+    assert top_box[1] >= 0.0 and abs(top_box[2] - top_box[3]) < 1e-5 and top_box != start
+
+    iv._crop_drag = ("br", QPointF(10, 10), start)
+    iv._crop_hover = "t"
+    iv.set_grid_dense(True)
+    iv.set_badge("ORIGINALE")
+    assert iv._grid_dense and iv._badge_text == "ORIGINALE"
+    iv.set_crop_mode(False)
+    assert iv._crop_drag is None and iv._crop_hover is None and not iv._grid_dense
+    iv.set_badge("")
+    assert iv._badge_text == ""
+
+    lbl = OverlayLabel(iv, "bottom-center", hide_after_ms=10)
+    lbl.setStyleSheet("color: green;")
+    lbl.setText("ok")
+    lbl._clear()
+    assert lbl.text() == "" and lbl.styleSheet() == ""
+
+    tb = TrashButton()
+    tb.refresh_icon(30)
+    assert tb.iconSize().width() == 30
+    if hasattr(os, "getuid"):
+        assert str(os.getuid()) in chevron_file()
+
+    sg = SnapGallery()
+    assert sg._cache == {}
+
+
+def test_curve_preview_nodes_and_ritaglia_scrubbing(qapp, tmp_path):
+    import os
+    from PySide6.QtGui import QImage
+    from editpanel import RegolaPanel, RitagliaPanel
+    from widgets import SnapGallery
+
+    reg = RegolaPanel()
+    img = QImage(64, 48, QImage.Format_RGB888)
+    img.fill(0x6080A0)
+    reg.set_image(img)
+    assert reg.curve_preview.hist is not None and len(reg.curve_preview.hist) == 64
+    reg.curve_preview._drag_to(2, reg.curve_preview.height() * 0.25)   # nodo centrale (curve_mid)
+    assert reg.edit.get("curve_mid", 0.0) > 0.1
+    assert abs(reg.bars["curve_mid"].value - reg.edit["curve_mid"]) < 1e-5
+
+    rit = RitagliaPanel()
+    events = []
+    rit.grid_changed.connect(events.append)
+    rit.bars["straighten"].pressed.emit(True)
+    rit.bars["straighten"].pressed.emit(False)
+    assert events == [True, False]
+
+    # SnapGallery aggiorna la miniatura se il file viene riscritto sullo stesso percorso
+    p = tmp_path / "snap.jpg"
+    Image.new("RGB", (60, 40), (20, 20, 20)).save(p)
+    sg = SnapGallery()
+    t1 = sg._thumb(str(p))
+    assert t1 is not None
+    Image.new("RGB", (60, 40), (240, 240, 240)).save(p)
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    t2 = sg._thumb(str(p))
+    assert t2 is not None and t1.pixelColor(10, 10).red() < 50 and t2.pixelColor(10, 10).red() > 200

@@ -41,6 +41,7 @@ class Item:
     taken: datetime = field(default_factory=datetime.now)
     duration: float = 0.0          # 0 = non ancora nota (file su iCloud)
     size: int = 0
+    duplicates: list[Path] = field(default_factory=list)
 
     @property
     def main(self) -> Path:
@@ -86,7 +87,12 @@ class Item:
 
     def companion_files(self) -> list[Path]:
         """File che accompagnano l'originale (spostati insieme in 'cancellare')."""
-        return [p for p in (self.proxy,) if p]
+        own = (self.image, self.raw, self.video)
+        return [p for p in (self.proxy, *self.duplicates) if p and p not in own]
+
+    def all_files(self) -> list[Path]:
+        """Tutti i file dell'elemento (principali, accompagnatori e doppioni)."""
+        return [*self.files(), *self.companion_files()]
 
     def set_duration(self, seconds: float) -> None:
         self.duration = seconds
@@ -140,9 +146,12 @@ def mp4_local_created(path: Path) -> datetime | None:
             if not (keys and ilst):
                 return None
             f.seek(keys[0] + 4)
+            count = min(struct.unpack(">I", f.read(4))[0], 1024)
             names = []
-            for _ in range(struct.unpack(">I", f.read(4))[0]):
+            for _ in range(count):
                 size = struct.unpack(">I", f.read(4))[0]
+                if size < 8 or f.tell() + size - 4 > keys[1]:
+                    return None
                 f.read(4)   # namespace (mdta)
                 names.append(f.read(size - 8))
             if b"com.apple.quicktime.creationdate" not in names:
@@ -186,32 +195,44 @@ def _child(f, start: int, end: int, kind: bytes) -> tuple[int, int] | None:
 def _find_mvhd(f, start: int, end: int) -> tuple[float, int]:
     """(durata in secondi, data di creazione in secondi dal 1904) dall'atom 'mvhd'."""
     pos = start
-    while pos + 8 <= end:
-        f.seek(pos)
-        size, kind = struct.unpack(">I4s", f.read(8))
-        header = 8
-        if size == 1:
-            size = struct.unpack(">Q", f.read(8))[0]
-            header = 16
-        elif size == 0:
-            size = end - pos
-        if size < header:
-            return 0.0, 0
-        if kind == b"moov":
-            return _find_mvhd(f, pos + header, pos + size)
-        if kind == b"mvhd":
-            version = f.read(1)[0]
-            f.read(3)
-            if version == 1:
-                created = struct.unpack(">Q", f.read(8))[0]
-                f.read(8)
-                timescale, duration = struct.unpack(">IQ", f.read(12))
-            else:
-                created = struct.unpack(">I", f.read(4))[0]
-                f.read(4)
-                timescale, duration = struct.unpack(">II", f.read(8))
-            return (duration / timescale if timescale else 0.0), created
-        pos += size
+    try:
+        while pos + 8 <= end:
+            f.seek(pos)
+            buf = f.read(8)
+            if len(buf) < 8:
+                return 0.0, 0
+            size, kind = struct.unpack(">I4s", buf)
+            header = 8
+            if size == 1:
+                buf8 = f.read(8)
+                if len(buf8) < 8:
+                    return 0.0, 0
+                size = struct.unpack(">Q", buf8)[0]
+                header = 16
+            elif size == 0:
+                size = end - pos
+            if size < header:
+                return 0.0, 0
+            if kind == b"moov":
+                return _find_mvhd(f, pos + header, min(pos + size, end))
+            if kind == b"mvhd":
+                vbuf = f.read(1)
+                if not vbuf:
+                    return 0.0, 0
+                version = vbuf[0]
+                f.read(3)
+                if version == 1:
+                    created = struct.unpack(">Q", f.read(8))[0]
+                    f.read(8)
+                    timescale, duration = struct.unpack(">IQ", f.read(12))
+                else:
+                    created = struct.unpack(">I", f.read(4))[0]
+                    f.read(4)
+                    timescale, duration = struct.unpack(">II", f.read(8))
+                return (duration / timescale if timescale else 0.0), created
+            pos += size
+    except (OSError, struct.error, IndexError):
+        return 0.0, 0
     return 0.0, 0
 
 
@@ -320,9 +341,9 @@ def capture_time(path: Path, local: bool) -> datetime | None:
 def _same_content(a: Path, b: Path, chunk: int = 1 << 20) -> bool:
     """Due file con stesso nome e dimensione sono lo stesso scatto? Si confrontano inizio e fine
     (i RAW non compressi hanno tutti la stessa dimensione, e i contatori ripartono su ogni scheda).
-    Un file solo su iCloud non si legge (si scaricherebbe): si tiene per doppione, come prima."""
+    Un file solo su iCloud non si legge (si scaricherebbe): nel dubbio si tengono entrambi."""
     if not (cloud.is_local(a) and cloud.is_local(b)):
-        return True
+        return False
     try:
         size = a.stat().st_size
         with open(a, "rb") as fa, open(b, "rb") as fb:
@@ -334,7 +355,7 @@ def _same_content(a: Path, b: Path, chunk: int = 1 << 20) -> bool:
                 return fa.read(chunk) == fb.read(chunk)
             return True
     except OSError:
-        return True
+        return False
 
 
 def file_time(path: Path, local: bool) -> datetime:
@@ -471,9 +492,14 @@ def scan(root: Path, exclude: Path | list[Path] | None = None) -> list[Item]:
             # doppione: si tiene il primo, ma se il doppione ha un file in più (es. il DNG, o il
             # MOV di una Live) lo si aggiunge, altrimenti non si vedrebbe/esporterebbe/sposterebbe mai.
             # Il file principale è dello stesso tipo (stesso nome), quindi l'id non cambia.
+            dup = Item(kind="photo", id="", image=files.get("image"),
+                       raw=files.get("raw"), video=files.get("video"))
             for slot in ("raw", "video", "image"):
                 if slot in files and getattr(kept, slot) is None:
                     setattr(kept, slot, files[slot])
+            for p in dup.all_files():
+                if p not in kept.files() and p not in kept.duplicates:
+                    kept.duplicates.append(p)
             continue
         local = cloud.is_local(main)
         taken = capture_time(main, local)

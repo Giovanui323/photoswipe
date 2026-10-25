@@ -107,8 +107,11 @@ def clean(e: dict) -> dict:
             if v and v != "free":
                 out[k] = v
         elif k == "aspect_custom":
-            if v:
-                out[k] = [int(v[0]), int(v[1])]
+            if isinstance(v, (list, tuple)) and len(v) == 2:
+                try:
+                    out[k] = [int(v[0]), int(v[1])]
+                except (TypeError, ValueError):
+                    pass
         elif k == "aspect_portrait":
             if v is not None:
                 out[k] = bool(v)
@@ -169,9 +172,12 @@ def aspect_ratio(e: dict, w: int, h: int) -> float | None:
     if key == "original":
         return w / h if h else None
     if key == "custom":
-        a, b = e.get("aspect_custom") or [1, 1]
-        r = max(a, 1) / max(b, 1)
-        return r
+        ac = e.get("aspect_custom")
+        a, b = ac if isinstance(ac, (list, tuple)) and len(ac) == 2 else (1, 1)
+        try:
+            return max(float(a), 1.0) / max(float(b), 1.0)
+        except (TypeError, ValueError):
+            return 1.0
     for k, _name, short_long in ASPECTS:
         if k == key and short_long:
             portrait = e.get("aspect_portrait")

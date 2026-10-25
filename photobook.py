@@ -34,6 +34,9 @@ class Page(NamedTuple):
     path: str | None   # foto presa: la copia in export (None finché l'export non è finito)
 
 
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff", ".webp")
+
+
 def _snaps(session, it: Item) -> list[Page]:
     """Foto prese da questo video (o Live), dall'ultimo fotogramma al primo."""
     out = []
@@ -43,6 +46,20 @@ def _snaps(session, it: Item) -> list[Page]:
             name = Path(files[0]) if files else it.main.with_name(f"{it.main.stem}_f{d.get('frame', 0) + 1}.jpg")
             out.append((d.get("frame") or 0, Page(key, it.id, name, it, files[0] if files else None)))
     return [p for _, p in sorted(out, key=lambda x: -x[0])]
+
+
+def _exported_photo_path(session, it: Item, d: dict) -> str | None:
+    """Se la foto è modificata o è una Live con fotogramma scelto, usa il file esportato su disco."""
+    edit = (session.get_edit(it.id) if hasattr(session, "get_edit")
+            else (getattr(session, "edits", None) or {}).get(it.id))
+    edited = bool(edit)
+    live_frame = it.kind == "live" and d.get("frame") is not None
+    if edited or live_frame:
+        for f in d.get("files") or []:
+            p = Path(f)
+            if p.suffix.lower() in IMAGE_EXT and p.exists():
+                return f
+    return None
 
 
 def last_accepted(session, items: list[Item], upto: int, n: int = SHOWN) -> list[Page]:
@@ -57,7 +74,7 @@ def last_accepted(session, items: list[Item], upto: int, n: int = SHOWN) -> list
             out += _snaps(session, it)
         d = session.get(it.id)
         if d and d.get("choice") == "yes" and it.kind != "video":
-            out.append(Page(it.id, it.id, it.main, it, None))
+            out.append(Page(it.id, it.id, it.main, it, _exported_photo_path(session, it, d)))
         if len(out) >= n:
             break
     return out[:n]
@@ -167,6 +184,19 @@ class PhotoBook(QWidget):
         self.album.raise_()
         self.album.activateWindow()
 
+    def clear(self) -> None:
+        self._session, self._items = None, []
+        self.book._thumbs.clear()
+        self.book._asked.clear()
+        self.book._paths.clear()
+        self.book.items = []
+        self.book._fit()
+        self.book.update()
+        self.setVisible(False)
+
+    def shutdown(self) -> None:
+        self.book._pool.shutdown(wait=False, cancel_futures=True)
+
     def setVisible(self, on: bool) -> None:   # la schermata iniziale la spegne; senza foto resta spenta
         super().setVisible(on and bool(self.book.items))
 
@@ -181,6 +211,8 @@ class _Book(QWidget):
         self.items: list[Page] = []
         self._thumbs: LruCache = LruCache(12)
         self._asked: set[str] = set()
+        self._paths: dict[str, tuple[str | None, int | None]] = {}
+        self._hover_i: int | None = -1
         self._pool = ThreadPoolExecutor(1, thread_name_prefix="photobook")
         self._bridge = _Bridge()
         self._bridge.done.connect(self._arrived)
@@ -188,16 +220,32 @@ class _Book(QWidget):
         self.setFixedHeight(0)   # niente approvate: non occupa spazio
         self.setAccessibleName(tr('Fotolibro: ultime foto approvate'))
 
+    @staticmethod
+    def _path_sig(path: str | None) -> tuple[str | None, int | None]:
+        if not path:
+            return (None, None)
+        try:
+            return (path, Path(path).stat().st_mtime_ns)
+        except OSError:
+            return (path, None)
+
     def refresh(self, session, items: list[Item], upto: int) -> None:
         pages = last_accepted(session, items, upto)
         # anche con le stesse foto: una foto presa ha la miniatura solo a export finito
         for pg in pages:
-            if pg.key not in self._thumbs and pg.key not in self._asked and (pg.path is None or Path(pg.path).exists()):
+            sig = self._path_sig(pg.path)
+            if self._paths.get(pg.key) != sig:
+                self._thumbs.pop(pg.key, None)
+                self._asked.discard(pg.key)
+            is_snap = "#f" in pg.key
+            ready = (pg.path is not None and Path(pg.path).exists()) if is_snap else (pg.path is None or Path(pg.path).exists())
+            if pg.key not in self._thumbs and pg.key not in self._asked and ready:
+                self._paths[pg.key] = sig
                 self._asked.add(pg.key)
                 fut = self._pool.submit(_thumb, pg)
                 fut.add_done_callback(lambda f, k=pg.key: self._bridge.done.emit(
                     k, None if f.exception() else f.result()))
-        if [p.key for p in pages] != [p.key for p in self.items]:
+        if [(p.key, p.path) for p in pages] != [(p.key, p.path) for p in self.items]:
             self.items = pages
             self._fit()
             self.update()
@@ -242,11 +290,18 @@ class _Book(QWidget):
     def mouseMoveEvent(self, e):
         i = self._at(e.position())
         self.setCursor(Qt.PointingHandCursor)
-        if i is None:
-            QToolTip.showText(e.globalPosition().toPoint(), tr("Clic: apri l'album"), self)
-        else:
-            QToolTip.showText(e.globalPosition().toPoint(),
-                              tr('{v0}\nClic: torna a questa foto', v0=self.items[i].main.name), self)
+        if i != self._hover_i:
+            self._hover_i = i
+            if i is None:
+                QToolTip.showText(e.globalPosition().toPoint(), tr("Clic: apri l'album"), self)
+            else:
+                QToolTip.showText(e.globalPosition().toPoint(),
+                                  tr('{v0}\nClic: torna a questa foto', v0=self.items[i].main.name), self)
+
+    def leaveEvent(self, e):
+        self._hover_i = -1
+        QToolTip.hideText()
+        super().leaveEvent(e)
 
     def mousePressEvent(self, e):
         i = self._at(e.position())

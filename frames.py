@@ -316,9 +316,20 @@ def proxy_window(video: Path, info: VideoInfo, start: int, count: int) -> list[b
     res = _run(["-ss", f"{info.time_of(start):.6f}", "-i", str(video), "-map", "0:v:0",
                 "-frames:v", str(count), "-c:v", "mjpeg", "-q:v", "4", "-f", "image2pipe", "-"],
                timeout=60)
-    # nei dati JPEG un byte 0xFF è sempre seguito da 0x00: FF D8 compare solo a inizio immagine
-    parts = res.stdout.split(b"\xff\xd8")[1:]
-    return [b"\xff\xd8" + p for p in parts]
+    # in un header JPEG (es. lunghezza di un segmento) FF D8 può comparire: si taglia su EOI+SOI
+    data = res.stdout
+    start_idx = data.find(b"\xff\xd8")
+    if start_idx < 0:
+        return []
+    parts = data[start_idx:].split(b"\xff\xd9\xff\xd8")
+    out = []
+    for p in parts:
+        if not p.startswith(b"\xff\xd8"):
+            p = b"\xff\xd8" + p
+        if not p.endswith(b"\xff\xd9"):
+            p = p + b"\xff\xd9"
+        out.append(p)
+    return out
 
 
 def strip_thumbs(video: Path, info: VideoInfo, count: int = 16, height: int = 96) -> list[Image.Image]:
@@ -463,7 +474,7 @@ def _exif(meta: FrameMeta) -> bytes:
         ex[0x010F] = meta.make
     if meta.model:
         ex[0x0110] = meta.model
-    ex[0x010E] = f"{meta.source} - fotogramma {meta.frame + 1}"  # contati da 1, come a schermo
+    ex[0x010E] = f"{meta.source} - {tr('fotogramma')} {meta.frame + 1}"  # contati da 1, come a schermo
     ex[0x0131] = "PhotoSwipe"
     stamp = meta.taken_local.strftime("%Y:%m:%d %H:%M:%S")
     ex[0x0132] = stamp
