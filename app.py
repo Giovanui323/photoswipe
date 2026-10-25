@@ -273,19 +273,15 @@ class MainWindow(QMainWindow):
         center.addLayout(head_row)
         center.addLayout(title_row)
 
-        self.btn_fav = QPushButton("♡")
+        self.btn_fav = navbar.NavButton("fav", tr("Preferita"), tr('Preferita (.): le preferite approvate vengono copiate in\nexport/Foto/Preferite invece che in export/Foto.'))
         self.btn_fav.setObjectName("fav")
-        self.btn_fav.setToolTip(tr('Preferita (.): le preferite approvate vengono copiate in\nexport/Foto/Preferite invece che in export/Foto.'))
         self.btn_fav.clicked.connect(self.toggle_favorite)
-        self.btn_help = QPushButton("?")
-        self.btn_help.setToolTip(tr('Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.'))
+        self.btn_help = navbar.NavButton("help", tr("Aiuto"), tr('Come funziona (? o H): spiega tutti i pulsanti e i tasti.\nDa qui apri anche il file di log.'))
         self.btn_help.clicked.connect(self.show_help)
-        self.btn_info = QPushButton("ⓘ")
+        self.btn_info = navbar.NavButton("info", tr("Informazioni"), tr('Mostra / nascondi il pannello delle informazioni (I).'))
         self.btn_info.setObjectName("info")
-        self.btn_info.setToolTip(tr('Mostra / nascondi il pannello delle informazioni (I).'))
         self.btn_info.clicked.connect(self.toggle_side)
-        self.btn_settings = QPushButton("⚙︎")
-        self.btn_settings.setToolTip(tr('Impostazioni: cartella, export, filtro, formato e ora.'))
+        self.btn_settings = navbar.NavButton("settings", tr("Impostazioni"), tr('Impostazioni: cartella, export, filtro, formato e ora.'))
         self.btn_settings.clicked.connect(self.show_settings)
         self.btn_wand = EP.WandButton()
         self.btn_wand.setObjectName("wand")
@@ -1426,8 +1422,8 @@ class MainWindow(QMainWindow):
                 self.regola.set_edit(self.item_edit() if self.editable(item) else {})
                 if self.crop_draft is not None:
                     self.start_crop()
-        if hasattr(self.regola, "curve_preview"):
-            self.regola.curve_preview.set_image(img)
+        if hasattr(self.regola, "set_image"):
+            self.regola.set_image(img)
         if not self.edit_pending() and (not self.editable(item) or E.is_empty(self.item_edit(item_id))):
             self.invalidate_edit_renders()   # niente da modificare: i calcoli in corso non valgono più
             self.image_view.set_image(img, keep_zoom=keep_zoom)

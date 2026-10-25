@@ -58,7 +58,8 @@ class NavButton(QPushButton):
             path.lineTo(cx - 2.5, cy + 2.5)
             path.lineTo(cx + 2.5, cy + 2.5)
             path.lineTo(cx + 2.5, cy + 8)
-        else:   # uncino di Word: punta in alto, curva sul lato opposto, coda in basso
+            p.drawPath(path)
+        elif self.kind in ("undo", "redo"):   # uncino di Word: punta in alto, curva sul lato opposto, coda in basso
             s = -1 if self.kind == "undo" else 1   # ripristina = annulla allo specchio
             path.moveTo(cx + s * 8, cy - 4)
             path.lineTo(cx - s * 1, cy - 4)
@@ -68,7 +69,43 @@ class NavButton(QPushButton):
             path.moveTo(cx + s * 4.5, cy - 7.5)   # punta della freccia
             path.lineTo(cx + s * 8, cy - 4)
             path.lineTo(cx + s * 4.5, cy - 0.5)
-        p.drawPath(path)
+            p.drawPath(path)
+        elif self.kind == "fav":
+            on = self.property("on") == "true" or self.text() == "♥"
+            p.setPen(QPen(QColor(C["accent"] if on else col), 1.3))
+            p.setBrush(QColor(C["accent"]) if on else Qt.NoBrush)
+            path.moveTo(cx, cy + 6.2)
+            path.cubicTo(cx - 7.5, cy + 1.5, cx - 7.5, cy - 5.5, cx - 3.8, cy - 5.5)
+            path.cubicTo(cx - 1.8, cy - 5.5, cx, cy - 3.5, cx, cy - 1.8)
+            path.cubicTo(cx, cy - 3.5, cx + 1.8, cy - 5.5, cx + 3.8, cy - 5.5)
+            path.cubicTo(cx + 7.5, cy - 5.5, cx + 7.5, cy + 1.5, cx, cy + 6.2)
+            path.closeSubpath()
+            p.drawPath(path)
+        elif self.kind == "info":
+            r = QRectF(cx - 6.5, cy - 6.5, 13, 13)
+            p.drawEllipse(r)
+            p.drawLine(QPointF(cx, cy - 1.5), QPointF(cx, cy + 3.5))
+            p.setPen(Qt.NoPen)
+            p.setBrush(col)
+            p.drawEllipse(QPointF(cx, cy - 3.8), 1.1, 1.1)
+        elif self.kind == "settings":
+            import math
+            p.setPen(QPen(col, 1.3))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), 2.8, 2.8)
+            for a in range(0, 360, 60):
+                rad = math.radians(a)
+                p.drawLine(QPointF(cx + 4.0 * math.cos(rad), cy + 4.0 * math.sin(rad)),
+                           QPointF(cx + 6.6 * math.cos(rad), cy + 6.6 * math.sin(rad)))
+            p.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
+        elif self.kind == "help":
+            r = QRectF(cx - 6.5, cy - 6.5, 13, 13)
+            p.drawEllipse(r)
+            f = p.font()
+            f.setPixelSize(10)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(r.adjusted(0, -1, 0, 1), Qt.AlignCenter, "?")
         p.resetTransform()
         a11y.paint_focus(p, self)
 

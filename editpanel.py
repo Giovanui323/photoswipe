@@ -514,11 +514,16 @@ class CurvePreview(QWidget):
             nb = len(self.hist)
             for i, b in enumerate(self.hist):
                 hx = r.left() + r.width() * i / (nb - 1)
-                hy = r.bottom() - r.height() * 0.85 * b
+                hy = r.bottom() - r.height() * 0.88 * max(0.0, min(1.0, float(b)))
                 hpath.lineTo(QPointF(hx, hy))
             hpath.lineTo(QPointF(r.right(), r.bottom()))
             hpath.closeSubpath()
-            p.fillPath(hpath, QColor(255, 255, 255, 28))
+            g = QLinearGradient(0, r.top(), 0, r.bottom())
+            g.setColorAt(0.0, QColor(255, 255, 255, 80))
+            g.setColorAt(1.0, QColor(255, 255, 255, 20))
+            p.fillPath(hpath, g)
+            p.setPen(QPen(QColor(255, 255, 255, 130), 1.2))
+            p.drawPath(hpath)
         p.setPen(QPen(QColor(C["line_divider"]), 1))
         for i in range(1, 4):
             p.drawLine(QPointF(r.left() + r.width() * i / 4, r.top()), QPointF(r.left() + r.width() * i / 4, r.bottom()))
@@ -543,6 +548,104 @@ class CurvePreview(QWidget):
             p.setPen(QPen(QColor(C["accent"] if (is_act or mod) else C["text_strong"]), 1.8))
             p.setBrush(QColor(C["accent"] if is_act else C["bg_sunken"]))
             p.drawEllipse(pt, rad, rad)
+
+
+class HistogramView(QWidget):
+    """Istogramma RGB e Luminanza sempre visibile in cima al pannello Regola."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(72)
+        self.r_hist: list[float] | None = None
+        self.g_hist: list[float] | None = None
+        self.b_hist: list[float] | None = None
+        self.lum_hist: list[float] | None = None
+        self.mode = "rgb"   # "rgb" o "lum"
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tr("Istogramma della foto (fai clic per alternare RGB e Luminanza)"))
+
+    def set_image(self, qimg: QImage | None) -> None:
+        if qimg is None or qimg.isNull():
+            self.r_hist = self.g_hist = self.b_hist = self.lum_hist = None
+            self.update()
+            return
+        small = qimg.scaled(180, 180, Qt.KeepAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGB888)
+        w, h, bpl = small.width(), small.height(), small.bytesPerLine()
+        buf = np.frombuffer(small.constBits(), dtype=np.uint8, count=bpl * h).reshape(h, bpl)[:, :w * 3].reshape(h, w, 3)
+        nbins = 64
+        hr, _ = np.histogram(buf[..., 0], bins=nbins, range=(0.0, 255.0))
+        hg, _ = np.histogram(buf[..., 1], bins=nbins, range=(0.0, 255.0))
+        hb, _ = np.histogram(buf[..., 2], bins=nbins, range=(0.0, 255.0))
+        lum = 0.2126 * buf[..., 0] + 0.7152 * buf[..., 1] + 0.0722 * buf[..., 2]
+        hl, _ = np.histogram(lum, bins=nbins, range=(0.0, 255.0))
+        norm = lambda arr: (arr.astype(float) / max(float(arr.max()), 1e-6)).tolist()
+        self.r_hist = norm(hr)
+        self.g_hist = norm(hg)
+        self.b_hist = norm(hb)
+        self.lum_hist = norm(hl)
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.mode = "lum" if self.mode == "rgb" else "rgb"
+            self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        outer = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(C["bg_sunken"]))
+        p.drawRoundedRect(outer, 6, 6)
+
+        inner = outer.adjusted(8, 6, -8, -6)
+        p.setPen(QPen(QColor(C["line_divider"]), 1))
+        for i in range(1, 4):
+            x = inner.left() + inner.width() * i / 4
+            p.drawLine(QPointF(x, inner.top()), QPointF(x, inner.bottom()))
+
+        if not self.lum_hist:
+            p.setPen(QColor(C["text_off"]))
+            f = p.font()
+            f.setPixelSize(11)
+            p.setFont(f)
+            p.drawText(inner, Qt.AlignCenter, tr("Istogramma"))
+            return
+
+        def draw_ch(hist, pen_col, fill_col):
+            path = QPainterPath(QPointF(inner.left(), inner.bottom()))
+            nb = len(hist)
+            for i, v in enumerate(hist):
+                x = inner.left() + inner.width() * i / (nb - 1)
+                y = inner.bottom() - inner.height() * 0.88 * max(0.0, min(1.0, v))
+                path.lineTo(QPointF(x, y))
+            fpath = QPainterPath(path)
+            fpath.lineTo(QPointF(inner.right(), inner.bottom()))
+            fpath.closeSubpath()
+            p.fillPath(fpath, fill_col)
+            p.setPen(QPen(pen_col, 1.2))
+            p.drawPath(path)
+
+        if self.mode == "rgb" and self.r_hist and self.g_hist and self.b_hist:
+            p.setCompositionMode(QPainter.CompositionMode_Plus)
+            draw_ch(self.r_hist, QColor(255, 75, 75, 190), QColor(255, 60, 60, 50))
+            draw_ch(self.g_hist, QColor(70, 220, 70, 190), QColor(60, 220, 60, 50))
+            draw_ch(self.b_hist, QColor(75, 150, 255, 190), QColor(60, 140, 255, 50))
+            p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        elif self.lum_hist:
+            g = QLinearGradient(0, inner.top(), 0, inner.bottom())
+            g.setColorAt(0.0, QColor(255, 255, 255, 95))
+            g.setColorAt(1.0, QColor(255, 255, 255, 25))
+            draw_ch(self.lum_hist, QColor(255, 255, 255, 210), g)
+
+        p.setPen(QColor(C["text_off"]))
+        f = p.font()
+        f.setPixelSize(9)
+        f.setBold(True)
+        p.setFont(f)
+        badge = "RGB" if self.mode == "rgb" else "LUM"
+        p.drawText(inner.adjusted(0, 2, -3, 0), Qt.AlignTop | Qt.AlignRight, badge)
+        p.drawText(inner.adjusted(3, 2, 0, 0), Qt.AlignTop | Qt.AlignLeft, tr("ISTOGRAMMA"))
 
 
 def _deg(v: float) -> str:
@@ -866,6 +969,11 @@ class RegolaPanel(QWidget):
 
         pct = lambda val: f"{round(val * 100)}"   # noqa: E731
 
+        # Istogramma sempre visibile in cima al pannello Regola
+        self.hist_view = HistogramView()
+        v.addWidget(self.hist_view)
+        v.addSpacing(6)
+
         # Luce
         s = section("light", "☀︎", tr('Luce'), auto=True, expanded=True)
         sc = ThumbScrubber()
@@ -1073,12 +1181,15 @@ class RegolaPanel(QWidget):
     def set_thumbs(self, sec: str, thumbs: list[QImage]) -> None:
         self.scrubbers[sec].set_thumbs(thumbs)
         if sec == "light" and thumbs:
-            self.curve_preview.set_image(thumbs[len(thumbs) // 2])
+            mid = thumbs[len(thumbs) // 2]
+            self.hist_view.set_image(mid)
+            self.curve_preview.set_image(mid)
 
     def set_histogram(self, bins: list[float] | None) -> None:
         self.curve_preview.set_histogram(bins)
 
     def set_image(self, qimg: QImage | None) -> None:
+        self.hist_view.set_image(qimg)
         self.curve_preview.set_image(qimg)
 
     def redeye_open(self) -> bool:
