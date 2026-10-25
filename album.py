@@ -484,11 +484,10 @@ class _Spread(QWidget):
 
     def _flip_done(self) -> None:
         then, self._then = self._then, None
-        if then:   # chiusura: resta disegnato il libro chiuso mentre la finestra sparisce
-            then()
-            return
         self._flip = None
         self.update()
+        if then:   # chiusura: a libro richiuso chiude la finestra
+            then()
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -647,14 +646,17 @@ class AlbumDialog(QDialog):
 
         avail = parent.window().geometry() if parent else self.screen().availableGeometry()
         self.resize(max(720, int(avail.width() * 0.9)), max(520, int(avail.height() * 0.9)))
-        self.spread_changed()
         self._closing = False
         self._shown_once = False
-        self.setWindowOpacity(0.0)
-        self._fade = QPropertyAnimation(self, b"windowOpacity", self, duration=180)
-        sources = {pg.key: source(session, pg) for pg in photos}
-        def prepare(sources=sources):   # in sottofondo: file da mostrare, proporzioni, GPS, pagine e luoghi
-            srcs = [sources.get(pg.key) for pg in photos]
+        # pianificazione iniziale immediata basata sulle date (immediata, non blocca la UI)
+        self.pages = plan(photos)
+        self.places = [place_name([None] * len(photos), idx) for idx in self.pages]
+        self.aspects = [4 / 3] * len(photos)
+        self.sources = [None] * len(photos)
+        self.spread_changed()
+
+        def prepare():   # in sottofondo: file da mostrare, proporzioni, GPS, pagine e luoghi
+            srcs = [source(session, pg) for pg in photos]
             gps = [gps_of(pg) for pg in photos]
             pages = plan(photos, gps)
             return srcs, [aspect(s) for s in srcs], pages, [place_name(gps, idx) for idx in pages]
@@ -666,27 +668,16 @@ class AlbumDialog(QDialog):
         if self._shown_once:
             return
         self._shown_once = True
-        self._fade.stop()
-        self._fade.setStartValue(0.0)
-        self._fade.setEndValue(1.0)
-        self._fade.start()
         cover = self.view._grab_cover()
         self.view._flip = (cover, cover, 1)   # fino all'apertura si vede il libro chiuso
         QTimer.singleShot(120, self.view.open_book)   # la copertina si apre quando la finestra c'è
 
     def close_album(self) -> None:
-        """Chiusura con garbo: il libro si richiude, poi la finestra sparisce."""
+        """Chiusura con garbo: il libro si richiude, poi la finestra si chiude."""
         if self._closing:
             return
         self._closing = True
-        self.view.close_book(self._fade_out)
-
-    def _fade_out(self) -> None:
-        self._fade.stop()
-        self._fade.setStartValue(self.windowOpacity())
-        self._fade.setEndValue(0.0)
-        self._fade.finished.connect(self.close)
-        self._fade.start()
+        self.view.close_book(self.reject)
 
     def reject(self):   # Esc (e la chiusura vera, a libro richiuso, passa di qui)
         if self._closing:
@@ -708,10 +699,11 @@ class AlbumDialog(QDialog):
         self._want(s)
 
     def _sized(self, res) -> None:
-        if res is None:   # qualcosa è andato storto: almeno le pagine per data
-            res = [None] * len(self.photos), [4 / 3] * len(self.photos), plan(self.photos), []
+        if res is None:   # qualcosa è andato storto: restano le pagine per data
+            return
         self.sources, self.aspects, self.pages, self.places = res
         self.spread_changed()
+        self.view.refresh_flip()
         self.view.update()
 
     def _want(self, spread: int) -> None:

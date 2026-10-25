@@ -82,7 +82,27 @@ def last_accepted(session, items: list[Item], upto: int, n: int = SHOWN) -> list
 
 def all_accepted(session, items: list[Item]) -> list[Page]:
     """Tutte le foto del libro, dalla prima all'ultima della cartella: le pagine dell'album."""
-    return last_accepted(session, items, len(items) - 1, sys.maxsize)[::-1]
+    if session is None or not items:
+        return []
+    snaps_map: dict[str, list[tuple[int, Page]]] = {}
+    clips = {it.id: it for it in items if it.is_clip}
+    for key, d in session.decisions.items():
+        if "#f" in key and d.get("choice") == "snap":
+            item_id = key.split("#f")[0]
+            it = clips.get(item_id)
+            if it is not None:
+                files = [f for f in d.get("files") or [] if Path(f).suffix.lower() in (".jpg", ".png")]
+                name = Path(files[0]) if files else it.main.with_name(f"{it.main.stem}_f{d.get('frame', 0) + 1}.jpg")
+                snaps_map.setdefault(item_id, []).append((d.get("frame") or 0, Page(key, it.id, name, it, files[0] if files else None)))
+    out: list[Page] = []
+    for it in items:
+        if it.is_clip and it.id in snaps_map:
+            for _, p in sorted(snaps_map[it.id], key=lambda x: x[0]):
+                out.append(p)
+        d = session.get(it.id)
+        if d and d.get("choice") == "yes" and it.kind != "video":
+            out.append(Page(it.id, it.id, it.main, it, _exported_photo_path(session, it, d)))
+    return out
 
 
 def _thumb(page: Page) -> QImage:
@@ -178,6 +198,12 @@ class PhotoBook(QWidget):
         pages = all_accepted(self._session, self._items)
         if not pages:
             return
+        if self.album is not None:
+            try:
+                self.album.close()
+            except RuntimeError:
+                pass
+            self.album = None
         self.album = album.AlbumDialog(self.window(), self._session, pages)
         self.album.opened.connect(self.opened.emit)   # clic su una foto: si torna lì, come nel libro
         self.album.show()
