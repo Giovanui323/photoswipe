@@ -53,15 +53,19 @@ class SettingsPopup(QFrame):
 
         self.btn_help = QPushButton(tr('Come funziona  ?'))
         self.btn_help.setObjectName("textlink")
+        self.btn_logs = QPushButton(tr('File di log'))
+        self.btn_logs.setObjectName("textlink")
+        self.btn_logs.setToolTip(tr('Mostra il file di log nel gestore file ({FILE_MANAGER}).', FILE_MANAGER=file_manager))
 
         for w in (self.btn_open, self.btn_export, self.btn_show_export, self.view_filter, self.fmt, self.tz,
-                  self.btn_help):
+                  self.btn_help, self.btn_logs):
             w.setFocusPolicy(Qt.TabFocus)
         for b in (self.btn_open, self.btn_export, self.btn_show_export):
             b.setObjectName("small")
-        for b in (self.btn_open, self.btn_export, self.btn_show_export, self.btn_help):
+        for b in (self.btn_open, self.btn_export, self.btn_show_export, self.btn_help, self.btn_logs):
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(self.hide)   # le finestre di scelta si aprono sopra
+        self.btn_logs.clicked.connect(reveal_log)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -90,7 +94,12 @@ class SettingsPopup(QFrame):
         line.setFixedHeight(1)
         v.addSpacing(8)
         v.addWidget(line)
-        v.addWidget(self.btn_help, 0, Qt.AlignLeft)
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.addWidget(self.btn_help)
+        bottom.addStretch(1)
+        bottom.addWidget(self.btn_logs)
+        v.addLayout(bottom)
 
     def set_folders(self, root: Path | None, export: Path | None) -> None:
         for lab, p in ((self.root_name, root), (self.export_name, export)):
@@ -135,16 +144,8 @@ class SettingsPopup(QFrame):
 
 
 def reveal_log() -> None:
-    import subprocess
-    import sys
-    from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QDesktopServices
     import applog
-    path = applog.log_path()
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", "-R", str(path)])
-    else:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+    applog.reveal_log()
 
 
 def show_help_dialog(parent, app_title: str, help_text: str, reveal_fn=reveal_log) -> None:

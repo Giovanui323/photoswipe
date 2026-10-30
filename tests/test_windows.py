@@ -105,3 +105,44 @@ def test_windows_remove_files_readonly(tmp_path):
         if f.exists():
             os.chmod(f, stat.S_IWRITE)
             f.unlink(missing_ok=True)
+
+
+def test_applog_path_windows(monkeypatch, tmp_path):
+    """Su Windows il percorso log deve stare sotto .photoswipe."""
+    import applog
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("PHOTOSWIPE_LOG_DIR", raising=False)
+    p = applog.log_path()
+    assert ".photoswipe" in str(p)
+    assert p.name == "photoswipe.log"
+
+
+def test_applog_safe_rotating_handler(tmp_path):
+    """SafeRotatingFileHandler non deve sollevare eccezioni in caso di PermissionError su doRollover."""
+    import applog
+    h = applog.SafeRotatingFileHandler(tmp_path / "test.log", maxBytes=100, backupCount=2)
+    # Simula blocco del file durante il rollover
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Accesso negato")
+    h.rotate = fail
+    h.doRollover()  # non deve sollevare eccezioni
+    h.close()
+
+
+def test_settings_popup_has_log_button():
+    """Il popup impostazioni deve includere il pulsante per aprire il file di log."""
+    from PySide6.QtWidgets import QApplication
+    import settingspop
+    app = QApplication.instance() or QApplication([])
+
+    class DummyStore:
+        def value(self, key, default=None):
+            return default
+        def setValue(self, key, val):
+            pass
+
+    pop = settingspop.SettingsPopup(None, DummyStore(), "Esplora file")
+    assert hasattr(pop, "btn_logs")
+    assert pop.btn_logs.text() != ""
+
