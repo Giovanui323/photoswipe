@@ -4,7 +4,10 @@ permissions:
   contents: read
 jobs:
   pytest:
-    runs-on: macos-latest
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
       QT_QPA_PLATFORM: offscreen
@@ -13,9 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Installa i pacchetti
+          cache: "pip"
+      - name: Installa pacchetti e dipendenze
         run: |
-          python -m venv .venv
-          .venv/bin/pip install -r requirements-dev.txt
-      - name: Test
-        run: .venv/bin/python -m pytest -q tests
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Esegui Test (pytest)
+        run: pytest -q tests
