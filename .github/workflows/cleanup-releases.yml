@@ -1,0 +1,44 @@
+name: Cleanup Releases
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rinomina Release 1.5.9 e rimuovi release di debug
+        run: |
+          # Trova l'id della release v1.5.9 e imposta il nome pulito "PhotoSwipe 1.5.9"
+          REL_159=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/Giovanui323/photoswipe/releases/tags/v1.5.9 | jq -r '.id')
+          if [ "$REL_159" != "null" ] && [ -n "$REL_159" ]; then
+            curl -s -X PATCH \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/Giovanui323/photoswipe/releases/$REL_159 \
+              -d '{"name":"PhotoSwipe 1.5.9"}'
+          fi
+
+          # Elimina le release temporanee v1.5.8-win e v1.5.8-win2 se esistono
+          for tag in v1.5.8-win v1.5.8-win2; do
+            ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/Giovanui323/photoswipe/releases/tags/$tag | jq -r '.id')
+            if [ "$ID" != "null" ] && [ -n "$ID" ]; then
+              curl -s -X DELETE \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/repos/Giovanui323/photoswipe/releases/$ID
+            fi
+            # Elimina anche il tag git
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/Giovanui323/photoswipe/git/refs/tags/$tag || true
+          done
