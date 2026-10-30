@@ -15,9 +15,10 @@ jobs:
     steps:
       - name: Rinomina Release 1.5.9 e rimuovi release di debug
         run: |
-          # Imposta il nome pulito "PhotoSwipe 1.5.9"
-          curl -s -X PATCH \
+          RESP=$(curl -v -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/Giovanui323/photoswipe/releases/429074823 \
-            -d '{"name":"PhotoSwipe 1.5.9"}'
+            -d '{"name":"PhotoSwipe 1.5.9","tag_name":"v1.5.9"}')
+          echo "Risposta GitHub API:"
+          echo "$RESP"
