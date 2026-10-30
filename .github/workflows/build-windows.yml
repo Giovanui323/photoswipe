@@ -3,6 +3,8 @@ name: Build Windows (.exe)
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
