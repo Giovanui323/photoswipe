@@ -95,6 +95,32 @@ def unique_path(folder: Path, name: str) -> Path:
     return p
 
 
+def _unlink(path: Path) -> None:
+    """Rimuove un file; su Windows gestisce anche file di sola lettura e lock temporanei."""
+    p = Path(path)
+    for attempt in range(5):
+        try:
+            p.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            try:
+                os.chmod(p, stat.S_IWRITE | 0o666)
+                p.unlink()
+                return
+            except OSError:
+                if attempt < 4:
+                    time.sleep(0.05 * (attempt + 1))
+                else:
+                    raise
+        except OSError:
+            if attempt < 4:
+                time.sleep(0.05 * (attempt + 1))
+            else:
+                raise
+
+
 def move_new(src: Path, folder: Path, name: str) -> Path:
     """Sposta src in folder con un nome libero (name, name_2…) senza mai sovrascrivere: anche se
     un file con quel nome compare nel frattempo (un'altra istanza, l'utente) si prende il nome
@@ -116,19 +142,26 @@ def move_new(src: Path, folder: Path, name: str) -> Path:
                     shutil.copyfileobj(in_f, out_f)
                 shutil.copystat(src, dst)
             except BaseException:
-                dst.unlink(missing_ok=True)
+                _unlink(dst)
                 raise
         try:
-            os.unlink(src)
+            _unlink(src)
         except OSError:
-            # A Windows scanner or indexer can briefly lock a freshly written staging file.
-            # The hard link is already a complete export; keep it and let clean_partial
-            # remove the leftover .part on the next start.
+            # Se il file temporaneo .part è ancora bloccato o di sola lettura ma la copia dst è pronta,
+            # teniamo dst valida: il file temporaneo residuo verrà rimosso da clean_partial.
             if src.name.endswith((".part", ".part.png")) and dst.is_file():
                 log.warning("export: copia pronta, temporaneo ancora bloccato: %s", src)
+                try:
+                    os.chmod(dst, stat.S_IWRITE | 0o666)
+                except OSError:
+                    pass
                 return dst
-            os.unlink(dst)   # l'origine non si toglie (sola lettura): niente doppione
+            _unlink(dst)   # l'origine non si toglie: niente doppione
             raise
+        try:
+            os.chmod(dst, stat.S_IWRITE | 0o666)
+        except OSError:
+            pass
         return dst
 
 
@@ -262,7 +295,7 @@ def _place(tmp: Path, folder: Path, name: str) -> Path:
     già una copia identica e senza padrone si riusa quella, altrimenti nome libero (_2...)."""
     target = folder / name
     if _adoptable(target, tmp):
-        tmp.unlink()
+        _unlink(tmp)
         _adopted().add(target)
         return target
     return move_new(tmp, folder, name)
@@ -286,6 +319,10 @@ def _copy(src: Path, folder: Path, name: str | None = None) -> Path:
         return target
     tmp = unique_path(folder, name).with_name(name + ".part")
     shutil.copy2(src, tmp)  # copia identica, byte per byte
+    try:
+        os.chmod(tmp, stat.S_IWRITE | 0o666)
+    except OSError:
+        pass
     return move_new(tmp, folder, name)
 
 
@@ -302,7 +339,7 @@ def clean_partial(export_dir: Path) -> int:
         for f in (f for d in folders if d.is_dir() for f in d.glob(pat)):
             try:
                 if f.is_file():
-                    f.unlink()
+                    _unlink(f)
                     n += 1
             except OSError:
                 pass
@@ -687,7 +724,7 @@ def remove_files(files: list[str], stamps: list[list[int]] | None = None) -> Non
         try:
             if known is not None and tuple(file_stamp(Path(f))) not in known:
                 continue
-            Path(f).unlink()
+            _unlink(Path(f))
         except FileNotFoundError:
             pass
 

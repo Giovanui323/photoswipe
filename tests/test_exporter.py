@@ -119,3 +119,24 @@ def test_live_sessions_handles_concurrent_mutation(tmp_path):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b"123")
     assert isinstance(exporter._made_during_session(target), bool)
+
+
+def test_copy_handles_readonly_source(tmp_path):
+    import stat
+    src_dir = tmp_path / "camera"
+    src_dir.mkdir()
+    src = src_dir / "DSC_0001.JPG"
+    src.write_bytes(b"image data")
+    # Imposta sola lettura come sulle schede SD di fotocamere
+    os.chmod(src, stat.S_IREAD)
+    dest_dir = tmp_path / "export" / "Foto"
+
+    try:
+        dst = exporter._copy(src, dest_dir, "DSC_0001.JPG")
+        assert dst.exists()
+        assert dst.read_bytes() == b"image data"
+        # Il file esportato deve essere scrivibile
+        assert os.access(dst, os.W_OK)
+    finally:
+        os.chmod(src, stat.S_IWRITE)
+
