@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import shutil
+import stat
 import threading
+import time
 import unicodedata
 import weakref
 from datetime import datetime, timedelta
@@ -119,6 +121,12 @@ def move_new(src: Path, folder: Path, name: str) -> Path:
         try:
             os.unlink(src)
         except OSError:
+            # A Windows scanner or indexer can briefly lock a freshly written staging file.
+            # The hard link is already a complete export; keep it and let clean_partial
+            # remove the leftover .part on the next start.
+            if src.name.endswith((".part", ".part.png")) and dst.is_file():
+                log.warning("export: copia pronta, temporaneo ancora bloccato: %s", src)
+                return dst
             os.unlink(dst)   # l'origine non si toglie (sola lettura): niente doppione
             raise
         return dst

@@ -87,6 +87,26 @@ def test_move_new_exdev_never_overwrites_race_file(tmp_path, monkeypatch):
     assert not src.exists()
 
 
+def test_move_new_keeps_committed_export_when_windows_locks_part_file(tmp_path, monkeypatch):
+    folder = tmp_path / "dest"
+    folder.mkdir()
+    src = folder / "photo.jpg.part"
+    src.write_bytes(b"photo-bytes")
+    real_unlink = os.unlink
+
+    def locked_part(path, *args, **kwargs):
+        if Path(path) == src:
+            raise PermissionError(13, "Access is denied", str(src))
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", locked_part)
+
+    dst = exporter.move_new(src, folder, "photo.jpg")
+
+    assert dst.read_bytes() == b"photo-bytes"
+    assert src.exists()  # rimozione temporaneamente negata: si conserva la copia valida
+
+
 def test_live_sessions_handles_concurrent_mutation(tmp_path):
     root = tmp_path / "root"
     out = tmp_path / "out"
