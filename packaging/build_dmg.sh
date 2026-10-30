@@ -35,7 +35,7 @@ git diff --quiet HEAD -- || { echo "ERRORE: ci sono modifiche non committate (gi
 # Versione: sale di 1 a ogni build, a decine (1.1.5 -> 1.1.6 ... 1.1.9 -> 1.2.0), scritta in app.py
 OLD=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
 # contatore a decine: 1.0.9 -> 1.1.0, 1.9.9 -> 2.0.0
-VER=$(echo "$OLD" | awk -F. '{ma=$1; mi=$2; pa=$3+1; if (pa>9){pa=0; mi++}; if (mi>9){mi=0; ma++}; printf "%d.%d.%d", ma, mi, pa}')
+VER=${BUILD_VER:-$(echo "$OLD" | awk -F. '{ma=$1; mi=$2; pa=$3+1; if (pa>9){pa=0; mi++}; if (mi>9){mi=0; ma++}; printf "%d.%d.%d", ma, mi, pa}')}
 sed -i '' "s/^APP_VERSION = \".*\"/APP_VERSION = \"$VER\"/" app.py
 # build fallita: la versione torna quella di prima (niente numeri saltati)
 trap 'sed -i "" "s/^APP_VERSION = \".*\"/APP_VERSION = \"$OLD\"/" app.py; sed -i "" "s/version-[0-9.]*-blue/version-$OLD-blue/" README.md; echo "Build fallita: versione rimessa a $OLD"; exit 1' ERR INT TERM
