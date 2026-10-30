@@ -1392,15 +1392,10 @@ class MainWindow(QMainWindow):
             self.btn_compare.blockSignals(True)
             self.btn_compare.setChecked(False)
             self.btn_compare.blockSignals(False)
-        if self.side_tab != "info" and not self.editable(item):
+        if self.side_tab != "info":
             self.side_tab = "info"
             self.side_seg.set_current("info")
             self.side_pages.setCurrentIndex(0)
-        elif self.side_tab == "ritaglia":   # Ritaglia si riapre a mano: si torna dove si era
-            back = self._tab_before_crop if self._tab_before_crop in ("info", "regola") else "info"
-            self.side_tab = back
-            self.side_seg.set_current(back)
-            self.side_pages.setCurrentIndex({"info": 0, "regola": 1}[back])
         self.update_pick_mode()
         self.update_edit_ui()
 

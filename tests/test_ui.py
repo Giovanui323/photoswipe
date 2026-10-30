@@ -714,7 +714,8 @@ def test_next_photo_is_decoded_ahead_and_stale_results_are_dropped(qapp, win, sd
     img = win.stills.cache[nxt.id][1]
     go(qapp, win, PHOTO2)
     assert win.image_view.has_image() if hasattr(win.image_view, "has_image") else True
-    assert nxt.id not in win.stills.cache and not img.isNull()     # usata e tolta
+    assert win.image_view.full.cacheKey() == img.cacheKey()        # usa l'anticipo
+    assert nxt.id in win.stills.cache and not img.isNull()         # resta pronta tornando indietro
     gen = win._scan_gen
     win.on_done("meta", nxt.id, ScanBound(gen - 1, None))          # della cartella di prima: ignorato
     assert nxt.id not in win.meta or win.meta[nxt.id] is not None

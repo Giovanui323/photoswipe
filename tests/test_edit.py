@@ -67,6 +67,15 @@ def test_tabs_info_regola_ritaglia(qapp, win, sd):
     assert "di 8 già fatte" in win.done_label.text()
 
 
+def test_changing_photo_resets_side_tab_to_info(qapp, win, sd):
+    open_folder(qapp, win, sd)
+    go(qapp, win, PHOTO1)
+    win.on_side_tab("regola")
+    assert win.side_tab == "regola" and win.side_pages.currentIndex() == 1
+    go(qapp, win, PHOTO2)
+    assert win.side_tab == "info" and win.side_pages.currentIndex() == 0
+
+
 def test_regola_then_yes_exports_modified(qapp, win, sd):
     open_folder(qapp, win, sd)
     go(qapp, win, PHOTO1)
