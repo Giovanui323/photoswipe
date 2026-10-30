@@ -1,0 +1,19 @@
+PhotoSwipe — Guida per Windows
+
+Requisiti di sistema:
+- Windows 10 o Windows 11 (64-bit)
+- Nessuna dipendenza esterna: tutto è incluso (anche ffmpeg e il motore Real-ESRGAN Vulkan).
+
+Come avviare:
+1. Se hai scaricato il file ZIP portatile, estrai l'intero archivio in una cartella a tua scelta (es. Desktop o C:\Program Files\PhotoSwipe).
+2. Fai doppio clic su PhotoSwipe.exe (oppure PhotoSwipe-Standalone.exe se hai scaricato la versione file singolo).
+
+Avviso Windows SmartScreen:
+La prima volta che avvii l'eseguibile, Windows Defender SmartScreen potrebbe mostrare il messaggio:
+"PC protetto da Windows — Windows Defender SmartScreen ha impedito l'avvio di un'app non riconosciuta".
+Questo accade perché l'eseguibile non è firmato con un certificato commerciale Microsoft:
+1. Clicca su "Ulteriori informazioni".
+2. Clicca sul pulsante "Esegui comunque".
+
+Note e licenze:
+Tutti i componenti open-source inclusi sono indicati in THIRD_PARTY_NOTICES.txt e nella cartella licenses/.

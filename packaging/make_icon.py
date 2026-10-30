@@ -23,6 +23,10 @@ iconset.mkdir(exist_ok=True)
 for size in (16, 32, 128, 256, 512):
     img.resize((size, size), Image.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
     img.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
-subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(here / "PhotoSwipe.icns")], check=True)
+try:
+    subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(here / "PhotoSwipe.icns")], check=True)
+except (subprocess.SubprocessError, FileNotFoundError):
+    pass
 img.save(here / "icon.png")
+img.save(here / "PhotoSwipe.ico", format="ICO", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print("ok", sys.argv[0])

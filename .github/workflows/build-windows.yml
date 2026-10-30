@@ -1,0 +1,102 @@
+name: Build Windows (.exe)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build PhotoSwipe Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout codice
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Installa dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Genera PhotoSwipe.ico
+        run: |
+          python packaging/make_icon.py
+
+      - name: Leggi versione da app.py
+        id: version
+        shell: bash
+        run: |
+          VER=$(sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' app.py)
+          echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+          echo "Versione trovata: $VER"
+
+      - name: Compila PhotoSwipe (versione cartella portatile con PhotoSwipe.exe)
+        run: |
+          pyinstaller --noconfirm --clean --windowed --name PhotoSwipe `
+            --icon packaging/PhotoSwipe.ico `
+            --collect-binaries imageio_ffmpeg `
+            --collect-all rawpy `
+            --collect-all pi_heif `
+            --add-data "engines/windows;engines/windows" `
+            --add-data "data;data" `
+            --add-data "THIRD_PARTY_NOTICES.txt;." `
+            --add-data "packaging/licenses;licenses" `
+            --exclude-module pytest `
+            --exclude-module tkinter `
+            --distpath dist/portable `
+            app.py
+
+      - name: Compila PhotoSwipe (versione Standalone file singolo .exe)
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onefile --name PhotoSwipe-Standalone `
+            --icon packaging/PhotoSwipe.ico `
+            --collect-binaries imageio_ffmpeg `
+            --collect-all rawpy `
+            --collect-all pi_heif `
+            --add-data "engines/windows;engines/windows" `
+            --add-data "data;data" `
+            --add-data "THIRD_PARTY_NOTICES.txt;." `
+            --add-data "packaging/licenses;licenses" `
+            --exclude-module pytest `
+            --exclude-module tkinter `
+            --distpath dist/standalone `
+            app.py
+
+      - name: Prepara pacchetti finali
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          cp packaging/LEGGIMI_WINDOWS.txt dist/portable/PhotoSwipe/LEGGIMI.txt
+          cp THIRD_PARTY_NOTICES.txt dist/portable/PhotoSwipe/
+          
+          cd dist/portable
+          7z a ../release/PhotoSwipe-${{ steps.version.outputs.VERSION }}-windows-x64-portable.zip PhotoSwipe
+          cd ../..
+          
+          cp dist/standalone/PhotoSwipe-Standalone.exe dist/release/PhotoSwipe-${{ steps.version.outputs.VERSION }}-windows-x64-standalone.exe
+
+      - name: Carica Artifact su GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhotoSwipe-${{ steps.version.outputs.VERSION }}-windows-x64
+          path: dist/release/*
+          if-no-files-found: error
+
+      - name: Pubblica su GitHub Release (se avviato da tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
