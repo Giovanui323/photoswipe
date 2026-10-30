@@ -33,6 +33,16 @@ def tr(text: str, **kw) -> str:
 
 
 EN = {
+    "Aiuto": "Help",
+    "Informazioni": "Information",
+    "Impostazioni": "Settings",
+    "Istogramma della foto (fai clic per alternare RGB e Luminanza)":
+        "Photo histogram (click to switch between RGB and luminance)",
+    "Istogramma": "Histogram",
+    "ISTOGRAMMA": "HISTOGRAM",
+    "File di log": "Log file",
+    "Mostra il file di log nel gestore file ({FILE_MANAGER}).":
+        "Show the log file in {FILE_MANAGER}.",
     "Apri l'album ›": 'Open album ›',
     'Sfoglia tutte le foto approvate impaginate come un album.': 'Browse all approved photos laid out like an album.',
     "Clic: apri l'album": 'Click: open the album',

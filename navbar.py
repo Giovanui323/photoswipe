@@ -30,7 +30,7 @@ class NavButton(QPushButton):
         super().__init__("")
         self.kind = kind
         self.setObjectName("navicon")
-        self.setAccessibleName(name)
+        self.setAccessibleName(a11y.tooltip_name(tip) if kind in ("info", "help") else name)
         self.setToolTip(tip)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(40, 34)
